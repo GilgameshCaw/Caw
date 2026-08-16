@@ -12,12 +12,10 @@ import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 ///         carries a small delegatecall stub (~50 bytes per linked function).
 ///
 ///         Mirrors the bounded-staticcall pattern used by
-///         `CawActions._checkERC1271`. A future refactor can consolidate that
-///         one here too; out of scope for the v1 ERC-1271 session-registration
-///         change.
+///         `CawActions._checkERC1271`.
 ///
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+///      "Audit fix") mark lines addressing specific security review findings.
 library SigVerification {
 
   /// @dev Forwarded to malicious / buggy 1271 contracts so they can't drain the
@@ -30,7 +28,7 @@ library SigVerification {
   ///      registerSession / registerSessionPersonal as BadSig. 150k matches the
   ///      ERC1271_GAS_LIMIT already used in CawProfileMinter + CawActions for the
   ///      same WebAuthn path. Still bounded so a malicious 1271 contract can't
-  ///      grief the relayer. See project_erc1271_gas_cap_webauthn.
+  ///      grief the relayer.
   uint256 internal constant ERC1271_GAS_LIMIT = 150_000;
 
   /// @dev EIP-1271 magic-value: `bytes4(keccak256("isValidSignature(bytes32,bytes)"))`.
@@ -54,9 +52,7 @@ library SigVerification {
   ///      false; caller's revert keeps the error surface consistent.
   ///
   ///      `internal` so the implementation inlines — no library link step
-  ///      needed in tests/deploys. Size pressure on CawProfileLedger is managed
-  ///      by other reductions (dropping legacy (v,r,s) overloads, replacing
-  ///      added require-strings with 4-byte custom errors).
+  ///      needed in tests/deploys.
   function recoverOrValidate(
     address claimedSigner,
     bytes32 digest,

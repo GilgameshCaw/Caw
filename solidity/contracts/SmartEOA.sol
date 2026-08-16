@@ -11,7 +11,8 @@ pragma solidity ^0.8.22;
 /// @dev IMMUTABILITY NOTICE: This contract is immutable once deployed.
 ///      There is no proxy, no upgradeability, no owner.  If a bug is found the
 ///      user submits a fresh EIP-7702 auth tuple pointing at a new implementation.
-///      Every code review must treat this as final.
+///      This immutability is intentional and load-bearing; any change requires a
+///      fresh implementation deployment.
 ///
 /// @dev EIP-7702 semantics: when a type-0x04 tx processes the authorization list
 ///      for a user's EOA, the EVM sets EOA.code = 0xef0100 || address(SmartEOA).
@@ -20,11 +21,11 @@ pragma solidity ^0.8.22;
 ///      not this contract's storage — this is the core 7702 isolation property.
 ///
 /// @dev SECURITY: This contract owns user funds and can authorize L1 actions on
-///      behalf of users.  All callers are traced in the Caller Audit at the bottom
-///      of this file.  No function should be changed without re-running the audit.
+///      behalf of users.  All external callers are enumerated in the Caller Audit
+///      at the bottom of this file.
 ///
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N")
+///      reference findings from the protocol's security audit.
 contract SmartEOA {
 
     // =========================================================================
@@ -35,9 +36,9 @@ contract SmartEOA {
     bytes4 private constant ERC1271_FAIL_VALUE   = 0xffffffff;
 
     /// @dev secp256k1 curve order / 2.  Sigs with s > this value are malleable
-    ///      (the complementary sig (r, n-s, v^1) is equally valid).  We reject
-    ///      high-s sigs to close the malleability surface after H-1 fixes nonce
-    ///      replay; defence-in-depth per EIP-2 / OpenZeppelin ECDSA conventions.
+    ///      (the complementary sig (r, n-s, v^1) is equally valid).  High-s sigs
+    ///      are rejected to close the malleability surface as defence-in-depth
+    ///      per EIP-2 / OpenZeppelin ECDSA conventions.
     bytes32 private constant SECP256K1_N_HALF =
         bytes32(0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0);
 
@@ -51,7 +52,8 @@ contract SmartEOA {
     /// @dev 24-hour timelock before a newly enrolled passkey becomes active.
     ///      During this window any enrolled (active) passkey or the ecdsaFallback
     ///      key can call cancelPendingPasskey to abort a malicious enrollment.
-    ///      See §1 Scenario C of plan-smart-eoa-passkey-sponsorship.md.
+    ///      See the passkey-enrollment security model (malicious-enrollment
+    ///      cancellation window).
     uint64  private constant PASSKEY_TIMELOCK = 86400; // seconds
 
     // =========================================================================
@@ -101,15 +103,13 @@ contract SmartEOA {
     /// @dev Slot 0: initialization guard.
     bool private initialized;
 
-    // Slot 1 (partial): ecdsaFallback — packed with initialized into slot 0?
-    // Actually in Solidity, bool takes a full slot under naive layout.
-    // With optimizer_runs=1 + via-ir solc packs adjacent small types.
-    // To guarantee layout, we keep them as separate declarations.
+    // initialized and ecdsaFallback are declared separately to guarantee a stable
+    // storage layout; they are not relied upon to pack into a single slot.
 
     /// @dev Slot 1: ECDSA fallback key address.
     ///      This is the user's real secp256k1 address whose private key they
     ///      hold in encrypted cloud backup.  It is NOT a throwaway key.
-    ///      See §1 Background: Population B's primary recovery anchor.
+    ///      This is Population B's primary recovery anchor.
     address private ecdsaFallback;
 
     /// @dev Slot 2: enrolled P-256 pubkeys.
@@ -152,10 +152,10 @@ contract SmartEOA {
     // ERC-1271
     // =========================================================================
 
-    /// @notice ERC-1271 entry point — called by CawActions (line 1434-1439),
-    ///         CawActionsERC1271 (_verifyERC1271), CawProfileMinter sponsor
-    ///         entry points, and any other contract that wants to verify a
-    ///         signature from a 7702-delegated EOA.
+    /// @notice ERC-1271 entry point — called by CawActions, CawActionsERC1271
+    ///         (_verifyERC1271), the CawProfileMinter sponsor entry points, and
+    ///         any other contract that wants to verify a signature from a
+    ///         7702-delegated EOA.
     ///
     /// @dev Dispatch rule (by blob length):
     ///      - sig.length == 65 → secp256k1 path: r[32] || s[32] || v[1].
@@ -194,7 +194,7 @@ contract SmartEOA {
     ///         that processes the EIP-7702 authorization list, so the account is
     ///         never in a half-initialized state.
     ///
-    ///         CEI order (per §5 of plan):
+    ///         CEI order:
     ///           1. Guard: revert if already initialized.
     ///           2. Write initialized = true (prevents re-entry via Minter callback).
     ///           3. Enroll initial passkey (validFrom = 0, active immediately).
@@ -238,7 +238,8 @@ contract SmartEOA {
         // In production, the Minter will staticcall back to isValidSignature on
         // address(this); because initialized=true and the passkey is enrolled
         // (steps 2-3 above ran before this external call), the callback succeeds.
-        // This is the single-tx bootstrap design proven by EIP7702Bootstrap.t.sol.
+        // This is the single-tx bootstrap design (state written before the external
+        // Minter callback so the callback's isValidSignature check succeeds).
         if (minterContract != address(0)) {
             (bool ok, ) = minterContract.call{value: msg.value}(mintCalldata);
             if (!ok) revert MinterCallFailed();
@@ -251,7 +252,7 @@ contract SmartEOA {
 
     /// @notice Enroll a new passkey.  The new key is placed in a 24-hour timelock
     ///         before it becomes usable, giving the legitimate user a window to
-    ///         cancel a malicious enrollment (§1 Scenario C).
+    ///         cancel a malicious enrollment.
     ///
     /// @dev Authorization: caller must present a valid sig from:
     ///        (a) an already-enrolled ACTIVE passkey, OR
@@ -309,27 +310,27 @@ contract SmartEOA {
 
     /// @notice Remove an enrolled passkey.
     ///
-    /// @dev Authorization matrix (§1 Scenario D):
+    /// @dev Authorization matrix:
     ///
     ///      callerSig is 65-byte secp256k1 from ecdsaFallback:
     ///        → unconditional removal.  No quorum check.  This is the owner's
     ///          last-resort key; it must be able to clean up a fully-compromised
-    ///          passkey set (§1 Scenario F).
+    ///          passkey set.
     ///
     ///      callerSig is WebAuthn from a passkey:
     ///        → If signer == target AND activeCount == 1: self-removal allowed.
     ///          CONTRACT LAYER NOTE: N=1 self-removal is deliberately permitted
-    ///          at the contract layer.  The FE MUST require vault-password entry
-    ///          before submitting removePasskey when enrolled count == 1.  See
-    ///          §7 test 25 and §1 Scenario D FE-layer note.
+    ///          at the contract layer.  The client is expected to require
+    ///          vault-password entry before submitting removePasskey when the
+    ///          enrolled count == 1.
     ///        → If signer != target AND activeCount >= 2: co-signer removal.
     ///          Any active non-target passkey may approve.
     ///        → If signer == target AND activeCount >= 2: self-removal NOT allowed
     ///          (use ecdsaFallback or have another key remove you).
     ///
-    ///      v1 LIMITATION: For activeCount >= 3, a SINGLE co-signer suffices.
-    ///      v2 hardens this with true ceil(activeCount/2) quorum — multiple
-    ///      co-signer sigs required.  Document here so it is not forgotten.
+    ///      NOTE: For activeCount >= 3, a single co-signer sig suffices to remove
+    ///      another key; this implementation does not enforce a ceil(activeCount/2)
+    ///      quorum.
     ///
     /// @param targetPubkeyHash  keccak256(x || y) of the key to remove.
     /// @param callerSig         65-byte secp256k1 OR WebAuthn blob.
@@ -416,7 +417,7 @@ contract SmartEOA {
     /// @notice Replace the secp256k1 ECDSA fallback key.
     ///         Requires a valid WebAuthn sig from an enrolled active passkey.
     ///         After this call, the OLD ecdsaFallback no longer validates.
-    ///         Use case: §1 Scenario G — backup blob stolen; rotate to a fresh key.
+    ///         Use case: backup blob stolen; rotate to a fresh key.
     ///
     /// @param newFallback  New secp256k1 address (from a fresh encrypted backup).
     /// @param callerSig    WebAuthn blob from any enrolled active passkey.
@@ -721,11 +722,9 @@ contract SmartEOA {
     ///      )
     ///
     ///      IMPORTANT: This encoding convention is the standard wagmi WebAuthn
-    ///      assertion output.  If the FE team uses a different encoder
-    ///      (e.g., abi.encode with a tuple struct), the blob order or dynamic
-    ///      encoding may differ.  The FE team MUST confirm this convention before
-    ///      production deployment.  See §2 of plan-smart-eoa-passkey-sponsorship.md,
-    ///      "WebAuthn signature format" section.
+    ///      assertion output.  Callers must produce this exact ABI encoding; a
+    ///      different encoder (e.g. abi.encode over a tuple struct) would change
+    ///      the blob order or dynamic offsets and fail verification.
     ///
     ///      Steps:
     ///      1. ABI-decode authenticatorData, clientDataJSON, r, s from sig.
@@ -1107,18 +1106,18 @@ contract SmartEOA {
     // Caller audit
     // =========================================================================
     //
-    // Every external caller of this contract, traced at implementation time:
+    // Every external caller of this contract:
     //
     // isValidSignature(bytes32, bytes):
-    //   - CawActions._checkERC1271 (line 1434-1440): passes sig as encodePacked(r,s,v)
+    //   - CawActions._checkERC1271: passes sig as encodePacked(r,s,v)
     //     = 65 bytes.  secp256k1 path fires.  Gas limit: 50,000.
-    //   - CawActionsERC1271._verifyERC1271 (line 309-315): passes sig verbatim
+    //   - CawActionsERC1271._verifyERC1271: passes sig verbatim
     //     from caller.  May be 65-byte or WebAuthn.  Gas limit: 50,000 (ERC1271_GAS_LIMIT).
     //   - CawProfileMinter sponsor entry points (mintAndDepositSponsored,
     //     depositForSponsored, authenticateSponsored): staticcall via _checkPermit.
     //     Gas limit: 150,000 (ERC1271_GAS_LIMIT in CawProfileMinter).
-    //     WebAuthn path measured at ~55-68k including self-staticcall overhead
-    //     and P-256 precompile (see SmartEOAGas.t.sol for measurements).
+    //     WebAuthn path measured at ~55-68k gas including self-staticcall
+    //     overhead and the P-256 precompile.
     //   - Any future ERC-1271 consumer: same isValidSignature(bytes32,bytes) ABI.
     //
     // initialize(bytes32, bytes32, address, address payable, bytes):

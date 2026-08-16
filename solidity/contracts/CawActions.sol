@@ -34,8 +34,8 @@ pragma solidity ^0.8.20;
 // either requires a fresh CawActions deployment, which is by design — they're
 // part of the verification trust root.
 //
-// Detailed write-up: docs/ZK_SIG_PATH.md.
-// Circuit + prover infrastructure: solidity/zk/sig-recovery/.
+// The ZK sig-recovery path is documented in the protocol's public
+// documentation.
 // =============================================================================
 
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -105,7 +105,7 @@ contract CawActions {
   mapping(uint32 => uint256) public currentCawonceMap;
 
   /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
-  /// @dev SESSION-SPENT-STALE (audit 2026-06-13) — ACCEPTED, not cleared on revoke.
+  /// @dev SESSION-SPENT-STALE (audit finding) — ACCEPTED, not cleared on revoke.
   ///      sessionSpent lives here in CawActions; revocation happens in
   ///      CawProfileLedger. If an owner revokes a key and then re-registers the
   ///      SAME key address, the stale cumulative spend carries over, so the new
@@ -113,7 +113,7 @@ contract CawActions {
   ///      owner is affected) and avoidable: the FE generates a FRESH ephemeral key
   ///      per session, never re-using a revoked address. Clearing it would require
   ///      a new privileged Ledger→CawActions call on the action-spend hot path —
-  ///      adding attack surface to fix a self-DoS. Net: accept. Do not re-flag.
+  ///      adding attack surface to fix a self-inflicted DoS. Accepted by design.
   mapping(address => mapping(address => uint256)) public sessionSpent;
 
   /// @notice Pushed-ratio cap state. Packed into one 256-bit slot.
@@ -218,10 +218,8 @@ contract CawActions {
   ///      isValidSignature well under this budget.
   // 150k, not 50k: WebAuthn isValidSignature (base64url decode + JSON challenge
   // parse + sha256 + P-256 precompile, routed through SmartEOA's self-staticcall
-  // with EIP-150 63/64 gas forwarding) needs ~55-68k. 50k OOGs every Population-B
-  // passkey verification → batch reverts. Matches the CawProfileMinter fix
-  // (a63cf604) which only patched the Minter; this contract + the ERC1271 sibling
-  // carried the same too-low cap. Audit 2026-06-11 XCHAIN-1.
+  // with EIP-150 63/64 gas forwarding) needs ~55-68k. A 50k budget OOGs a
+  // Population-B passkey verification and reverts the batch. Audit XCHAIN-1.
   uint256 private constant ERC1271_GAS_LIMIT = 150_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
@@ -241,10 +239,9 @@ contract CawActions {
   ISP1Verifier public immutable zkVerifier;
 
   /// @notice The verifying key digest (bytes32) of the sig-recovery circuit.
-  ///         Bound at deploy, immutable. Re-running `cargo run --bin vkey`
-  ///         in solidity/zk/sig-recovery/script after a circuit change
-  ///         produces the new digest — and changing the circuit means
-  ///         deploying a new CawActions because this is immutable.
+  ///         Bound at deploy, immutable. Changing the circuit produces a new
+  ///         digest and requires deploying a new CawActions, since this is
+  ///         immutable.
   bytes32 public immutable zkProgramVKey;
 
   /// @notice Emitted once per `processActionsWithZkSigs` call. The bitmap
@@ -351,13 +348,13 @@ contract CawActions {
     // Reject trailing bytes after the consumed actions. Without this, two
     // semantically-identical batches with different trailing-byte content
     // emit different `batchHash` fields, confusing indexers that dedupe by
-    // batchHash. Audit fix 2026-05-08 (Round 3 CawActions adversarial agent).
+    // batchHash. Audit fix, Round 3.
     if (c.pos != packedActions.length) revert TrailingBytes();
 
     // Flush the in-memory hash chain back to storage — one SSTORE pair
     // total instead of one per action. networkHashLoaded is the latch:
-    // false means no actions were applied (impossible past the actionCount
-    // > 0 check above, but defensive against future refactors).
+    // false means no actions were applied (unreachable past the actionCount
+    // > 0 check above; retained as a defensive latch).
     if (c.networkHashLoaded) {
       networkCurrentHash[c.firstNetworkId] = c.networkHash;
       networkActionCount[c.firstNetworkId] = c.networkActionCount;
@@ -373,7 +370,7 @@ contract CawActions {
       // _distributeAmountsMem skips the ownerOf check that the recipient
       // path enforces. Without this, an FE bug submitting a stale/wrong
       // validatorId silently burns the tip into a no-owner cawOwnership
-      // slot. Audit fix 2026-05-08 (Round 4 CawActions LOW-1).
+      // slot. Audit fix, Round 4 LOW-1.
       _requireValidatorExists(validatorId);
       cawProfile.addTokensToBalance(validatorId, c.implicitTipOwed);
     }
@@ -392,7 +389,7 @@ contract CawActions {
       // cross-chain message. A zero fee in non-bypassLZ mode would skip
       // _executeWithdrawals after the L2 debit already ran — silent fund
       // loss. Revert instead so a misconfigured validator surfaces. Audit
-      // fix 2026-05-08 (C-1; tightened in Round 3).
+      // fix C-1 (tightened in Round 3).
       if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
@@ -564,7 +561,7 @@ contract CawActions {
       // these actions" — it does NOT attest that the address is currently
       // an authorized session key. Without an explicit expiry check here,
       // an expired or revoked session would still authorize actions in the
-      // ZK path. (Audit finding 2026-05-08, Issue B.)
+      // ZK path. (Audit finding, Issue B.)
       CawProfileLedger.StoredSession memory s = cawProfile.validSession(owner, signer);
       if (s.expiry <= block.timestamp) revert SessionExpired();
       if (s.profileId != 0 && s.profileId != senderId0) revert WrongProfileForSession();
@@ -620,7 +617,7 @@ contract CawActions {
     // The sig path enforces this via `Mixed senders in batch` in _unpackBatchGroup;
     // the ZK path must mirror it. Without this, a faulty proof could authorize
     // actions on any senderId by smuggling them into a group keyed to a different
-    // owner. (Audit 2026-05-17, H-2.)
+    // owner. (Audit finding H-2.)
     if (action.senderId != senderId0) revert MixedSenders();
 
     // Race-loss check.
@@ -970,9 +967,9 @@ contract CawActions {
     if (sc.pos != packedActions.length) revert TrailingBytes();
     successCount = sc.successCount;
 
-    // NOTE (audited 2026-04-20): the calldata referenced by `batchHash` is the
-    // FULL packedActions including rejected actions, not just the successful
-    // ones. Indexers MUST cross-reference ActionRejected events to filter.
+    // NOTE: the calldata referenced by `batchHash` is the FULL packedActions
+    // including rejected actions, not just the successful ones. Indexers MUST
+    // cross-reference ActionRejected events to filter.
     if (successCount > 0) {
       emit ActionsProcessed(
         sc.firstNetworkId,
@@ -1077,8 +1074,8 @@ contract CawActions {
   ///         Sibling mode (preVerifiedSigner != address(0)):
   ///           Callable only by `erc1271Sibling`. Skips sig verification —
   ///           the sibling has already called `isValidSignature` on the owner.
-  ///           `v`, `s` are ignored; `r` is the hash-chain anchor
-  ///           (= keccak256(sigBlob), spec-locked per project_replication_wire_format).
+  ///           `v`, `s` are ignored; `r` is the hash-chain anchor (= keccak256(sigBlob),
+  ///           fixed by the replication wire format).
   function processGroupSingle(
     uint32 validatorId,
     bytes calldata groupBytes,
@@ -1105,7 +1102,7 @@ contract CawActions {
     if (preVerifiedSigner != address(0)) {
       ba.signer = preVerifiedSigner;
       ba.isSessionKey = false;
-      // MIX-1 / MIX-1-ESC (audit 2026-06-10): the ERC-1271 sibling verifies the
+      // MIX-1 / MIX-1-ESC audit finding: the ERC-1271 sibling verifies the
       // batch digest against ownerOf(senderId0) ONLY. Without enforcing that
       // every action shares senderId0, a malicious ERC-1271 owner could mix a
       // victim's senderId into the group and (a) force-spend the victim's CAW or
@@ -1248,9 +1245,9 @@ contract CawActions {
     // ethCap comes from CawProfileLedger.networkTipTargetWei, which is fed by L1
     // setTipTarget (capped at MAX_TIP_TARGET_WEI = 5e12 wei). The shift below
     // is safe so long as ethCap << 112 fits in uint256 (≤ ~3.36e46 wei). The
-    // L1 cap gives ~7 orders of magnitude headroom. Audit fix M-1 (2026-05-31)
-    // considered an explicit bound check here but EIP-170 doesn't have the
-    // bytes — the L1 invariant is documented as load-bearing.
+    // L1 cap gives ~7 orders of magnitude headroom. Audit finding M-1
+    // considered an explicit bound check here but EIP-170 leaves no room;
+    // the L1 invariant is load-bearing.
     TipState memory s = tipState; // single SLOAD
     if (s.ratio == 0) return 0;
     unchecked {
@@ -1320,7 +1317,7 @@ contract CawActions {
       // (replay surface). Indexers filter self-LIKEs to avoid inflated
       // counters; the on-chain economic discount (~75% of fee returns to
       // self) is small enough not to be worth either trade. See Round 3
-      // audit findings (CawActions adversarial agent, MED).
+      // audit findings (MED).
       uint256 cost = _getCost(2000, 2e11);
       // LIKE split: 20% distribute, 80% to receiver (ratios preserved under cap).
       cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, cost, cost / 5, action.receiverId, cost - cost / 5);
@@ -1354,7 +1351,7 @@ contract CawActions {
       // No contract-side charge. The ETH-pegged validator floor
       // (minTipPerActionWei + Network tipTarget) enforced off-chain at
       // validator-acceptance time already prevents the gas-griefing path
-      // that audit Round 7 econ HIGH-1 originally guarded against — any
+      // that an earlier econ HIGH finding originally guarded against — any
       // session-signed UNLIKE/UNFOLLOW whose implicit tip falls below the
       // validator's floor gets rejected before submission, so the
       // contract-side 1000 CAW transfer was a usability tax with no
@@ -1462,8 +1459,7 @@ contract CawActions {
     // Session keys cannot register/revoke (would escalate a compromised
     // key). Silent no-op instead of revert so one malicious session-key
     // user can't tank the whole batch — same rationale as the
-    // malformed-payload returns below. Audit fix 2026-05-08 (Round 3
-    // CawActions adversarial agent finding).
+    // malformed-payload returns below. Audit fix, Round 3.
     if (ba.isSessionKey) return;
 
     // Resolve the wallet owner from the senderId. Cache on the BatchAuth
@@ -1477,7 +1473,7 @@ contract CawActions {
     // here would let one malicious user tank the whole batch (sig path
     // all-or-nothing, ZK path also reverts whole). The qs:/qx: subtypes
     // are advisory: a malformed payload from one user shouldn't halt
-    // unrelated users' actions. Audit fix 2026-05-08 (CawActions M-3).
+    // unrelated users' actions. Audit fix M-3.
     if (op == 0x73) { // 's' — register
       if (t.length != 71) return;
       address sessionKey = _readAddress(t, 3);
@@ -1574,7 +1570,7 @@ contract CawActions {
       // signer is a Safe-validated key that ALSO had a session record, the
       // 1271 fallback would silently elevate the expired session to full
       // owner authority. Explicit revert keeps the intent the user signed.
-      // Audit fix 2026-05-08 (CawActions M-1).
+      // Audit fix M-1.
       if (sess.expiry != 0) revert SessionExpired();
     }
 
@@ -1631,7 +1627,7 @@ contract CawActions {
       if (expiry > block.timestamp) return (signer, true);
       // See _verifySignatureMem for the rationale — don't let an expired
       // session fall through to ERC-1271, which would silently elevate it
-      // to owner authority. Audit fix 2026-05-08 (CawActions M-1).
+      // to owner authority. Audit fix M-1.
       if (expiry != 0) revert("Session expired");
     }
 
@@ -1686,7 +1682,7 @@ contract CawActions {
     // the validator a free tip. The legitimate empty-recipients-WITHDRAW
     // shape is "amounts==[X]" with no tip slot; reject the ambiguity by
     // requiring at least one recipient when amounts has length 1 for a
-    // WITHDRAW. Audit fix 2026-05-08 (H-2, CawActions agent finding).
+    // WITHDRAW. Audit fix H-2.
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     if (isWithdrawal && numRecipients == 0 && hasExplicitTip) revert InvalidActionType();
 
@@ -1697,8 +1693,8 @@ contract CawActions {
     // every OTHER subtype that doesn't otherwise pay). Other action
     // types either have a fixed protocol-cost (CAW/LIKE/RECAW/FOLLOW)
     // or charge nothing on-chain (UNLIKE/UNFOLLOW — griefing closed off
-    // off-chain by the validator's ETH-pegged tip floor). Audit fix
-    // 2026-05-09 (Round 7 econ HIGH-1 extension to OTHER).
+    // off-chain by the validator's ETH-pegged tip floor). Audit fix,
+    // Round 7 econ HIGH-1 extension to OTHER.
     if (numRecipients == 0 && !hasExplicitTip) {
       if (ba.isSessionKey && ba.perActionTipRate > 0) {
         if (!c.networkTipLoaded) {
@@ -1840,7 +1836,7 @@ contract CawActions {
 
   /// @dev Scan packed actions to collect withdrawal IDs and amounts.
   ///
-  /// SECURITY INVARIANT (audited 2026-04-27, hardened 2026-04-28):
+  /// SECURITY INVARIANT:
   ///   This function reads `firstAmount` directly from calldata at the
   ///   amounts-array offset, INCLUDING the case where `ac == 0` (where the
   ///   load picks up the textLength bytes instead). The if-block guarding
@@ -1916,24 +1912,24 @@ contract CawActions {
   uint32[] private _pendingWithdrawIds;
   uint256[] private _pendingWithdrawAmounts;
 
-  /// @dev NOTE TO FUTURE AUDITORS: the storage-scratch pattern here
+  /// @dev Design note: the storage-scratch pattern here
   ///      (_pendingWithdrawIds / _pendingWithdrawAmounts written by
   ///      _handleWithdrawals, consumed + deleted by _executeWithdrawals,
-  ///      with no nonReentrant guard on the entry points) was re-examined
-  ///      2026-05-17 and intentionally left as-is. Reentrancy chain
-  ///      considered: _executeWithdrawals → cawProfile.setWithdrawable →
-  ///      lzSend → endpoint callback → re-entry into processActions.
-  ///      Not reachable, because (1) the bypassLZ branch of
-  ///      CawProfileLedger.setWithdrawable calls CawProfile.setWithdrawable
-  ///      on L1 which performs no external calls (see CawProfile.sol:820
-  ///      audit note), and (2) the LZ branch hands the native fee to the
-  ///      canonical OApp endpoint, which emits an event and does not
-  ///      execute source-chain code in the same call stack — destination
-  ///      _lzReceive is a separate tx on the destination chain. The OApp
-  ///      endpoint is the protocol's immutable trust root; if a future
-  ///      hostile endpoint is ever wired in, nonReentrant does not save
-  ///      us anyway. Pattern violates checks-effects-interactions
-  ///      cosmetically but the reachable attack surface is empty.
+  ///      with no nonReentrant guard on the entry points) is intentional.
+  ///      Reentrancy chain considered: _executeWithdrawals →
+  ///      cawProfile.setWithdrawable → lzSend → endpoint callback →
+  ///      re-entry into processActions. Not reachable, because (1) the
+  ///      bypassLZ branch of CawProfileLedger.setWithdrawable calls
+  ///      CawProfile.setWithdrawable on L1, which performs no external
+  ///      calls (see CawProfile's setWithdrawable), and (2) the LZ branch
+  ///      hands the native fee to the canonical OApp endpoint, which emits
+  ///      an event and does not execute source-chain code in the same call
+  ///      stack — destination _lzReceive is a separate tx on the
+  ///      destination chain. The OApp endpoint is the protocol's immutable
+  ///      trust root; if a future hostile endpoint were ever wired in, a
+  ///      nonReentrant guard would not help either. The pattern deviates
+  ///      from checks-effects-interactions only cosmetically; the reachable
+  ///      attack surface is empty.
   function _executeWithdrawals(uint256 withdrawFee, uint256 lzTokenAmount) internal {
     if (_pendingWithdrawIds.length > 0) {
       cawProfile.setWithdrawable{ value: withdrawFee }(
@@ -1950,7 +1946,7 @@ contract CawActions {
 
   /// @dev Reverts when validatorId doesn't correspond to a minted token.
   ///      Hoisted from inline call sites so the require body bytecode is
-  ///      shared. Audit fix 2026-05-08 (Round 4 CawActions LOW-1).
+  ///      shared. Audit fix, Round 4 LOW-1.
   function _requireValidatorExists(uint32 validatorId) internal view {
     if (cawProfile.ownerOf(validatorId) == address(0)) revert InvalidValidator();
   }

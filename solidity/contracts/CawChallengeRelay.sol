@@ -8,7 +8,7 @@ import "./OnlyOnce.sol";
 
 interface ICawActionsCheckpoints {
   function networkHashAtCheckpoint(uint32 networkId, uint256 checkpointId) external view returns (bytes32);
-  // ARC-FUTURE-1: live count of actions processed for a network on the source.
+  // Live count of actions processed for a network on the source.
   // The highest existing checkpoint is networkActionCount / CHECKPOINT_INTERVAL.
   function networkActionCount(uint32 networkId) external view returns (uint256);
 }
@@ -26,7 +26,8 @@ interface ICawActionsCheckpoints {
  *      LayerZero attests to the value).
  *
  * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
- *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+ *      "Audit fix YYYY-MM-DD") reference findings from the protocol's
+ *      published security audits.
  */
 contract CawChallengeRelay is OnlyOnce, OApp {
   using OptionsBuilder for bytes;
@@ -47,7 +48,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ///         slash loop; sized like one challenge cp's worth of work + base).
   uint128 public constant NONEXIST_GAS = 200_000;
 
-  // ARC-FUTURE-1: message-type discriminator prefixed to every LZ payload so the
+  // Message-type discriminator prefixed to every LZ payload so the
   // archive can distinguish a normal fraud proof (MSG_CHALLENGE) from a
   // proof-of-non-existence (MSG_NONEXISTENCE).
   uint8 internal constant MSG_CHALLENGE    = 1;
@@ -97,7 +98,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     super.setPeer(_eid, _peer);
   }
 
-  /// @dev SECURITY NOTE — setDelegate hardening (Audit 2026-05-08 MED-3):
+  /// @dev SECURITY NOTE — setDelegate hardening (audit finding MED-3):
   ///      The inherited setDelegate is non-virtual; rely on owner renouncement
   ///      post-deploy. See CawActionsArchive.sol for the full note.
 
@@ -133,7 +134,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     emit ChallengeBatchRelayed(submissionId, networkId, checkpointIds, destEid);
   }
 
-  /// @notice Proof-of-non-existence challenge (ARC-FUTURE-1). Reads the source's
+  /// @notice Proof-of-non-existence challenge. Reads the source's
   ///         live networkActionCount and relays the highest checkpoint that
   ///         actually exists. The archive slashes any PENDING submission whose
   ///         endCheckpointId exceeds that height — closing the future-checkpoint
@@ -159,7 +160,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   }
 
   /// @notice Single-checkpoint convenience wrapper around relayChallengeBatch.
-  /// @dev CCR-NETWORKID-1 (audit 2026-06-13): the caller supplies `networkId`.
+  /// @dev networkId caveat (audit finding CCR-NETWORKID-1): the caller supplies `networkId`.
   ///      If it does not match the target submission's networkId on the archive,
   ///      _processChallenge there drops the challenge (emitting ChallengeDropped,
   ///      reason 2) and resolveChallenge later reverts "No challenge delivered" —
@@ -228,12 +229,11 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   }
 
   // Overriding so callers can over-pay; the LZ endpoint refunds the excess
-  // to the _refundAddress passed in _lzSend (msg.sender). Audit fix
-  // 2026-05-08 (Archive MED-1): the previous version returned _nativeFee,
-  // which trapped the over-paid (msg.value - _nativeFee) ETH in this
-  // contract permanently (no withdraw path). Returning msg.value forwards
-  // the full balance to the endpoint, which uses _nativeFee for the
-  // message and refunds the rest.
+  // to the _refundAddress passed in _lzSend (msg.sender). Per audit finding
+  // Archive MED-1, returning msg.value (not _nativeFee) forwards the full
+  // balance to the endpoint, which uses _nativeFee for the message and
+  // refunds the rest — otherwise the over-paid (msg.value - _nativeFee) ETH
+  // would be trapped in this contract permanently (no withdraw path).
   function _payNative(uint256 _nativeFee) internal virtual override returns (uint256) {
     if (msg.value < _nativeFee) revert NotEnoughNative(msg.value);
     return msg.value;

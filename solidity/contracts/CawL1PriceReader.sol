@@ -25,7 +25,7 @@ import "./interfaces/IUniswapV2Pair.sol";
 ///         fixed-point value as defined by Uniswap V2.
 ///
 /// @dev    Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///         "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+///         "Audit fix") are decoded in the project audit documentation.
 contract CawL1PriceReader {
   IUniswapV2Pair public immutable pair;
 
@@ -41,10 +41,10 @@ contract CawL1PriceReader {
     address t1 = _pair.token1();
     require(t0 == _cawToken || t1 == _cawToken, "CAW not in pair");
 
-    // L-2: probe the other functions we depend on, fail loudly here rather
-    // than producing garbage at the first readSample() after deploy. `_pair`
-    // is immutable, so a fat-finger here is permanent — this is the only
-    // line of defense.
+    // L-2: probe the pair functions this contract depends on so a
+    // misconfigured pair fails at deploy time rather than producing garbage at
+    // the first readSample(). `_pair` is immutable, so an incorrect address is
+    // permanent and this constructor check is the only validation point.
     _pair.getReserves();
     _pair.price0CumulativeLast();
     _pair.price1CumulativeLast();
@@ -76,8 +76,9 @@ contract CawL1PriceReader {
       // Pair hasn't been touched this block — advance cumulative virtually.
       uint32 elapsed;
       unchecked {
-        // V2's _update() does the subtraction unchecked too; uint32 overflow
-        // ("year 2106 problem") cancels out across a window so it's fine.
+        // V2's _update() performs this subtraction unchecked as well; the
+        // uint32 timestamp overflow (year-2106 wraparound) cancels across a
+        // TWAP window, so the elapsed delta remains correct.
         elapsed = timestamp - blockTimestampLast;
       }
       if (elapsed > 0 && reserve0 != 0 && reserve1 != 0) {

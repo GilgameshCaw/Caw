@@ -15,7 +15,8 @@ interface ICawProfileTransfer is IERC721 {
  * @title CawProfileMarketplace
  * @notice Trustless, feeless marketplace for CAW username NFTs.
  *         Supports fixed-price sales, Dutch auctions, English auctions, and buy offers.
- *         0% fees forever, no admin — per the CAW manifesto.
+ *         0% fees, no admin: the payment-token set is fixed at construction and
+ *         there is no fee or owner mechanism in this contract.
  *
  * @dev No `Ownable` inheritance. The allowed-payment-token set is fixed at
  *      construction (passed by the deployer for the env's WETH/USDC/USDT/CAW
@@ -23,8 +24,8 @@ interface ICawProfileTransfer is IERC721 {
  *      post-deploy way to add or remove a payment token. If the ecosystem
  *      decides a different set is desirable, deploy a sibling marketplace.
  *
- * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
- *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+ * @dev Comments carry audit-finding tags (e.g. "H-N", "M-N", "Round N") that
+ *      mark the security review each fix originated from.
  */
 contract CawProfileMarketplace is ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -77,7 +78,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
     mapping(address => mapping(uint256 => uint256)) public pendingReturns;
     // seller => amount owed (pull-pattern payouts — H-15)
     mapping(address => uint256) public pendingPayouts;
-    // MP-3/4/5 (audit 2026-06-13): per-token pull ledger for ERC20 payouts.
+    // MP-3/4/5: per-token pull ledger for ERC20 payouts.
     // recipient => token => amount. ERC20 settlements (buyWithToken, settleAuction,
     // offer refunds) credit this instead of pushing directly, so a seller/offerer
     // that a token contract blocklists (USDC/USDT freeze) can't DoS the sale /
@@ -192,15 +193,10 @@ contract CawProfileMarketplace is ReentrancyGuard {
         emit Listed(listingId, tokenId, msg.sender, listingType, paymentToken, startPrice);
     }
 
-    /**
-     * @notice Cancel an active listing.
-     *         English auctions can only be cancelled if there are no bids.
-     */
     /// @notice Cancel a listing. Seller-only. If the listing is an English auction
-    ///         with an active highest bidder, that bidder is refunded automatically —
-    ///         the seller doesn't need to transfer the NFT away to undo the auction
-    ///         (the previous workaround). Outbid bidders' pull-pattern balances in
-    ///         pendingReturns are not touched and remain claimable via withdrawBid.
+    ///         with an active highest bidder, that bidder is refunded automatically
+    ///         via the pull-pattern. Outbid bidders' pendingReturns balances are not
+    ///         touched and remain claimable via withdrawBid.
     function cancelListing(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
@@ -281,7 +277,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // MP-4 (audit 2026-06-13): pull buyer's ERC20 into the contract and credit
+        // MP-4: pull buyer's ERC20 into the contract and credit
         // the seller's pull ledger, rather than pushing directly to the seller. A
         // blocklisted seller can no longer make the listing permanently unsellable.
         IERC20(listing.paymentToken).safeTransferFrom(msg.sender, address(this), price);
@@ -411,19 +407,13 @@ contract CawProfileMarketplace is ReentrancyGuard {
     }
 
     /**
-     * @notice Reclaim escrowed bid funds when the seller no longer owns the NFT.
-     *         This is a safety valve: if the seller transfers the NFT away during an
-     *         active English auction, the highest bidder (or anyone) can call this to
-     *         refund the highest bidder and cancel the listing.
-     */
-    /**
      * @notice Anyone can clear a stale listing for a token whose seller no
      *         longer owns it. Covers FIXED, DUTCH, and English-with-no-bids
      *         (English-with-bids must use reclaimBid so the bidder is refunded).
      *         Without this, a user who transferred an NFT off-marketplace
      *         while a listing was open is soft-DoSed: createListing reverts
      *         with "Token already listed" and only the original seller can
-     *         cancelListing. Audit fix 2026-05-08 (Round 4 marketplace MED-1).
+     *         cancelListing. Audit fix (Round 4, MED-1).
      */
     function reclaimListing(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
@@ -474,7 +464,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
      *         the bidder ends up blocklisted post-bid, transferring the
      *         refund directly to them reverts forever — they can use this
      *         function to redirect to a non-blocklisted address they
-     *         control. Audit fix 2026-05-08 (Marketplace M-1).
+     *         control. Audit fix (M-1).
      */
     function withdrawBidTo(uint256 listingId, address recipient) external nonReentrant {
         require(recipient != address(0), "Zero address");
@@ -644,7 +634,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Queue payment to the seller — pull-pattern for BOTH ETH (H-15) and
-        // ERC20 (MP-AO-1, audit 2026-06-14): a blocklisted seller would otherwise
+        // ERC20 (MP-AO-1): a blocklisted seller would otherwise
         // make their own acceptOffer revert, but more importantly this keeps the
         // ERC20 settlement consistent with buyWithToken/settleAuction/refund.
         if (offer.paymentToken == address(0)) {
@@ -683,7 +673,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
      *         offerer's choosing. Same blocklist-token rationale as
      *         withdrawBidTo: if the offerer becomes blocklisted on the
      *         payment token (USDC etc.), they need a way to redirect
-     *         the refund. Audit fix 2026-05-08 (Marketplace M-1).
+     *         the refund. Audit fix (M-1).
      *         Only the offerer can use this — callable any time before
      *         the natural cancel-by-anyone window opens at expiry.
      */
@@ -699,7 +689,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
     function _refundOffer(Offer storage offer, address recipient) internal {
         offer.active = false;
         if (offer.paymentToken == address(0)) {
-            // MP-1 (audit 2026-06-11): pull-pattern fallback. cancelOffer is
+            // MP-1: pull-pattern fallback. cancelOffer is
             // callable by ANYONE once the offer expires, so a direct ETH send
             // that reverts (offerer is a non-ETH-receiving contract) would lock
             // the offer active forever and strand the ETH. Try the direct send
@@ -711,7 +701,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
                 emit PayoutQueued(recipient, offer.amount);
             }
         } else {
-            // MP-3 (audit 2026-06-13): ERC20 mirror of the ETH pull fallback.
+            // MP-3: ERC20 mirror of the ETH pull fallback.
             // cancelOffer is permissionless post-expiry, so a blocklisted offerer
             // must not be able to keep the offer active forever. Try a raw
             // transfer; on revert/false, queue to the token pull ledger.
@@ -759,7 +749,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
             pendingPayouts[bidder] += amount;
             emit PayoutQueued(bidder, amount);
         } else {
-            // MP-RDA-1 (audit 2026-06-14): ERC20 pull-pattern too. Only the bidder
+            // MP-RDA-1: ERC20 pull-pattern too. Only the bidder
             // can call this; a blocklisted bidder would otherwise have their refund
             // safeTransfer revert forever, locking their funds. Credit the ledger;
             // they pull via withdrawTokenPayouts to a non-blocklisted address.

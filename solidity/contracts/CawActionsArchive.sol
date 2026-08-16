@@ -21,7 +21,7 @@ import "./OnlyOnce.sol";
  * Trust model:
  *   - merkleRoot commits to checkpoint hashes; checkpoint hashes commit to actions.
  *   - Fraud proofs are canonicalized by the source L2: CawChallengeRelay reads
- *     `clientHashAtCheckpoint` directly from CawActions storage on the source
+ *     `networkHashAtCheckpoint` directly from CawActions storage on the source
  *     chain. LayerZero is the transport that delivers that bytes32 here; the
  *     peer lock authenticates origin (the relay), not the value (which is
  *     canonical by virtue of where it was read from). The archive owner pairs
@@ -29,8 +29,8 @@ import "./OnlyOnce.sol";
  *     admin post-setup.
  *   - At least one honest validator must monitor within CHALLENGE_PERIOD.
  *
- * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
- *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+ * @dev Audit-finding tags in this contract (e.g. "H-N", "M-N") reference findings
+ *      from the protocol's third-party security audits.
  */
 contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
@@ -60,28 +60,27 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   // ============================================
 
   uint256 public constant CHALLENGE_PERIOD = 2 days;
-  // Round-2 censorship drill: after a slash zeroed checkpointClaimed, attacker bots
-  // reclaimed within 1-2 blocks (~2s on Base). 10-minute window lets honest validators
-  // comfortably win the post-cooldown race with periodic re-submission loops.
+  // After a slash zeroes checkpointClaimed, an adversary could re-claim the freed
+  // checkpoint within 1-2 blocks (~2s on fast L2s). A 10-minute cooldown lets honest
+  // validators reliably win the post-slash re-claim race with periodic re-submission.
   uint64 public constant CLAIM_COOLDOWN = 10 minutes;
-  // Round-2 censorship drill: at 0.01 ETH per grief cycle a $50K attacker could sustain
-  // ~2,000 slash-grief cycles. 0.05 ETH (5x) makes selective-censorship costly enough
-  // given the existing off-chain fraud monitors; full fund-loss exposure stays zero so
-  // we don't need a defender-prohibitive deposit.
+  // Stake sizing vs. selective-censorship griefing: at 0.01 ETH per grief cycle a ~$50K
+  // adversary could sustain ~2,000 slash-grief cycles. 0.05 ETH (5x) makes such
+  // censorship costly given the off-chain fraud monitors, while full fund-loss exposure
+  // stays zero, so a defender-prohibitive deposit is unnecessary.
   uint256 public constant MIN_STAKE = 0.05 ether;
   uint256 public constant CHECKPOINT_INTERVAL = 32;
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
-  /// @notice H-6 fix: cap pending submissions per validator so the slash loop
-  ///         (which iterates validatorSubmissions[]) can never exceed L2 block
-  ///         gas. ARC-GAS-1 (audit 2026-06-13) correction: the worst case is
-  ///         16 pending × 256 checkpoints = 4096 checkpoints, and the slash loop
-  ///         writes TWO SSTOREs per checkpoint (checkpointClaimed = 0 AND
-  ///         checkpointClaimReopensAt), so ~8192 SSTOREs worst case — comfortably
-  ///         within an L2 block, but ~2× the previously-documented 4096.
+  /// @notice Cap pending submissions per validator so the slash loop (which iterates
+  ///         validatorSubmissions[]) can never exceed L2 block gas. Worst case is
+  ///         16 pending × 256 checkpoints = 4096 checkpoints, and the slash loop writes
+  ///         two SSTOREs per checkpoint (checkpointClaimed = 0 and
+  ///         checkpointClaimReopensAt), so ~8192 SSTOREs worst case — comfortably within
+  ///         an L2 block. (Audit finding H-6 / ARC-GAS-1.)
   uint256 public constant MAX_PENDING_PER_VALIDATOR = 16;
 
-  /// @notice ARC-FUTURE-1: max checkpoints a submission may reach past the
-  ///         highest finalized checkpoint for its network. Sized to comfortably
+  /// @notice Max checkpoints a submission may reach past the highest finalized
+  ///         checkpoint for its network. (Audit finding ARC-FUTURE-1.) Sized to comfortably
   ///         exceed the full legit in-flight pipeline
   ///         (MAX_CHECKPOINTS_PER_SUBMISSION * MAX_PENDING_PER_VALIDATOR = 4096
   ///         per validator, ×4 headroom for multiple concurrent validators), so
@@ -89,7 +88,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///         far-future jump and is rejected.
   uint256 public constant LOOKAHEAD_WINDOW = 16_384;
 
-  // ARC-FUTURE-1: relay message-type tags (must match CawChallengeRelay).
+  // Relay message-type tags (must match CawChallengeRelay).
   uint8 internal constant MSG_CHALLENGE    = 1;
   uint8 internal constant MSG_NONEXISTENCE = 2;
 
@@ -103,7 +102,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   /// @notice Validator stakes: address => staked ETH amount
   mapping(address => uint256) public stakes;
 
-  /// @notice Pull-pattern slash rewards (NONEXIST-1, audit 2026-06-14). The slash
+  /// @notice Pull-pattern slash rewards (audit finding NONEXIST-1). The slash
   ///         reward is CREDITED here, never pushed — a non-payable rewardTo (e.g.
   ///         a fraudulent validator front-running the non-existence relay with a
   ///         contract that reverts on receive) must not be able to revert the
@@ -119,20 +118,20 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///         than growing with every historical submission. Without this,
   ///         a long-tenured validator with thousands of finalized
   ///         submissions could cause the slash-loop to OOG, blocking
-  ///         legitimate fraud resolution. Audit fix 2026-05-08 (ARC-3).
+  ///         legitimate fraud resolution. (Audit finding ARC-3.)
   mapping(address => uint256[]) public validatorSubmissions;
 
   /// @notice 1-based index into validatorSubmissions[submitter] where this
   ///         submission lives. 0 means "not in the array" (already
   ///         finalized or slashed). Stored separately so the Submission
-  ///         struct's storage layout doesn't change and existing tests +
-  ///         off-chain readers keep working.
+  ///         struct's storage layout is unaffected and off-chain readers that decode
+  ///         the Submission struct remain compatible.
   mapping(uint256 => uint256) internal validatorSubmissionsIndexPlusOne;
 
   /// @notice networkId => checkpointId => submissionId that covers it
   mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
 
-  // ── ARC-FUTURE-1: bounded-lookahead per network ─────────────────────────────
+  // ── Bounded-lookahead per network ───────────────────────────────────────────
   // Highest checkpoint id finalized so far for a network. A submission may not
   // reach more than LOOKAHEAD_WINDOW checkpoints past this. Without the bound, an
   // attacker could submit fabricated data for FAR-FUTURE checkpoints (e.g. cpId
@@ -226,15 +225,15 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     super.setPeer(_eid, _peer);
   }
 
-  /// @dev SECURITY NOTE — setDelegate hardening (Audit 2026-05-08 MED-3):
+  /// @dev SECURITY NOTE — setDelegate hardening (audit finding MED-3):
   ///      The inherited `setDelegate` (OAppCore) is `onlyOwner` but NOT
   ///      `virtual`, so it cannot be wrapped with OnlyOnce here. The
   ///      protocol relies on the deployer renouncing ownership via the
   ///      Ownable.renounceOwnership() path immediately after deploy
   ///      (or transferring to PathwayExpander, which has no setDelegate
   ///      surface). Until renouncement, a compromised owner key COULD
-  ///      rotate the LZ delegate. This is documented in the deploy
-  ///      checklist and in PathwayExpander.sol's natspec. The setPeer
+  ///      rotate the LZ delegate. This dependency on post-deploy ownership
+  ///      renouncement is also documented in PathwayExpander.sol's natspec. The setPeer
   ///      OnlyOnce lock is still tight on its own — the delegate path
   ///      affects LZ side-channel configs (DVN, nonce skipping) but
   ///      cannot directly forge messages.
@@ -285,13 +284,13 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     bytes32 entryHash
   ) external {
     require(stakes[msg.sender] >= MIN_STAKE, "Insufficient stake");
-    // H-6: cap pending submissions so slash-loop work stays within L2 block gas.
+    // Cap pending submissions so slash-loop work stays within L2 block gas.
     require(pendingCount[msg.sender] < MAX_PENDING_PER_VALIDATOR, "TooManyPending");
     require(startCheckpointId > 0, "Invalid start");
     require(endCheckpointId >= startCheckpointId, "Invalid range");
 
-    // ARC-FUTURE-1: bound how far ahead of the finalized chain a submission may
-    // reach. LOOKAHEAD_WINDOW generously covers the full legit in-flight pipeline
+    // Bound how far ahead of the finalized chain a submission may reach.
+    // LOOKAHEAD_WINDOW generously covers the full legit in-flight pipeline
     // (every validator's pending submissions), so honest replication is never
     // blocked, while a far-future jump (cpId 10000 when the chain is near 0) is
     // rejected — closing the un-challengeable-future-checkpoint poisoning.
@@ -310,7 +309,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     require(r.length == expectedActions, "r length mismatch");
     require(merkleRoot != bytes32(0), "Empty merkle root");
 
-    // H-5: walk the packedActions byte layout to verify it contains exactly
+    // Walk the packedActions byte layout to verify it contains exactly
     // `actionCount` well-formed actions with no trailing garbage. Without this,
     // a malformed blob can be submitted and then cause slashIncoherentRoot to
     // revert on _actionSliceEnd — making that fraud class permanently unslashable.
@@ -383,7 +382,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     // Strict `>` reserves the boundary timestamp for challengers. With `>=`,
     // a fraudulent submitter colluding with a block builder could front-run
     // an honest resolveChallenge in the same block at exactly finalizedAt,
-    // permanently escaping slash. (Audit 2026-05-17, M-1.)
+    // permanently escaping slash. (Audit finding M-1.)
     require(block.timestamp > sub.finalizedAt, "Challenge period active");
 
     sub.status = Status.FINALIZED;
@@ -428,7 +427,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///      so the channel stays alive. Off-chain tooling can resubmit via a
   ///      fresh relayChallenge call once the cause is identified.
   ///
-  /// RECOVERY (audited 2026-04-27):
+  /// RECOVERY:
   ///   The try/catch around _processChallenge prevents an LZ channel stall
   ///   if a single message reverts, but it ALSO swallows legitimate failures
   ///   (out-of-gas at the executor, malformed payload, future-added storage
@@ -458,8 +457,8 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///         an already-resolved submission) gets NO on-chain signal — they burn
   ///         the LZ fee and only discover the no-op when resolveChallenge later
   ///         reverts "No challenge delivered". The reason code lets monitors and
-  ///         the challenger detect+retry within the challenge window. (CCR-1,
-  ///         audit 2026-06-11.) reason: 1=not-pending, 2=networkId-mismatch,
+  ///         the challenger detect+retry within the challenge window. (Audit finding
+  ///         CCR-1.) reason: 1=not-pending, 2=networkId-mismatch,
   ///         3=array-length-mismatch.
   event ChallengeDropped(uint256 indexed submissionId, uint8 reason);
 
@@ -485,12 +484,10 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     address,
     bytes calldata
   ) internal override {
-    // Defense-in-depth: today's CawChallengeRelay sends with nativeDrop=0 in
-    // the LZ options, so msg.value here is always 0. If a future peer is
-    // ever added with a non-zero nativeDrop, the ETH would be silently
-    // absorbed into the contract balance with no credit path. Reject so a
-    // misconfigured peer surfaces immediately. Audit fix 2026-05-08
-    // (Round 4 LZ agent LOW-3).
+    // Defense-in-depth: CawChallengeRelay sends with nativeDrop=0 in the LZ options, so
+    // msg.value here is always 0. If a peer is ever added with a non-zero nativeDrop, the
+    // ETH would be silently absorbed into the contract balance with no credit path.
+    // Reject so a misconfigured peer surfaces immediately. (Audit finding LOW-3.)
     require(msg.value == 0, "no native drop");
     try this._processChallenge(payload) {
       // ok
@@ -505,7 +502,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   function _processChallenge(bytes calldata payload) external {
     require(msg.sender == address(this), "only self");
 
-    // Every relay payload is prefixed with a message-type tag (ARC-FUTURE-1).
+    // Every relay payload is prefixed with a message-type tag.
     // MSG_CHALLENGE (1): normal fraud proof — (tag, submissionId, networkId, cps[], hashes[]).
     // MSG_NONEXISTENCE (2): proof-of-non-existence — (tag, submissionId, networkId, sourceMaxCheckpoint, rewardTo).
     uint8 msgType = abi.decode(payload, (uint8));
@@ -518,7 +515,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
       abi.decode(payload, (uint8, uint256, uint32, uint256[], bytes32[]));
 
     Submission storage sub = submissions[submissionId];
-    // CCR-1: signal each silent-drop so the challenger/monitors can detect+retry
+    // Signal each silent-drop so the challenger/monitors can detect+retry
     // within the window instead of only learning at resolveChallenge time.
     if (sub.status != Status.PENDING) { emit ChallengeDropped(submissionId, 1); return; }
     if (sub.networkId != networkId)   { emit ChallengeDropped(submissionId, 2); return; }
@@ -535,7 +532,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     }
   }
 
-  /// @dev Proof-of-non-existence (ARC-FUTURE-1). The relay read the source's live
+  /// @dev Proof-of-non-existence. The relay read the source's live
   ///      networkActionCount and relayed the highest checkpoint that actually
   ///      exists (sourceMaxCheckpoint). If a PENDING submission for this network
   ///      claims checkpoints PAST that height, those actions cannot exist yet on
@@ -587,8 +584,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     // Block self-slash: a fraudulent validator could otherwise watch the
     // mempool for an honest challenger's resolveChallenge tx and front-run
     // it with the same call to recover their own stake — destroying the
-    // economic incentive to challenge fraud. Audit fix 2026-05-08
-    // (cross-contract agent HIGH-1).
+    // economic incentive to challenge fraud. (Audit finding HIGH-1.)
     require(msg.sender != validator, "Self-slash forbidden");
 
     _executeSlash(validator, submissionId, checkpointId, msg.sender);
@@ -603,7 +599,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   ///      / slashIncoherentRoot) or the relayer named in the LZ message
   ///      (non-existence).
   function _executeSlash(address validator, uint256 submissionId, uint256 checkpointId, address rewardTo) internal {
-    // ARC-NEX-1 (audit 2026-06-14): self-slash guard for ALL callers. Without it,
+    // (Audit finding ARC-NEX-1.) Self-slash guard for ALL callers. Without it,
     // a fraudulent validator could self-relay a non-existence slash (rewardTo =
     // themselves) and recover their own stake — making fabricated submissions
     // free. Every slash path (resolveChallenge, slashIncoherentRoot,
@@ -630,7 +626,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     pendingCount[validator] = 0;
     delete validatorSubmissions[validator];
 
-    // NONEXIST-1 (audit 2026-06-14): credit the reward (pull), never push — a
+    // (Audit finding NONEXIST-1.) Credit the reward (pull), never push — a
     // non-payable rewardTo must not be able to revert the slash and keep the
     // fraud alive. The slash state transition is now unconditional; rewardTo
     // claims via claimReward.
@@ -641,7 +637,7 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     emit ValidatorSlashed(validator, rewardTo, submissionId, checkpointId, reward);
   }
 
-  /// @notice Claim accrued slash rewards (pull-pattern, NONEXIST-1). Sent to
+  /// @notice Claim accrued slash rewards (pull-pattern). Sent to
   ///         `to` so a challenger/relayer can route around a blocklist or a
   ///         contract that can't receive at its own address.
   function claimReward(address to) external nonReentrant {
@@ -722,14 +718,13 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     bytes32 computedRoot = _buildMerkleRoot(startCp, cpHashes);
     require(computedRoot != sub.merkleRoot, "Root matches, no fraud");
 
-    // Route through the shared slash helper so the NONEXIST-1 pull-pattern (and
-    // the ARC-NEX-1 self-slash guard) apply uniformly across every slash path.
-    // The old inline copy pushed ETH to msg.sender and reverted the whole slash
-    // if the caller couldn't receive — a contract-wallet challenger could not
-    // land an incoherent-root slash at all (re-audit 2026-06-14, SIR-PUSH-1).
-    // _executeSlash credits pendingReward instead; the caller claims via
-    // claimReward. checkpointId is 0 here (incoherent-root fraud isn't scoped to
-    // a single checkpoint), matching the prior emitted value.
+    // Route through the shared slash helper so the pull-pattern reward and the self-slash
+    // guard apply uniformly across every slash path. A push-to-msg.sender approach would
+    // revert the whole slash if the caller couldn't receive ETH — blocking a
+    // contract-wallet challenger from landing an incoherent-root slash. (Audit finding
+    // SIR-PUSH-1.) _executeSlash credits pendingReward instead; the caller claims via
+    // claimReward. checkpointId is 0 here (incoherent-root fraud isn't scoped to a single
+    // checkpoint).
     _executeSlash(sub.submitter, submissionId, 0, msg.sender);
   }
 

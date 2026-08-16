@@ -96,7 +96,7 @@ interface ISwapRouter {
 
 
 
-    // TO SUPPORT AVALANCH NETWORK:
+    // Avalanche (AVAX) router variants
     function addLiquidityAVAX(
         address token,
         uint amountTokenDesired,

@@ -20,17 +20,18 @@ import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import "./CawProfileLedger.sol";
 import "./interfaces/ICawActions.sol";
 
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N")
+///      reference findings from the protocol's security audit.
 contract CawActionsERC1271 {
 
   ICawActions   public immutable cawActions;
   CawProfileLedger  public immutable cawProfile;
 
-  // 150k, not 50k: WebAuthn isValidSignature needs ~55-68k (P-256 + sha256 +
-  // clientDataJSON parse via SmartEOA's self-staticcall). 50k OOGs every
-  // Population-B verify → batch reverts. Must match CawActions.ERC1271_GAS_LIMIT.
-  // Audit 2026-06-11 XCHAIN-1.
+  // 150k gas cap: WebAuthn isValidSignature needs ~55-68k (P-256 + sha256 +
+  // clientDataJSON parse via SmartEOA's self-staticcall); a lower cap OOGs
+  // Population-B verifies and reverts the batch. Must match
+  // CawActions.ERC1271_GAS_LIMIT.
+  // Audit: XCHAIN-1.
   uint256 private constant ERC1271_GAS_LIMIT = 150_000;
   bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 

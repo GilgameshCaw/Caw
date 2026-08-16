@@ -60,7 +60,7 @@ struct CawNetwork {
  *      instance registry.
  *
  * @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
- *      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+ *      "Audit fix") mark reviewed findings.
  */
 contract CawNetworkManager {
 
@@ -69,7 +69,6 @@ contract CawNetworkManager {
   /// @dev Deployer address. Gates setCawProfile so only the original deployer
   ///      can wire in CawProfile — prevents a front-runner from setting a
   ///      malicious address during the deploy-then-wire window.
-  ///      (Audit fix 2026-05-23.)
   address private immutable _deployer;
 
   /// @notice CawProfile address used to propagate authFee 0/non-zero state
@@ -181,8 +180,6 @@ contract CawNetworkManager {
   ///         broadcastAllowFreeAuth on CawProfile reads NetworkManager.getAuthFee
   ///         on-chain (cannot lie), so the deployer gate is the only privilege
   ///         this function needs.
-  ///
-  ///         (Audit fix 2026-05-23.)
   function setCawProfile(address _cawProfile) external {
     require(msg.sender == _deployer, "Not deployer");
     require(!_cawProfileSet, "CawProfile already set");
@@ -222,7 +219,7 @@ contract CawNetworkManager {
   ///      allowFreeAuth state to L2 via CawProfile.broadcastAllowFreeAuth.
   ///      At both short-circuit paths (within-bucket change or pre-wire), any
   ///      attached msg.value is refunded to msg.sender rather than being stuck
-  ///      in the contract.  (Audit fix 2026-05-23.)
+  ///      in the contract.
   function _maybeBroadcastFreeAuth(uint32 networkId, bool wasZero, bool isZero) internal {
     if (wasZero == isZero) {
       _refundIfAny();
@@ -379,7 +376,7 @@ contract CawNetworkManager {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
     require(feeAddress != address(0), "Fee address required");
-    // H-1 audit fix 2026-05-23: feeAddress == buyAndBurn causes payFee to
+    // Audit fix H-1: feeAddress == buyAndBurn causes payFee to
     // credit buyAndBurn twice per fee event; _withdrawFees then underflows
     // when subtracting protocolAmount from the already-zeroed slot → locked.
     require(feeAddress != buyAndBurnAddress, "Fee address is buyAndBurn");
@@ -469,13 +466,12 @@ contract CawNetworkManager {
   // tx.origin`, then sets it on CawProfile, which checks it here). It is NEVER
   // keyed on a raw tx.origin or a caller-supplied field — only the network's
   // own authorized addresses get the exemption, so a self-sponsoring attacker
-  // (who is not in this set) pays the normal fee. See
-  // messages/open-sponsored-flow-design.md.
+  // (who is not in this set) pays the normal fee.
   mapping(uint32 => mapping(address => bool)) private _authorizedSponsors;
 
   event AuthorizedSponsorSet(uint32 indexed networkId, address indexed sponsor, bool authorized);
 
-  // L2-SPONSOR-1 (audit 2026-06-13): gate sponsor management on onlyNetworkOwner,
+  // Audit fix L2-SPONSOR-1: gate sponsor management on onlyNetworkOwner,
   // NOT onlyNetworkOwnerNotFeeLocked. Sponsor management is an operational-security
   // concern (rotate/revoke a compromised sponsor key) independent of fee policy.
   // Fee-lock freezes fee VALUES + the fee address; it must not freeze the ability
@@ -531,14 +527,14 @@ contract CawNetworkManager {
     _maybeBroadcastFreeAuth(networkId, wasZero, authFee == 0);
   }
 
-  /// @dev ACCT-1 (audit 2026-06-11): fees are accrued per-ADDRESS in
+  /// @dev Audit fix ACCT-1: fees are accrued per-ADDRESS in
   ///      CawProfile.accruedFees, and CawProfile.withdrawFees() lets ANY address
   ///      pull its own accrued balance at any time — independent of whether it is
   ///      still the network's current feeAddress. So rotating feeAddress here does
   ///      NOT orphan the old address's fees: the old address keeps its claim and
-  ///      can withdraw whenever it wants. We deliberately do NOT require the old
-  ///      address be drained first — that would let a non-withdrawing old address
-  ///      block fee-address changes (the opposite of what we want). The only
+  ///      can withdraw whenever it wants. Draining the old address first is
+  ///      deliberately NOT required — that would let a non-withdrawing old address
+  ///      block fee-address changes. The only
   ///      unrecoverable case is an old feeAddress that is a contract which can
   ///      neither call withdrawFees nor receive the swapped CAW — an operator
   ///      self-inflicted edge, not a protocol fund risk. Operators SHOULD pull
@@ -548,9 +544,9 @@ contract CawNetworkManager {
     // network owner can't accidentally (or maliciously) zero it out and
     // break payFee accounting (CAW.transfer to address(0) reverts on
     // standard ERC-20s, stranding the network's accrued fees forever).
-    // Audit fix 2026-05-08 (CCM-1).
+    // Audit fix CCM-1.
     require(feeAddress != address(0), "Fee address required");
-    // H-1 audit fix 2026-05-23: mirror the buyAndBurn guard from createNetwork.
+    // Audit fix H-1: mirror the buyAndBurn guard from createNetwork.
     require(feeAddress != buyAndBurnAddress, "Fee address is buyAndBurn");
     networks[networkId].feeAddress = feeAddress;
   }

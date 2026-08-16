@@ -18,8 +18,8 @@ interface IKycRegistrar {
 }
 
 /// @notice Minimal interface to the LZ EndpointV2 config surface.
-/// @dev    We only use setConfig/getConfig here. The full endpoint ABI is not
-///         imported to keep PathwayExpander lean and dependency-free.
+/// @dev    Only setConfig/getConfig are used here. The full endpoint ABI is
+///         intentionally not imported to keep PathwayExpander lean and dependency-free.
 interface ILzEndpoint {
   struct SetConfigParam {
     uint32 eid;
@@ -192,12 +192,12 @@ contract PathwayExpander is Ownable {
   ///         the pre-encoded ULN config bytes (ABI-encoded UlnConfig struct,
   ///         matching what endpoint.setConfig expects for CONFIG_TYPE_ULN).
   ///
-  /// @dev    WHY NOT use endpoint.getConfig as the "already configured" check?
-  ///         Because endpoint.getConfig delegates to the message lib's getConfig
-  ///         which merges the OApp-specific config with the endpoint's default
-  ///         ULN config. For any supported eid the merged result is always
-  ///         non-empty — making it useless as a "freshly unconfigured" sentinel.
-  ///         We track state locally instead.
+  /// @dev    endpoint.getConfig is not used as the "already configured" check
+  ///         because it delegates to the message lib's getConfig, which merges
+  ///         the OApp-specific config with the endpoint's default ULN config.
+  ///         For any supported eid the merged result is always non-empty, making
+  ///         it useless as a "freshly unconfigured" sentinel. State is tracked
+  ///         locally instead.
   ///
   /// @param oapp         The OApp whose DVN config is being set.
   /// @param endpointAddr The LZ EndpointV2 address on this chain.

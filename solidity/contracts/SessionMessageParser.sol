@@ -206,7 +206,7 @@ library SessionMessageParser {
     // Validate ranges so silent rollover can't extend the user's intended
     // expiry. Without these: "Feb 31" parses fine and rolls into March, or
     // "30:99:99" parses and rolls into the next day + extra hours/minutes.
-    // Audit fix 2026-05-08 (L2 M-4).
+    // Audit fix: L2 M-4 (range validation).
     if (hour >= 24) revert BadDate();
     if (minute >= 60) revert BadDate();
     if (second >= 60) revert BadDate();

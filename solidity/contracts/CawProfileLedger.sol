@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-/// @dev Formerly CawProfileL2. Renamed 2026-06-03 — the contract is a per-tokenId
-///      CAW balance ledger that posting actions debit and withdraws drain, not
-///      necessarily an L2. In bypassLZ co-deployment mode it lives on the same
-///      chain as CawProfile; in cross-chain mode it lives on the target L2.
+/// @dev Per-tokenId CAW balance ledger that posting actions debit and withdraws
+///      drain — not necessarily an L2. In bypassLZ co-deployment mode it lives on
+///      the same chain as CawProfile; in cross-chain mode it lives on the target L2.
 
 import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
@@ -66,11 +65,11 @@ contract CawProfileLedger is
   /// @notice ERC-1271 sibling contract. Also authorized to call setWithdrawable.
   address public erc1271Sibling;
 
-  // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
+  // SECURITY NOTE: Unlike standard ERC721, this ownerOf intentionally returns
   // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileLedger is a
   // lightweight mirror synced from L1 via LayerZero, and tokens may be in a "not yet synced" state.
-  // Reverting here would cascade failures through batch reads (CawProfile.sol:435,459), marketplace
-  // operations (CawProfileMarketplace.sol:331 reclaimBid), and action processing (CawActions.sol:111).
+  // Reverting here would cascade failures through batch reads in CawProfile, marketplace bid-reclaim
+  // operations, and action processing in CawActions.
   // The zero-address return is NOT a security risk: registerSession cannot populate
   // sessions[address(0)][...] because ecrecover cannot produce address(0), and the default session
   // expiry of 0 always fails the expiry > block.timestamp check in CawActions.verifySignature.
@@ -89,7 +88,7 @@ contract CawProfileLedger is
   /// @notice Last accepted sequence number for allowFreeAuth LZ messages per network.
   ///         Messages with seq <= lastAllowFreeAuthSeq[networkId] are stale and ignored,
   ///         preventing out-of-order or replayed LZ delivery from rolling back state.
-  ///         (Audit fix 2026-05-23.)
+  ///         (Audit fix.)
   /// @dev Internal: no public getter needed — callers verify via allowFreeAuth() state.
   mapping(uint32 => uint64) internal lastAllowFreeAuthSeq;
 
@@ -163,7 +162,7 @@ contract CawProfileLedger is
   ///         string), so the only thing preventing replay is the user's
   ///         signature being one-shot. Without this, an attacker holding a
   ///         user's signed message could re-register a revoked session at
-  ///         any time before the message's expiry. Audit fix 2026-05-08.
+  ///         any time before the message's expiry. Audit fix.
   /// @dev Internal: the replay guard is security state, but no external caller
   ///      needs to query it — the revert is the observable signal. Saves getter bytecode.
   mapping(bytes32 => bool) internal consumedSessionMessage;
@@ -202,7 +201,7 @@ contract CawProfileLedger is
 
   /// @notice Absolute upper bound on any session spend limit. Prevents phishing
   ///         pages from submitting an inflated value (e.g. "999B CAW") after
-  ///         showing the user a lower figure. Finding NEW-4, audit 2026-05-19.
+  ///         showing the user a lower figure. Finding NEW-4.
   ///         Internal: no external getter needed — no caller reads this constant.
   uint256 internal constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
 
@@ -211,7 +210,7 @@ contract CawProfileLedger is
   ///      the primary payload dispatch. Must be >= the oracle's worst-case push
   ///      so the push CAN fire when the L1 budget allowed for it, and it must
   ///      match the ORACLE_PUSH_GAS budget L1's gasLimitFor adds for a live
-  ///      sample. See docs/GAS_BUDGET_ORACLE_PIGGYBACK_FIX.md.
+  ///      sample. (The gas budget is documented alongside L1's gasLimitFor.)
   uint256 internal constant ORACLE_RECORD_GAS_CAP = 180_000;
 
   event OwnerSet(uint32 tokenId, address newOwner);
@@ -393,7 +392,7 @@ contract CawProfileLedger is
     if (balance < amountToSpend) revert InsufficientBalance();
     uint256 newCawBalance = balance - amountToSpend;
 
-    // SECURITY (audited 2026-04-07): if "everyone else" holds less than the distribute amount,
+    // SECURITY: if "everyone else" holds less than the distribute amount,
     // refund to the spender instead. Caps per-call rewardMultiplier growth at 2x, preventing
     // a degenerate (1 whale + dust) attacker from overflowing uint256 in ~5 calls. The fallback
     // only triggers in early-network conditions; once any other holder has >=6001 CAW, normal
@@ -474,7 +473,7 @@ contract CawProfileLedger is
   ///         seq must be strictly greater than lastAllowFreeAuthSeq[networkId]. Stale or
   ///         replayed messages (seq <= last seen) are silently ignored to prevent
   ///         out-of-order LZ delivery from rolling back free-auth state.
-  ///         (Audit fix 2026-05-23.)
+  ///         (Audit fix.)
   function setAllowFreeAuth(uint32 networkId, bool allow, uint64 seq) public {
     if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
     if (seq <= lastAllowFreeAuthSeq[networkId]) return; // stale, ignore
@@ -533,11 +532,9 @@ contract CawProfileLedger is
   // ownership of `sponsorTokenId` — can `forgiveSponsorRepay` to zero
   // the obligation at any time.
   //
-  // PHASE 2 SCOPE: registration + view + forgive land here. The
-  // auto-sweep-on-withdraw integration on CawActions is deferred until
-  // CawActions has byte-budget headroom (currently at EIP-170 minus 9
-  // bytes). `sweepSponsorRepay` is callable today but only by CawActions
-  // — wire its call site in CawActions in a future reclaim round.
+  // sweepSponsorRepay is callable only by CawActions. In this deployment
+  // CawActions does not invoke it on the withdraw path; registration, preview,
+  // and forgive are the active surfaces.
   // ----------------------------------------------------------------
 
   /// @notice Outstanding repay obligation in wei, keyed by user's tokenId.
@@ -576,7 +573,7 @@ contract CawProfileLedger is
     uint256 outstanding = sponsorRepay[tokenId];
     swept = outstanding < amount ? outstanding : amount;
     if (swept > 0) {
-      // SPR-1 (audit 2026-06-13): conservation. The swept CAW moves from the
+      // SPR-1: conservation. The swept CAW moves from the
       // user's spendable balance to the sponsor's — it stays inside the L2
       // ledger, so `totalCaw` (the sum-of-balances total) MUST be unchanged.
       // Credit the sponsor AND debit the user by the same `swept`, so the
@@ -635,7 +632,7 @@ contract CawProfileLedger is
   }
 
   /// @notice Mark a token as authenticated with a network. Only used in mainnet co-deployment mode.
-  /// @dev RT-1 sibling (audit 2026-06-11): like `deposit`, when `owner != address(0)`
+  /// @dev RT-1 sibling: like `deposit`, when `owner != address(0)`
   ///      this also sets the ledger's ownerOf. The standalone authenticate path
   ///      (CawProfile._authenticateBody, bypassLZ) can run on a token whose ledger
   ///      ownerOf was never set (plain `mint` then `authenticate`, no deposit) —
@@ -649,7 +646,7 @@ contract CawProfileLedger is
 
   /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
   /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawProfile`).
-  /// @dev RT-1 (audit 2026-06-10): when `owner != address(0)` (mint+deposit path)
+  /// @dev RT-1: when `owner != address(0)` (mint+deposit path)
   ///      set the ledger ownerOf so the freshly minted token is operable. The
   ///      existing-token `depositFor` path passes address(0) to skip it
   ///      (re-setting would bump epochs and kill live sessions every deposit).
@@ -691,8 +688,8 @@ contract CawProfileLedger is
       //     for the prev wallet. Required because an LZ unordered redelivery
       //     could later re-stamp ownerOf back to prev, reanimating sessions
       //     prev registered during their brief ownership. Without this, the
-      //     intermediate-holder drain attack from project_l1l2_ownership_desync
-      //     re-opens.
+      //     intermediate-holder drain attack (an LZ redelivery reanimating a
+      //     prior holder's sessions) re-opens.
       //   - tokenSessionEpoch[tokenId]: invalidates token-scoped sessions
       //     bound to this profileId. Required for the same reason on the
       //     token-scoped path.
@@ -797,8 +794,7 @@ contract CawProfileLedger is
 
     // Replay protection: the personal-sign message format doesn't carry a
     // nonce, so a held signature could otherwise be re-submitted to undo a
-    // revocation. Mark the digest consumed; reject duplicates. Audit fix
-    // 2026-05-08.
+    // revocation. Mark the digest consumed; reject duplicates. Audit fix.
     if (consumedSessionMessage[digest]) revert Replayed();
     consumedSessionMessage[digest] = true;
 
@@ -850,13 +846,13 @@ contract CawProfileLedger is
 
   /// @notice Revoke a session key. Callable by the delegating wallet.
   function revokeSession(address sessionKey) external {
-    // SES-1 (audit 2026-06-11): bump sessionNonce so any in-flight
+    // SES-1: bump sessionNonce so any in-flight
     // registerSession-by-sig the owner pre-signed at the current nonce is
     // invalidated by the revocation. Without this, an attacker holding a
     // captured pre-signed registerSession could re-register the just-revoked
     // key. Mirrors registerSessionFromActions' nonce bump.
     sessionNonce[msg.sender]++;
-    // TSN-1 (audit 2026-06-13): token-scoped sessions register against
+    // TSN-1: token-scoped sessions register against
     // tokenSessionNonce[profileId], so revoking one must bump THAT nonce too —
     // otherwise a pre-signed registerTokenScopedSession at the current nonce
     // stays replayable after revocation. Read profileId before the delete.
@@ -929,8 +925,7 @@ contract CawProfileLedger is
     // be replayed if the user later re-registers the same sessionKey under the
     // same owner, letting an attacker who held the old signature revoke the
     // freshly-registered session. Each register fixes a unique expiry, so a
-    // fresh expiry invalidates old revocation sigs. Audit fix 2026-05-08
-    // cross-contract MED-5.
+    // fresh expiry invalidates old revocation sigs. Audit fix MED-5.
     bytes32 digest = keccak256(abi.encodePacked(
       "\x19\x01",
       eip712DomainHash,
@@ -945,13 +940,11 @@ contract CawProfileLedger is
     emit SessionRevoked(owner, sessionKey);
   }
 
-  // Note: no ERC-1271 overload for revokeSessionBySig in v1. Session keys in
-  // the magic-wallet design are always ephemeral ECDSA keys (generated locally
-  // by the app/browser), so the ecrecover path is sufficient. A contract-style
-  // session key (e.g., a smart-EOA delegated to a passkey, self-revoking) is
-  // an interesting future case but doesn't exist today. Adding the overload
-  // pushes CawProfileLedger over the EIP-170 deployed-bytecode limit; revisit when
-  // there's a real consumer.
+  // revokeSessionBySig has no ERC-1271 overload: session keys are ephemeral
+  // ECDSA keys generated locally by the app, so the ecrecover path is
+  // sufficient. A contract-style self-revoking session key is not supported;
+  // adding the overload would push deployed bytecode over the EIP-170
+  // 24,576-byte cap.
 
   /// @notice OApp callback for receiving cross-chain messages from L1.
   /// @dev See SECURITY NOTE inside. The OApp base verifies sender is the endpoint and the configured
@@ -999,8 +992,8 @@ contract CawProfileLedger is
       // ratio into CawActions (~165k worst case) when the TWAP crosses its
       // hysteresis threshold. That push runs BEFORE the primary dispatch below,
       // so without a cap a push-coinciding message could consume the whole LZ
-      // budget and starve the ownership/session write — the transferAndSync OOG
-      // (operator-reported). ORACLE_RECORD_GAS_CAP bounds what the oracle can take: the
+      // budget and starve the ownership/session write (a transferAndSync
+      // out-of-gas). ORACLE_RECORD_GAS_CAP bounds what the oracle can take: the
       // sample WRITE (cheap, happens first inside recordSample) always lands;
       // if a push wouldn't fit, recordSample's own internal swallow-on-revert
       // self-call drops just the push, and CawCapOracle.pushRatioIfStale (the
@@ -1039,7 +1032,7 @@ contract CawProfileLedger is
 
     // Call the function using the selector and arguments.
     //
-    // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
+    // SECURITY NOTE: The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - All authorized functions (lzDepositMintSession, updateOwners, setAllowFreeAuth,
     //   setNetworkTipTarget) perform only storage writes.
@@ -1101,7 +1094,7 @@ contract CawProfileLedger is
   /// @dev CawActions only. The L1 contract receives this and credits the per-token `withdrawable`
   ///      mapping, allowing token owners to subsequently call `withdraw` on L1.
   ///
-  ///      SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check.
+  ///      SECURITY NOTE: No `tokenIds.length == amounts.length` check.
   ///      The only caller is `CawActions.setWithdrawable`, which builds both arrays from the
   ///      same `withdrawCount` in lockstep — they are guaranteed equal by construction.
   ///      Adding a check here would add gas to the validator's hot path for an impossible bug.
@@ -1116,7 +1109,7 @@ contract CawProfileLedger is
       // bypassLZ mode does no LayerZero send, so any forwarded native fee
       // would be stuck in this contract permanently (there's no sweep path).
       // Reject explicitly so a misconfigured validator quote doesn't silently
-      // brick funds. Audit fix 2026-05-08.
+      // brick funds. Audit fix.
       if (msg.value != 0) revert NoFee();
       cawProfile.setWithdrawable(tokenIds, amounts);
     } else {
@@ -1151,8 +1144,7 @@ contract CawProfileLedger is
       // Refund excess LZ fee to the tx originator EOA, NOT msg.sender:
       // msg.sender here is CawActions which has no receive(), so an LZ-fee
       // overpay would fail the endpoint's refund call and revert the whole
-      // batch. Mirrors CawProfile.lzSend. Audit fix 2026-05-08 (Round 4 LZ
-      // agent MED-1).
+      // batch. Mirrors CawProfile.lzSend. Audit fix MED-1 (Round 4).
       payable(tx.origin)
     );
   }
@@ -1160,10 +1152,10 @@ contract CawProfileLedger is
   /// @notice Gas limit forwarded to the destination chain for executing this message.
   /// @dev L2→L1 destination is Ethereum mainnet — gas overprovisioning is expensive because
   ///      the validator pays L1 gas prices for every wasted unit. Constants come from real
-  ///      measurements (test-foundry/SetWithdrawableGas.t.sol, mainnet fork, cold storage slots):
+  ///      measurements on a mainnet fork with cold storage slots:
   ///      measured base 35k + 24k*n; prior formula 22k + 19k*n underbudgeted every n.
   function gasLimitFor(bytes4 selector, uint256 n) internal view returns (uint128) {
-    // Measured 2026-05-21 on mainnet fork with cold storage slots: see solidity/test-foundry/SetWithdrawableGas.t.sol
+    // Measured on a mainnet fork with cold storage slots.
     if (selector == setWithdrawableSelector) return uint128(35_000 + 24_000 * n);
     revert UnauthorizedSelector();
   }

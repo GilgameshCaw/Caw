@@ -25,8 +25,8 @@ import "./interfaces/ICawActions.sol";
 ///         Per-action caps are immutable constants. The full economic model
 ///         (which actions cap, at what ETH ceiling) is baked at deploy time.
 ///
-/// @dev    Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///         "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+/// @dev    Audit-finding tags in this contract (e.g. "H-N", "M-N", "Round N")
+///         reference this protocol's published audit trail.
 contract CawCapOracle {
   // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -57,8 +57,8 @@ contract CawCapOracle {
 
   /// @notice Per-action ETH-denominated cost ceilings (in wei).
   ///         Anchored to LIKE = $0.01 at ETH = $5,000 (i.e. 2e11 wei),
-  ///         other actions ratioed off LIKE using today's baseline CAW
-  ///         amounts from CawActions.sol:1085-1126.
+  ///         other actions ratioed off LIKE using the baseline CAW
+  ///         amounts defined in CawActions.
   ///
   ///         Values are immutable. If protocol economics need to change, the
   ///         oracle is redeployed (cap-only — the protocol works fine without
@@ -70,11 +70,10 @@ contract CawCapOracle {
   uint256 public constant CAP_UNLIKE_UNFOLLOW   =   1e11; //  $0.005
 
   /// @notice Baseline CAW amounts per action (the manifesto numbers).
-  ///         Mirrored from CawActions for the scale computation. Must be
-  ///         kept in sync with CawActions._applyAction — if you change a
-  ///         baseline there, change it here too. Tests cover this by
-  ///         asserting `oracle.baselineFor(t) == actions._applyAction
-  ///         constant for t`.
+  ///         Mirrored from CawActions for the scale computation. Must remain
+  ///         in sync with CawActions._applyAction; the baselines here mirror
+  ///         the per-action constants applied there, and this invariant is
+  ///         enforced by tests.
   uint256 public constant BASELINE_LIKE              =  2_000;
   uint256 public constant BASELINE_RECAW             =  4_000;
   uint256 public constant BASELINE_CAW               =  5_000;
@@ -98,24 +97,20 @@ contract CawCapOracle {
   ///         all slots are populated.
   uint64 public samplesWritten;
 
-  /// @notice Timestamp of the last time _maybePushCapRatio or _maybePushTipRatio
-  ///         was entered (whether or not it ultimately pushed a new ratio). Used
-  ///         by pushRatioIfStale to rate-limit permissionless callers. Updated on
-  ///         every path that enters the push logic — both the recordSample
-  ///         trampoline and the external pushRatioIfStale function — so the
-  ///         5-minute interval applies uniformly across both callers.
+  /// @notice Timestamp of the last time the push logic was entered (whether or
+  ///         not it ultimately pushed a new ratio). Set by both the recordSample
+  ///         trampoline and the external pushRatioIfStale entry point so the
+  ///         5-minute rate limit for permissionless callers applies uniformly
+  ///         across both paths.
   uint64 public lastPushAttemptAt;
 
   /// @notice Timestamp of the last successful CAP-ratio push to CawActions.
-  ///         L-1 audit fix: separate from the tip-push timer so neither path
-  ///         starves the other's 3-hour heartbeat. Previously a single shared
-  ///         lastSuccessfulPushAt meant frequent cap pushes (volatile market
-  ///         with cap binding) would suppress the tip 3-hour refresh and
-  ///         vice versa.
+  ///         L-1: kept separate from the tip-push timer so neither path
+  ///         suppresses the other's 3-hour refresh heartbeat.
   uint64 public lastSuccessfulCapPushAt;
 
   /// @notice Timestamp of the last successful TIP-ratio push to CawActions.
-  ///         L-1 audit fix sibling — independent heartbeat for the tip path.
+  ///         L-1: independent heartbeat for the tip path.
   uint64 public lastSuccessfulTipPushAt;
 
   /// @notice Minimum interval between organic pushes. If neither the cap nor
@@ -205,7 +200,7 @@ contract CawCapOracle {
 
   /// @notice Permissionless freshness-recovery entry point.
   ///
-  ///         Problem addressed (H-9/H-10): `_maybePushRatio` is normally
+  ///         Problem addressed (H-9/H-10): the push logic is normally
   ///         triggered only by `recordSample`, which is itself triggered by
   ///         incoming L1→L2 LayerZero messages. If the L1 chain is idle for
   ///         >24 h, no fresh sample arrives and CawActions retains a stale
@@ -217,9 +212,9 @@ contract CawCapOracle {
   ///          1. 5-minute rate limit via `lastPushAttemptAt` — callers who
   ///             invoke more frequently than once every 5 minutes waste their
   ///             own gas and get nothing.
-  ///          2. The existing hysteresis check inside `_maybePushRatio`
-  ///             (100 bps threshold) — if the ratio hasn't moved materially,
-  ///             no external call to CawActions is made.
+  ///          2. The hysteresis check inside the push logic (100 bps
+  ///             threshold) — if the ratio hasn't moved materially, no
+  ///             external call to CawActions is made.
   ///
   ///         The function does not guarantee that a push will occur; it simply
   ///         ensures the oracle re-evaluates its current TWAP and pushes only
@@ -275,7 +270,7 @@ contract CawCapOracle {
     // or 3-hour stale refresh (so CawActions never holds ancient state).
     bool staleRefresh = block.timestamp - lastSuccessfulCapPushAt >= MIN_PUSH_REFRESH_INTERVAL;
     if (currentRatio == 0 || _movedMoreThanBps(uint256(currentRatio), newRatio, 100) || staleRefresh) {
-      // H-8: explicit overflow guard before narrowing cast.
+      // H-8: Explicit overflow guard before narrowing cast.
       // At astronomical CAW prices the UQ112.112 TWAP could theoretically exceed
       // uint192.max (≈ 6.28e57); silent truncation would push a wrong ratio to
       // CawActions. Revert instead — the cap goes dormant (safe side).
@@ -434,7 +429,7 @@ contract CawCapOracle {
     if (timeDelta < MIN_WINDOW) return (0, false);
 
     unchecked {
-      // C-2 fix: V2 `priceCumulativeLast` is uint256 and wraps mod 2^256;
+      // C-2: Uniswap V2 `priceCumulativeLast` is uint256 and wraps mod 2^256;
       // consumers recover the delta by unchecked subtraction. We store the
       // low 224 bits of the cumulative in `Sample.cumulative`, so a wrap
       // through the 2^224 boundary mid-window would surface here as

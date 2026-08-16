@@ -12,25 +12,23 @@ import "./ISwapRouter.sol";
 ///      Because the network receives CAW from the same swap, they are incentivized to
 ///      set a good minCawOut — a bad value hurts their own payout equally.
 ///
-///      NOTE TO FUTURE AUDITORS — two findings re-examined 2026-05-17 and
-///      intentionally left as-is:
+/// @dev Two design decisions are intentional and documented here:
 ///
-///      1) `deadline: block.timestamp` on swapExactETHForTokens. Technically
-///         loose (the tx never expires from the router's perspective), but the
-///         MEV-sandwich vector requires a slack minCawOut. The only caller is
-///         CawProfile.withdrawFees, and the network operator who triggers it
-///         receives half the swap output — so they have a direct,
-///         equal-magnitude incentive to set minCawOut tight. CawProfile is
-///         immutable, so "future upgrade passes minCawOut=0" is not a real
-///         scenario. The minCawOut incentive IS the safety mechanism.
+///      1) `deadline: block.timestamp` on swapExactETHForTokens does not
+///         enforce tx expiry. Sandwich protection instead relies on
+///         `minCawOut`: the sole caller is CawProfile.withdrawFees, and the
+///         network operator that triggers it receives half the swap output,
+///         giving an equal-magnitude incentive to set `minCawOut` tightly.
+///         CawProfile is immutable, so `minCawOut` cannot later be forced to
+///         zero. The `minCawOut` slippage bound is the safety mechanism.
 ///
-///      2) Unchecked `CAW.transfer` return values. The real CAW ERC-20 is
-///         OpenZeppelin-derived and reverts on failure, so the missing return
-///         check is a no-op. SafeERC20 would be defensive style only — not
-///         a security gap on the deployed token.
+///      2) `CAW.transfer` return values are not checked. The deployed CAW
+///         ERC-20 is OpenZeppelin-derived and reverts on failure, so an
+///         unchecked return cannot silently succeed. SafeERC20 is therefore
+///         not required for correctness on the deployed token.
 ///
 /// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+///      "Audit fix") are decoded in the project audit documentation.
 contract CawBuyAndBurn {
 
   IERC20 public immutable CAW;

@@ -17,8 +17,8 @@ interface ICawNetworkManagerSponsorExempt {
   function clearDepositFeeExempt() external;
 }
 
-/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N",
-///      "Audit fix YYYY-MM-DD") are decoded in `docs/AUDIT_TRAIL.md`.
+/// @dev Audit-trail tags in this contract (e.g. "H-N", "M-N", "Round N")
+///      reference findings resolved during the security-audit process.
 contract CawProfileMinter is Context {
 
   mapping(string => uint32) public idByUsername;
@@ -28,7 +28,7 @@ contract CawProfileMinter is Context {
 
   error EthSweepFailed();
 
-  /// @notice FL-1 (audit 2026-06-11): every mint/deposit/auth entrypoint forwards
+  /// @notice Every mint/deposit/auth entrypoint forwards
   ///         the full msg.value to CawProfile, which refunds any unused LZ fee to
   ///         its caller — i.e. back to THIS contract (msg.sender from CawProfile's
   ///         view), not the original payer. The Minter has receive() but no sweep,
@@ -71,16 +71,15 @@ contract CawProfileMinter is Context {
   ///        3 enrolled passkeys:  ~61,000 gas (worst-case: match on last key)
   ///        Real P-256 precompile adds ~6,500 gas over mock → ~67,500 worst-case
   ///
-  ///      WHY THE OLD VALUE (50k) WAS WRONG:
+  ///      WHY 50k IS INSUFFICIENT:
   ///        SmartEOA.isValidSignature (WebAuthn path) calls _verifyWebAuthnSafe,
   ///        which does a SELF-STATICCALL to _verifyWebAuthnExternal.  The EVM
   ///        63/64 gas forwarding rule means the inner call receives at most
   ///        floor(gas_remaining * 63/64) gas.  On a 50k budget the inner call
-  ///        ran dry at ~49k gas used (confirmed: Sepolia tx
-  ///        0x4c15ab98c1a5dee747da8a7afa9906e9216651bae3f2371063110dafd7230a10
-  ///        via Infura debug_traceTransaction).  isValidSignature returned
-  ///        0xffffffff (fail value), _checkPermit reverted "Bad sig",
-  ///        SmartEOA.initialize wrapped as MinterCallFailed.
+  ///        runs dry at ~49k gas used (confirmed via transaction tracing on a
+  ///        testnet fork).  isValidSignature returns
+  ///        0xffffffff (fail value), _checkPermit reverts "Bad sig",
+  ///        SmartEOA.initialize wraps as MinterCallFailed.
   ///
   ///      WHY 150k:
   ///        Worst-case measured: ~67,500 gas (3 passkeys, real P-256 precompile).
@@ -92,7 +91,6 @@ contract CawProfileMinter is Context {
   ///        The cap still bounds a malicious ERC-1271 wallet to at most 150k gas
   ///        wasted per _checkPermit call.  The sponsor sets the outer tx gas limit;
   ///        a bad wallet cannot cause the sponsor tx to OOG beyond ERC1271_GAS_LIMIT.
-  ///        (The old 50k bound was tighter but broke legitimate SmartEOA users.)
   ///
   ///      NOTE: CawActions.sol and CawActionsERC1271.sol have their own copies of
   ///        ERC1271_GAS_LIMIT = 50k (immutable on-chain).  Those only call
@@ -536,7 +534,7 @@ contract CawProfileMinter is Context {
   //   3. Delegate to _checkPermit: read nonce, verify ERC-1271 sig, consume nonce.
   //   4. Forward to the existing CawProfile entry point.
   //
-  // WALLET COMPATIBILITY (clarified after integration audit #52 M-1):
+  // WALLET COMPATIBILITY:
   //   The Minter staticcalls TWO interfaces on the owner/recipient: standard
   //   ERC-1271 isValidSignature(digest, sig) AND CAW-specific
   //   ISmartEOA.{nonceOf, consumeNonce} for replay protection. To use these
@@ -571,9 +569,9 @@ contract CawProfileMinter is Context {
   ///
   ///         NOTE: `depositAmount = 0` is INTENTIONALLY permitted (matches the
   ///         non-sponsored `mintAndDepositFor` semantics — a user may want to
-  ///         register a username with no initial CAW balance). Audit #8 INFO-2
-  ///         flagged this as inconsistent with `depositForSponsored`'s zero-amount
-  ///         guard, but the operations have different semantics: depositForSponsored
+  ///         register a username with no initial CAW balance). This differs from
+  ///         `depositForSponsored`'s zero-amount
+  ///         guard because the operations have different semantics: depositForSponsored
   ///         at amount=0 is a no-op (nonce burn with no side effect), while
   ///         mintAndDepositSponsored at depositAmount=0 still mints the NFT + name.
   ///         Sponsors should validate amounts off-chain before submitting.
@@ -633,7 +631,7 @@ contract CawProfileMinter is Context {
   ) external payable sweepResidualEth {
     require(recipient.code.length > 0, "Direct submit required");
     require(repayAmount == 0 || repayAmount <= depositAmount * 2, "Repay cap");
-    // CPM-INFO-2 (audit 2026-06-13): a repay obligation with sponsorTokenId 0 is a
+    // A repay obligation with sponsorTokenId 0 is a
     // degenerate no-op (repaySponsorTokenId 0 → forgiveSponsorRepay reverts Unauth,
     // sweep credits token 0). Reject it so a repay always names a real sponsor.
     require(repayAmount == 0 || sponsorTokenId != 0, "Repay needs sponsor");
@@ -679,7 +677,7 @@ contract CawProfileMinter is Context {
       emit SponsorRepaySet(newId, sponsorTokenId, repayAmount, depositAmount);
     }
     // Route LZ fee refund to `recipient` (the user), not to tx.origin (sponsor server).
-    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    // The LZ fee refund routes to the user, never to the sponsor's tx.origin.
     CawProfile.setLzRefundTo(payable(recipient));
     // Layer 2: if the resolved sponsor is authorized for this network, flag the
     // deposit fee exempt for exactly this mint (keyed to the Minter-resolved
@@ -708,8 +706,7 @@ contract CawProfileMinter is Context {
   ///         user's CAW balance and has pre-approved this Minter for at least `amount`.
   ///         The Minter pulls `amount` from the sponsor, approves CawProfile to pull it
   ///         back, then delegates to CawProfile.depositFor. The deposit credit goes to
-  ///         the token's current owner (not to msg.sender). Integration audit 2026-05-21
-  ///         HIGH-1: this pull-and-approve was missing in the initial Step 3b implementation.
+  ///         the token's current owner (not to msg.sender).
   ///
   /// @param networkId       CAW network.
   /// @param tokenId         Token whose balance to top up.
@@ -730,7 +727,6 @@ contract CawProfileMinter is Context {
     // Reject zero-amount calls BEFORE _checkPermit consumes the user's nonce.
     // CawProfile.depositFor has its own ZeroDeposit guard but it fires after the
     // nonce was already consumed by _checkPermit, wasting the owner's permit slot.
-    // Re-audit 2026-05-21 LOW.
     require(amount > 0, "Zero deposit");
     address owner = CawProfile.ownerOf(tokenId);
     require(owner.code.length > 0, "Direct submit required");
@@ -749,10 +745,9 @@ contract CawProfileMinter is Context {
     // Pull CAW from the sponsor into the Minter, then approve CawProfile to pull
     // it back. Required because CawProfile.depositFor does
     // CAW.transferFrom(msg.sender, ...) where msg.sender is THIS contract — we
-    // must have the balance + allowance before delegating. Matches the pattern
-    // used by mintAndDepositFor at line ~159. The sponsor server must hold the
+    // must have the balance + allowance before delegating. Matches the pull-and-
+    // approve pattern used by mintAndDepositFor. The sponsor server must hold the
     // user's CAW and have pre-approved the Minter for at least `amount`.
-    // Integration audit 2026-05-21 HIGH-1.
     //
     // EIP-7702 fix: derive the CAW funder the same way as mintAndDepositSponsored:
     //   msg.sender.code.length == 0  →  funder = msg.sender  (direct EOA call)
@@ -762,9 +757,9 @@ contract CawProfileMinter is Context {
     CAW.transferFrom(depositSponsor, address(this), amount);
     CAW.approve(address(CawProfile), amount);
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
-    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    // The LZ fee refund routes to the user, never to the sponsor's tx.origin.
     CawProfile.setLzRefundTo(payable(owner));
-    // FEE-EXEMPT-1 (audit 2026-06-13): mirror mintAndDepositSponsored — if the
+    // Mirror mintAndDepositSponsored — if the
     // resolved sponsor is authorized for this network, exempt the deposit fee for
     // exactly this call. Keyed to the Minter-resolved sponsor, never tx.origin.
     ICawNetworkManagerSponsorExempt nmd =
@@ -809,7 +804,7 @@ contract CawProfileMinter is Context {
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(owner, ACTION_AUTHENTICATE, permitNonce, digest, sig);
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
-    // Audit fix 2026-05-22 (H-1: tx.origin as LZ refund in sponsored flows).
+    // The LZ fee refund routes to the user, never to the sponsor's tx.origin.
     CawProfile.setLzRefundTo(payable(owner));
     CawProfile.authenticateForMinter{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount);
     CawProfile.setLzRefundTo(payable(address(0)));
@@ -859,7 +854,7 @@ contract CawProfileMinter is Context {
   /// @notice Accept ETH refunds from CawProfile._refundUnusedLzEth. Without
   ///         this, the low-level call{value: amount}("") in _refundUnusedLzEth
   ///         reverts when the Minter is msg.sender, causing all bypassLZ mint
-  ///         paths to fail. (H-1)
+  ///         paths to fail.
   receive() external payable {}
 
   function costOfName(string memory username) public pure returns (uint256) {

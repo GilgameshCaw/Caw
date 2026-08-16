@@ -31,19 +31,15 @@ contract CawProfileQuoter {
   ICawProfileForQuoter public immutable cawProfile;
 
   // Unified L2 dispatcher selector — matches CawProfileLedger.lzDepositMintSession exactly.
-  // Replaces the 6 deleted per-flow selectors (depositAndUpdateOwners, authenticateAndUpdateOwners,
-  // mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
-  // mintAuthAndRegisterSessionAndUpdateOwners).
   bytes4 private constant _lzBundleSelector = bytes4(keccak256(
     "lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"
   ));
 
   // Remaining single-purpose selectors still present on CawProfileLedger.
   bytes4 private constant _updateOwnersSel  = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
-  // ACC-1 (audit 2026-06-11): must match the real 3-arg signature on
-  // CawProfileLedger (setAllowFreeAuth(uint32,bool,uint64)) — the stale 2-arg
-  // selector has no entry in CawProfile.gasBaseFor, so gasLimitFor returned 0 and
-  // the quote covered 0 destination gas, underfunding broadcastAllowFreeAuth.
+  // ACC-1: selector must match the real 3-arg CawProfileLedger.setAllowFreeAuth(uint32,bool,uint64)
+  // signature; an incorrect signature has no CawProfile.gasBaseFor entry, so gasLimitFor returns 0
+  // and the quote would underfund the destination gas for broadcastAllowFreeAuth.
   bytes4 private constant _allowFreeAuthSel = bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
 
   constructor(address _cawProfile) {
@@ -226,12 +222,11 @@ contract CawProfileQuoter {
   // ============================================
   // The on-chain LZ + storage fees for a ZAP are identical to its CAW-paid
   // sibling — the swap leg is a frontend concern (read pool reserves,
-  // compute minCawOut). We expose `*ZapQuote` thin wrappers so the
-  // frontend can call ONE quoter function and not worry about which
-  // selector/payload to pass. Critically, the mint zap quotes drop the
-  // `depositAmount` argument because the swap output (and therefore the
-  // deposit) is unknown until the tx settles; we use a placeholder value
-  // for LZ payload sizing only.
+  // compute minCawOut). The `*ZapQuote` wrappers provide a single quoter
+  // entry point so callers need not select the selector/payload directly.
+  // The mint zap quotes drop the `depositAmount` argument because the swap
+  // output (and therefore the deposit) is unknown until the tx settles; a
+  // placeholder value is used for LZ payload sizing only.
 
   function depositZapQuote(uint32 cawNetworkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     // Storage fees: deposit + auth (auth only if not yet authenticated).
@@ -239,8 +234,7 @@ contract CawProfileQuoter {
     if (!cawProfile.authenticated(cawNetworkId, tokenId))
       quote.nativeFee += cawProfile.networkManager().getAuthFee(cawNetworkId) * 2;
 
-    // bypassLZ: no LZ leg, just storage fees. Mirrors the mintAndDeposit
-    // short-circuit added in 48e37cb.
+    // bypassLZ: no LZ leg, just storage fees. Mirrors the mintAndDeposit short-circuit.
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     // Cross-chain (true L2 storage): include the LZ messaging cost.

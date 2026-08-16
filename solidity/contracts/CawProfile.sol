@@ -78,7 +78,7 @@ contract CawProfile is
   bool private fromLZ;
   /// @dev Transient refund-address override for sponsored LZ sends.
   ///      Zero = use tx.origin (default). Set by CawProfileMinter's sponsored
-  ///      entry points; cleared after the call. Audit fix 2026-05-22 (H-1).
+  ///      entry points; cleared after the call. Audit fix (H-1).
   address payable private _lzRefundTo;
   /// @dev Transient source-eid stash for the LZ delivery path. Set to
   ///      `origin.srcEid` inside `_lzReceive` so `setWithdrawable` (run via
@@ -118,7 +118,7 @@ contract CawProfile is
   ///         LZ messages. Incremented each time broadcastAllowFreeAuth is called.
   ///         The L2 receiver only applies updates whose seq > lastAllowFreeAuthSeq[networkId],
   ///         preventing stale or replayed LZ messages from rolling back free-auth state.
-  ///         (Audit fix 2026-05-23.)
+  ///         (Audit fix.)
   /// @dev Internal: the seq value is embedded in every LZ message, so indexers/monitors
   ///      can reconstruct it from events rather than from a storage getter.
   mapping(uint32 => uint64) internal allowFreeAuthSeq;
@@ -182,11 +182,12 @@ contract CawProfile is
     cawProfileLedger = CawProfileLedger(_cawProfileLedger);
     minter = _minter;
 
-    // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
-    // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
+    // Per-selector base gas budgets. authSelector was raised from 50k to 85k to
+    // cover an observed out-of-gas on the L2 receive path; the remaining
+    // selectors keep their measured baselines. Bundled session
     // selectors add ~80k to their non-bundled counterpart for the StoredSession
     // SSTORE (3 cold fields ~66k) + SessionCreated event (~3k).
-    // CL-4 fix bumped each L2 handler by ~20-30k for the per-tokenId stamp
+    // CL-4 fix raised each L2 handler by ~20-30k for the per-tokenId stamp
     // SSTORE + epoch SLOAD + StoredSession.epoch SSTORE on session-bundling
     // selectors. Per-token cost in `gasLimitFor` separately covers the new
     // stamp slot per ownership update.
@@ -196,12 +197,12 @@ contract CawProfile is
     // Every L1->L2 message runs the CawCapOracle.recordSample piggyback on
     // receipt BEFORE the handler dispatch. When a live price sample crosses the
     // TWAP hysteresis, recordSample synchronously pushes a new ratio into
-    // CawActions — measured worst case ~165k gas (real CawCapOracle; see
-    // test-foundry/LzReceiveOracleOverhead.t.sol) — and if the budget doesn't
-    // cover it the whole message OOGs at the executor (CouldNotParseError 0x).
-    // That's what starved transferAndSync (operator-reported): updateOwners' 40k base +
-    // 65k*1 = 105k couldn't fit the ~68k handler + the oracle push. The
-    // allowFreeAuth / setNetworkTipTarget 80k bases had the SAME latent gap —
+    // CawActions — measured worst case ~165k gas (real CawCapOracle) — and if
+    // the budget doesn't cover it the whole message OOGs at the executor
+    // (CouldNotParseError 0x).
+    // A base that omits the oracle push undersizes updateOwners: 40k base +
+    // 65k*1 = 105k cannot fit the ~68k handler plus the oracle push. The
+    // allowFreeAuth / setNetworkTipTarget 80k bases had the same latent gap —
     // sized for the cheap sample-write (~35k), not the push.
     //
     // Fix: every selector that carries the piggyback now budgets 250k base —
@@ -218,8 +219,8 @@ contract CawProfile is
     gasBaseFor[_allowFreeAuthSelector]           = 250_000;
     gasBaseFor[_setNetworkTipTargetSelector]     = 250_000;
 
-    // Phase 7 ownership handover happens RIGHT HERE in the constructor —
-    // the deployer EOA never holds owner authority on CawProfile post-
+    // Ownership handover happens in the constructor — the deployer EOA never
+    // holds owner authority on CawProfile post-
     // deploy. The Minter wiring is also immutable (set above), so the only
     // post-deploy admin surface is PathwayExpander.addPeer (per-eid OnlyOnce
     // on this contract; the expander itself is additions-only by design).
@@ -238,8 +239,8 @@ contract CawProfile is
   }
 
   /// @dev SECURITY NOTE — setDelegate hardening: the inherited setDelegate
-  ///      is non-virtual; rely on owner renouncement post-deploy. See
-  ///      CawActionsArchive.sol for full reasoning.
+  ///      is non-virtual; the design relies on owner renouncement post-deploy
+  ///      so it cannot be repointed.
 
   function tokenURI(uint256 tokenId) override public view returns (string memory) {
     return uriGenerator.generate(usernames[uint32(tokenId) - 1]);
@@ -265,8 +266,8 @@ contract CawProfile is
   ///      when `sessionExtra.length > 0`. Pass empty bytes for the original behavior.
   ///      Encoding: abi.encode(address sessionKey, uint64 expiry, uint256 spendLimit).
   ///
-  /// @dev SECURITY NOTE — trust chain for the bundled session leg (audit 2026-04-28):
-  ///      Only the Minter (set once via setMinter) can call this. The Minter's bundled
+  /// @dev SECURITY NOTE — trust chain for the bundled session leg:
+  ///      Only the Minter (set immutable in the constructor) can call this. The Minter's bundled
   ///      wrapper `mintAndAuthAndQuickSign` is **self-mint only**: it always sets
   ///      `recipient = msg.sender` before calling here, so `owner` is the EOA that paid
   ///      gas. There is NO `*For` variant of the bundled flow — a third party cannot
@@ -325,8 +326,8 @@ contract CawProfile is
   ///      when `sessionExtra.length > 0`. Pass empty bytes for the original behavior.
   ///      Encoding: abi.encode(address sessionKey, uint64 expiry, uint256 spendLimit).
   ///
-  /// @dev SECURITY NOTE — trust chain for the bundled session leg (audit 2026-04-28):
-  ///      Only the Minter (set once via setMinter) can call this. The Minter's bundled
+  /// @dev SECURITY NOTE — trust chain for the bundled session leg:
+  ///      Only the Minter (set immutable in the constructor) can call this. The Minter's bundled
   ///      wrapper `mintAndDepositAndQuickSign` is **self-mint only**: it always sets
   ///      `recipient = msg.sender` before calling here, so `owner` is the EOA that paid
   ///      gas. There is NO `*For` variant of the bundled flow — a third party cannot
@@ -345,7 +346,7 @@ contract CawProfile is
 
     CAW.transferFrom(msg.sender, address(this), depositAmount);
     unchecked { totalCaw += depositAmount; }
-    // VAULT-1 (audit 2026-06-10): mirror `depositFor` — credit the per-peer
+    // VAULT-1: mirror `depositFor` — credit the per-peer
     // deposit ledger. Without this, the matching `setWithdrawable` debit
     // (`cawDepositedByPeer[srcEid] -= totalAmount`) underflow-reverts on the
     // user's first withdraw, permanently locking the deposited CAW. Runs for
@@ -371,7 +372,7 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      // RT-1 (audit 2026-06-10): pass `owner` so the ledger sets ownerOf for the
+      // RT-1: pass `owner` so the ledger sets ownerOf for the
       // freshly minted token (mint+deposit otherwise leaves ownerOf==address(0)
       // and every CawAction reverts SessionExpired). depositFor passes
       // address(0) below to skip the owner-set on existing tokens. Sync lives
@@ -393,7 +394,7 @@ contract CawProfile is
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload;
       if (sessionExtra.length == 0) {
-        // SEAM-1/CPM-2 (audit 2026-06-13): pass `username` (not "") so the L2
+        // SEAM-1/CPM-2: pass `username` (not "") so the L2
         // ledger records it, matching the mintAndAuth cross-chain path. Empty
         // here left deposit-minted tokens with no username on L2.
         payload = _bundleNoSession(cawNetworkId, newId, depositAmount, username, tokenIds, owners, stamps);
@@ -401,9 +402,9 @@ contract CawProfile is
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
         payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
-      // Cross-chain repay registration is not yet supported. The Networks
-      // using cross-chain L2 storage (Base, Arbitrum...) don't enable
-      // sponsor repay on testnet. Add the LZ relay when those go live.
+      // Cross-chain repay registration is not supported: Networks using
+      // cross-chain L2 storage do not enable sponsor repay. The path reverts
+      // rather than silently dropping the repay.
       if (repayAmount > 0) revert RepayCrossChainUnsupported();
       lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
@@ -440,11 +441,7 @@ contract CawProfile is
     return fee * 2;
   }
 
-  /// @dev Refund any unused LZ ETH back to the caller. Called from the
-  ///      bypassLZ / no-pending-queue branches that don't actually send
-  ///      a LayerZero message; without this the over-paid `lzEthAmount`
-  ///      sits in the contract permanently (no sweep path). Audit fix
-  ///      2026-05-08 (L1 M-1).
+  /// @dev Encode an lzDepositMintSession payload with an empty session leg.
   function _bundleNoSession(uint32 nid, uint32 tid, uint256 amt, string memory uname, uint32[] memory tids, address[] memory owns, uint64[] memory stmps) internal pure returns (bytes memory) {
     return abi.encodeWithSelector(_lzBundleSelector, nid, tid, amt, uname, address(0), 0, 0, 0, tids, owns, stmps);
   }
@@ -455,6 +452,11 @@ contract CawProfile is
     return abi.decode(sessionExtra, (address, uint64, uint256, uint64));
   }
 
+  /// @dev Refund any unused LZ ETH back to the caller. Called from the
+  ///      bypassLZ / no-pending-queue branches that don't actually send
+  ///      a LayerZero message; without this the over-paid `lzEthAmount`
+  ///      sits in the contract permanently (no sweep path). Audit fix
+  ///      (L1 M-1).
   function _refundUnusedLzEth(uint256 amount) internal {
     if (amount == 0) return;
     // Refund to the SAME address lzSend's overpay-refund uses (tx.origin, or the
@@ -565,7 +567,7 @@ contract CawProfile is
     // before this call — so the supplied `owner` should always match the chain
     // state. Re-check here so a future Minter-side bug (or v2 Minter that
     // accepts caller-supplied owner) can't silently inject a fake new-owner
-    // hint into the LZ payload. Final audit 2026-05-21 L-1.
+    // hint into the LZ payload. Audit fix (L-1).
     if (ownerOf(tokenId) != owner) revert NotOwner();
     _authenticateBody(cawNetworkId, tokenId, lzDestId, owner, lzTokenAmount);
   }
@@ -583,14 +585,11 @@ contract CawProfile is
     // chain X via this function (rather than mintAndAuth/mintAndDeposit
     // which DO subscribe) would never receive ownership-sync messages on
     // chain X after a future transfer — the previous owner could keep
-    // posting as the username on chain X indefinitely. Audit fix
-    // 2026-05-08 (H-1, CawProfile-agent finding).
+    // posting as the username on chain X indefinitely. Audit fix (H-1).
     _addChosenChain(tokenId, lzDestId);
 
     if (lzDestId == mainnetLzId) {
-      // Args were previously swapped (tokenId, cawNetworkId) — both uint32 so it
-      // compiled, but set authenticated[tokenId][cawNetworkId] (wrong key).
-      // Correct order is (cawNetworkId, tokenId). Pass `owner` so the ledger sets
+      // Key order is (cawNetworkId, tokenId). Pass `owner` so the ledger sets
       // ownerOf — the RT-1 sibling: a token authenticated without a prior deposit
       // would otherwise keep ownerOf == address(0) and brick every CawAction.
       cawProfileLedger.auth(cawNetworkId, tokenId, owner);
@@ -654,7 +653,7 @@ contract CawProfile is
     // but a zero-amount call lets a third party permanently mark a token
     // as subscribed to chains the owner never opted into, plus auth them
     // to networks they didn't pick. Require a non-zero deposit so the caller
-    // at least has economic skin in the game. Audit fix 2026-05-08 (M-2).
+    // at least has economic skin in the game. Audit fix (M-2).
     if (amount == 0) revert ZeroDeposit();
 
     _addChosenChain(tokenId, lzDestId);
@@ -672,7 +671,7 @@ contract CawProfile is
     // returns the same feeAddress for every fee type (single per-Network
     // recipient), so the user-visible behavior is unchanged — but if a
     // future NetworkManager upgrade splits them per fee, this path
-    // already routes correctly. Audit fix 2026-05-17 H-1.
+    // already routes correctly. Audit fix (H-1).
     (uint256 depositFee, address depositFeeAddr) = networkManager.getDepositFeeAndAddress(cawNetworkId);
     uint256 totalFeesPaid = payFee(depositFee, depositFeeAddr);
 
@@ -718,7 +717,7 @@ contract CawProfile is
   ///         flush entirely — those callers should send only the Network
   ///         withdraw fee as msg.value. _updateNewOwners handles both
   ///         no-peer and bypassLZ branches.
-  /// @dev WDFEE-1 (audit 2026-06-13) — ACCEPTED, not a fix. The withdraw fee is
+  /// @dev WDFEE-1 — ACCEPTED, not a fix. The withdraw fee is
   ///      looked up from the caller-supplied `cawNetworkId`, which need not be the
   ///      network the CAW was deposited through. This is a CONSEQUENCE of the
   ///      deliberately network-agnostic balance model, not a bug: a token's L2
@@ -736,7 +735,7 @@ contract CawProfile is
   ///      L1 has (authFee==0) is exactly true for the attacker's 0-fee network.
   ///      The only real fix (pin the fee to the originating network, stored at
   ///      setWithdrawable time) imposes an arbitrary restriction on an
-  ///      intentionally open model. Net: accept, do not re-flag.
+  ///      intentionally open model. Net: accepted.
   function withdrawTo(uint32 cawNetworkId, uint32 tokenId, address recipient, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     // Withdraw gate check — delegated to Minter which stores per-tokenId
     // KYC level and mintedAt. If minter is set, the call reverts if the gate
@@ -778,14 +777,14 @@ contract CawProfile is
    * @param lzDestId The destination chain whose pending-transfer queue to flush
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
-  /// @dev ACCEPTED RISK — MP-SESSION-1 (audit 2026-06-10): on cross-chain
+  /// @dev ACCEPTED RISK — MP-SESSION-1: on cross-chain
   ///      deployments (lzDestId != mainnetLzId) the L1 NFT transfers atomically
   ///      here, but the L2 ledger only learns the new owner when the LZ
   ///      `updateOwners` message lands (minutes–hours later). During that window
   ///      the SELLER's pre-existing wallet-scoped session keys remain valid on
   ///      L2, so the seller can spend/withdraw the token's L2 CAW balance after
-  ///      sale. This is a KNOWN, ACCEPTED window — NOT mitigated on-chain. The
-  ///      buyer is warned on the front end that the L2 balance is not guaranteed
+  ///      sale. This is a KNOWN, ACCEPTED window — NOT mitigated on-chain.
+  ///      Integrators should surface that the L2 balance is not guaranteed
   ///      to transfer atomically with the NFT. (bypassLZ co-deployments are
   ///      immune: `_afterTokenTransfer` calls `setOwnerOf` synchronously, which
   ///      bumps the owner session epoch at handover.) Future hardening (escrow /
@@ -828,7 +827,7 @@ contract CawProfile is
   // env config replaced the on-chain registry; no L1→L2 chain-list push is needed.
 
   /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileLedger.
-  /// @dev SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check is
+  /// @dev SECURITY NOTE: No `tokenIds.length == amounts.length` check is
   ///      intentional. The only caller is `CawActions.setWithdrawable` (on L2), which constructs
   ///      both arrays from the same `withdrawCount` variable in lockstep — they are guaranteed
   ///      to have equal length by construction. Adding a length check here would burn L1 gas
@@ -844,7 +843,7 @@ contract CawProfile is
     //      this function directly, but a fromLZ-only gate would always
     //      revert and the WITHDRAW action's L2 debit (which already
     //      happened in CawActions._applyAction.withdrawTokens) would
-    //      have no L1 counterpart. Audit fix 2026-05-08 (C-1).
+    //      have no L1 counterpart. Audit fix (C-1).
     if (!(fromLZ || msg.sender == address(cawProfileLedger))) revert NotL2Mirror();
     // Source eid for per-peer accounting:
     //   - LZ path: stashed by `_lzReceive` from `origin.srcEid`
@@ -945,7 +944,7 @@ contract CawProfile is
   ///      updateOwners handler is the lowest-risk one in the system.
   function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     // Sentinel 0 from peerWithMaxPendingTransfers means "no peers
-    // configured" — nothing to flush. See M-3 fix above.
+    // configured" — nothing to flush.
     if (lzDestId == 0) return;
 
     uint32[] memory tokenIds;
@@ -977,7 +976,7 @@ contract CawProfile is
 
     // Copy payload to memory for delegatecall (payload IS selector++args).
     //
-    // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
+    // SECURITY NOTE: The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - The only authorized function (setWithdrawable) makes zero external calls — no reentrancy vector.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
@@ -1058,13 +1057,12 @@ contract CawProfile is
 
   /// @notice Gas limit forwarded to the destination chain for executing this message.
   /// @dev Sized as base + per-entry * n, where n is the array length in the payload.
-  ///      Numbers are derived from real measurements (scripts/measure-gas.js) plus a safety
+  ///      Numbers are derived from real gas measurements plus a safety
   ///      margin sized to cover cold-slot SSTOREs + the LZ V2 reentrancy-sentry tail.
   ///
-  ///      `authSelector` baseline was bumped from 50k → 85k after a production OOG
-  ///      (Tenderly tx 0x3b8a0232... on Base Sepolia). The other selectors are left at
-  ///      their original measured baselines because they have not shown undersizing
-  ///      in production.
+  ///      `authSelector` baseline was raised from 50k to 85k to cover an observed
+  ///      out-of-gas on the L2 receive path. The other selectors keep their
+  ///      original measured baselines because they have not shown undersizing.
   ///
   ///      `networkGasOverride` from CawNetworkManager is added on top — see that contract
   ///      for the per-network ratchet that lets a network owner bump this budget if some
@@ -1087,7 +1085,7 @@ contract CawProfile is
   // SPONSORED-FLOW REFUND-ROUTING
   // ============================================
   /// @notice Minter-only: set the LZ fee refund recipient for the NEXT lzSend
-  ///         call in this transaction. Audit fix 2026-05-22 (H-1).
+  ///         call in this transaction. Audit fix (H-1).
   /// @param refundTo Address to refund excess LZ fee to (0 = revert to tx.origin).
   function setLzRefundTo(address payable refundTo) external {
     if (minter != msg.sender) revert NotMinter();
