@@ -39,31 +39,57 @@ const TX_CACHE_MAX = 200
 // (zinsanjp / nyaromesama co-located V2 bring-up.)
 const L2_LOG_CHUNK_BLOCKS = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
 
+// Distinguishes two very different reasons fetchPackedActionsFromTx can
+// come back empty:
+//   - 'not_applicable': the tx was fetched fine but isn't a
+//     (safe)processActions/processActionsERC1271 call. This is expected and
+//     harmless -- ActionsProcessed can in principle be emitted by txs this
+//     gatherer doesn't need to unpack, and skipping it is correct, not a
+//     failure.
+//   - 'fetch_failed': we couldn't even get tx.data (RPC error, dropped
+//     response) or couldn't parse it as a valid call. This means we don't
+//     know what the tx actually was -- silently skipping this one is how
+//     actions get permanently lost, since the caller uses this signal to
+//     decide whether it's safe to advance the block cursor.
+type FetchPackedActionsResult =
+  | { kind: 'ok'; data: string }
+  | { kind: 'not_applicable' }
+  | { kind: 'fetch_failed' }
+
 async function fetchPackedActionsFromTx(
   provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
   txHash: string,
-): Promise<string | null> {
+): Promise<FetchPackedActionsResult> {
   const hit = txDataCache.get(txHash)
-  if (hit !== undefined) return hit
-  const tx = await provider.getTransaction(txHash)
-  if (!tx?.data) return null
+  if (hit !== undefined) return { kind: 'ok', data: hit }
+  let tx: { data?: string } | null
+  try {
+    tx = await provider.getTransaction(txHash)
+  } catch {
+    return { kind: 'fetch_failed' }
+  }
+  if (!tx?.data) return { kind: 'fetch_failed' }
   try {
     const parsed = PROCESS_ACTIONS_IFACE.parseTransaction({ data: tx.data })
-    if (!parsed) return null
+    if (!parsed) return { kind: 'not_applicable' }
     if (
       parsed.name !== 'processActions' &&
       parsed.name !== 'safeProcessActions' &&
       parsed.name !== 'processActionsERC1271'
-    ) return null
+    ) return { kind: 'not_applicable' }
     const packed = parsed.args.packedActions as string
     if (txDataCache.size >= TX_CACHE_MAX) {
       const firstKey = txDataCache.keys().next().value as string | undefined
       if (firstKey) txDataCache.delete(firstKey)
     }
     txDataCache.set(txHash, packed)
-    return packed
+    return { kind: 'ok', data: packed }
   } catch {
-    return null
+    // parseTransaction threw on malformed calldata -- we can't tell if this
+    // was a genuinely unrelated tx or corrupted data from a bad RPC
+    // response, so treat it as a fetch failure rather than assuming it's
+    // safe to skip.
+    return { kind: 'fetch_failed' }
   }
 }
 
@@ -218,14 +244,24 @@ export default async function listenForRawEvents(
   // batch method.
   async function processEvents(events: Log[], _contract: Contract) {
     for (const ev of events) {
-      const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.transactionHash)
-      if (!packedHex) {
-        // RPC dropped tx data for this hash, or the tx wasn't a (safe)processActions
-        // call. We can't reconstruct the actions without the bytes; log and skip.
-        // The next reindex against an archive node will recover.
-        console.warn(`[RawEventsGatherer] Could not fetch packedActions calldata for tx ${ev.transactionHash} — skipping event`)
+      const packedResult = await fetchPackedActionsFromTx(httpProvider, ev.transactionHash)
+      if (packedResult.kind === 'not_applicable') {
+        // Tx fetched and parsed fine; it just isn't a (safe)processActions/
+        // processActionsERC1271 call. Nothing to recover -- correctly skip.
         continue
       }
+      if (packedResult.kind === 'fetch_failed') {
+        // Could not fetch or parse the tx -- we don't know what actions (if
+        // any) it contained. Throwing here (rather than skipping) is load-
+        // bearing: the caller (poll()) only advances lastSyncedBlock after
+        // processEvents() returns successfully. Skipping silently would let
+        // the cursor move past this block, permanently losing any actions
+        // in it if this really was an RPC hiccup rather than a benign
+        // "unrelated tx" case. Throwing forces a retry on the next poll
+        // tick (or RPC fallback rotation) instead.
+        throw new Error(`[RawEventsGatherer] Could not fetch/parse packedActions calldata for tx ${ev.transactionHash} (block ${ev.blockNumber}) — aborting batch to retry`)
+      }
+      const packedHex = packedResult.data
       const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
       const actions = unpackActions(packedBuf)
 
@@ -384,11 +420,21 @@ export default async function listenForRawEvents(
       ) => {
         console.log("[RawEventsGatherer] Raw event received via WebSocket", ev)
         try {
-          const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
-          if (!packedHex) {
-            console.warn(`[RawEventsGatherer] WS: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping`)
+          const packedResult = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
+          if (packedResult.kind !== 'ok') {
+            // WebSocket path has no block-cursor to protect (HTTP polling
+            // is the source of truth for lastSyncedBlock), so there's
+            // nothing to lose by skipping here beyond this one event --
+            // unlike processEvents() above, throwing wouldn't prevent any
+            // cursor advancement. If this was a genuine RPC hiccup, the
+            // HTTP poller's own fetch of the same tx will still throw and
+            // retry correctly.
+            if (packedResult.kind === 'fetch_failed') {
+              console.warn(`[RawEventsGatherer] WS: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping (HTTP poller will retry if this was an RPC error)`)
+            }
             return
           }
+          const packedHex = packedResult.data
           const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
           const wsActions = unpackActions(packedBuf)
 
@@ -446,11 +492,18 @@ export default async function listenForRawEvents(
         ) => {
           console.log("[RawEventsGatherer] ERC-1271 raw event received via WebSocket", ev)
           try {
-            const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
-            if (!packedHex) {
-              console.warn(`[RawEventsGatherer] WS ERC-1271: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping`)
+            const packedResult = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
+            if (packedResult.kind !== 'ok') {
+              // Same reasoning as the sibling WS handler above: no
+              // block-cursor to protect here, and the HTTP poller's own
+              // fetch of this tx will throw+retry if this was a genuine
+              // RPC failure.
+              if (packedResult.kind === 'fetch_failed') {
+                console.warn(`[RawEventsGatherer] WS ERC-1271: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping (HTTP poller will retry if this was an RPC error)`)
+              }
               return
             }
+            const packedHex = packedResult.data
             const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
             const wsActions = unpackActions(packedBuf)
 
