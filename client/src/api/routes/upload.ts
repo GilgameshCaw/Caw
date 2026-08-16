@@ -131,7 +131,18 @@ const upload = multer({
   }
 })
 
-router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
+// Pre-auth guard: requireAuth({ anySession: true }) only needs the
+// Authorization/cookie header (via extractSession), so it can reject
+// unauthenticated requests before Multer buffers the multipart body into
+// heap memory. Without this, an unauthenticated request still gets a 401,
+// but only after Multer has already read the full payload (up to 100MB:
+// 10 files x 10MB) into memory -- letting an unauthenticated client burn
+// server memory it was never going to be allowed to use.
+//
+// The downstream requireAuth({ field: 'tokenId', verifyOwnership: true })
+// is unchanged and still runs after Multer, since it needs the parsed
+// body.tokenId.
+router.post('/', requireAuth({ anySession: true }), upload.array('media', 10), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { tokenId } = req.body
     const files = req.files as Express.Multer.File[]
@@ -213,7 +224,8 @@ const variantUpload = multer({
   },
 })
 
-router.post('/variant', variantUpload.single('media'), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
+// Same pre-auth guard as POST / above -- see the comment there.
+router.post('/variant', requireAuth({ anySession: true }), variantUpload.single('media'), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { baseFilename, width } = req.body
     const file = req.file as Express.Multer.File | undefined
