@@ -4,7 +4,7 @@
 //
 // Usage:
 //   cd client
-//   npx tsx scripts/list-instances.ts [clientId]
+//   npx tsx scripts/list-instances-v2.ts [clientId]
 
 import 'dotenv/config'
 import { Contract } from 'ethers'
