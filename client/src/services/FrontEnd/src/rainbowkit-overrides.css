@@ -25,3 +25,27 @@
 [data-rk] [aria-hidden="true"]:has(> [aria-hidden="true"]) {
   display: none !important;
 }
+
+/*
+ * Collapse the empty space the account modal (ProfileDetails) reserves ABOVE
+ * the address. Hiding the avatar box above removes the box, but RainbowKit's
+ * account-modal header wraps the avatar in a flex column whose spacing (a
+ * marginBottom on the avatar slot + the column's top padding) still leaves a
+ * gap once the avatar is gone. This zeroes that reserved spacing so the
+ * address/balance sit at the top of the modal with no dead space.
+ *
+ * Targets the account-modal content: the flex column that directly contains a
+ * now-hidden nested-aria-hidden avatar. Scoped under [data-rk] and the modal
+ * so it can't affect the connected-account chip elsewhere.
+ */
+[data-rk] [aria-hidden="true"]:has(> [aria-hidden="true"]) {
+  margin: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+}
+/* The parent column that held the avatar: drop its top padding so the first
+ * visible child (the address) is flush with the modal top. */
+[data-rk] div:has(> [aria-hidden="true"]:has(> [aria-hidden="true"])) {
+  padding-top: 0 !important;
+  row-gap: 0 !important;
+}
