@@ -410,6 +410,46 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: data and signature' })
     }
 
+    // On-chain CawProfile NFT tokenIds are 1-indexed (tokenId 0 does not
+    // exist on-chain). Without this gate, a receiverId of 0 (e.g. an
+    // unselected/loading-race client value) reaches the optimistic
+    // pre-write upserts below and persists a ghost `user_0` row, which
+    // on-chain-synced nodes never create (resolveActionUsers treats a
+    // falsy receiverId as "no receiver" and skips it) — a source of
+    // cross-node User table divergence.
+    const senderTokenId = Number(data.senderId)
+    if (!Number.isInteger(senderTokenId) || senderTokenId <= 0) {
+      return res.status(400).json({ error: 'Invalid senderId: tokenId must be a positive integer (> 0)' })
+    }
+    data.senderId = senderTokenId
+
+    // Only actions that target a specific existing user need receiverId > 0.
+    // OTHER-type actions (pin, hide:caw/recaw, tip:, vote:, profile-update)
+    // legitimately send receiverId: 0 as "no target" and must not be gated
+    // here — see FeedItem.tsx pin/hide/delete handlers.
+    if (data.receiverId !== undefined && data.receiverId !== null) {
+      const receiverTokenId = Number(data.receiverId)
+      const targetRequiresReceiver = [1, 2, 3, 4, 5, 'like', 'unlike', 'recaw', 'follow', 'unfollow'].includes(data.actionType)
+      if (targetRequiresReceiver && (!Number.isInteger(receiverTokenId) || receiverTokenId <= 0)) {
+        return res.status(400).json({ error: 'Invalid receiverId: target tokenId must be a positive integer (> 0)' })
+      }
+      if (Number.isInteger(receiverTokenId)) {
+        data.receiverId = receiverTokenId
+      }
+    }
+
+    // recipients[] (embedded multi-recipient tips) must all be positive
+    // integers — a 0 or negative id would hit the same unguarded upsert
+    // path as receiverId.
+    if (Array.isArray(data.recipients) && data.recipients.length > 0) {
+      for (let i = 0; i < data.recipients.length; i++) {
+        const recId = Number(data.recipients[i])
+        if (!Number.isInteger(recId) || recId <= 0) {
+          return res.status(400).json({ error: `Invalid recipient tokenId at index ${i}: must be a positive integer (> 0)` })
+        }
+      }
+    }
+
     // Limit payload size — action text shouldn't need more than ~100KB
     const bodySize = JSON.stringify(req.body).length
     if (bodySize > 100 * 1024) {
