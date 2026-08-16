@@ -1,6 +1,7 @@
 import { createConfig, http, injected } from "wagmi";
 import { walletConnect, metaMask, coinbaseWallet, safe } from "wagmi/connectors";
-import { mainnet, sepolia, baseSepolia } from "wagmi/chains";
+import { mainnet, sepolia as sepoliaBase, baseSepolia as baseSepoliaBase } from "wagmi/chains";
+import type { Chain } from "viem";
 
 // RPC URLs — default to OUR backend RPC proxy at /api/rpc/{l1,l2}.
 // The proxy folds identical reads across all browsers into one
@@ -19,6 +20,30 @@ const L1_RPC = import.meta.env.VITE_L1_RPC_URL_FRONTEND
 const L2_RPC = import.meta.env.VITE_L2_RPC_URL_FRONTEND
   || import.meta.env.VITE_L2_RPC_URL
   || (typeof window !== 'undefined' ? `${window.location.origin}/api/rpc/l2` : '/api/rpc/l2')
+
+// Override the chains' DEFAULT rpcUrls to our proxy. viem's built-in sepolia
+// chain hardcodes rpcUrls.default = https://sepolia.drpc.org, which rejects
+// free-plan Sepolia ("chain is not available on free plan"). Any viem client
+// created from the raw chain object WITHOUT an explicit transport — wallet
+// connectors, WalletConnect/RainbowKit account+nonce reads (eth_getTransaction
+// Count), etc. — falls back to that drpc default and fails (and flashes the
+// wallet icon red). wagmi's own `transports` map below only covers clients
+// wagmi builds; it does NOT change what the chain object advertises as its
+// default. Patching rpcUrls here makes the proxy the default for EVERY code
+// path, closing the drpc fallback. baseSepolia gets the same treatment for
+// symmetry. Exported so `config/chains.ts` and anything else uses these.
+function withRpc(chain: Chain, url: string): Chain {
+  return {
+    ...chain,
+    rpcUrls: {
+      ...chain.rpcUrls,
+      default: { http: [url] },
+      public: { http: [url] },
+    },
+  };
+}
+export const sepolia = withRpc(sepoliaBase, L1_RPC);
+export const baseSepolia = withRpc(baseSepoliaBase, L2_RPC);
 
 // Shared transport options for both chains.
 // - `batch.wait: 16ms` — coalesces any eth_call issued in the same render cycle
