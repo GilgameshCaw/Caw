@@ -19,12 +19,12 @@
  * routine FE ship (that would needlessly log everyone out).
  */
 
-// 2026-07-24 testnet redeploy: CawProfile (250k lzReceive gas) + Marketplace
-// (lzDestId param) + full cascade + DB reset. New contracts from tokenId 0.
-// -r2: the first guard build skipped the wipe for pre-guard browsers (no epoch
-// key → treated as first-visit) and mis-stamped them. Bump so those browsers
-// re-evaluate and wipe. hasPriorDeploymentState() now covers the null case too.
-export const DEPLOY_EPOCH = '2026-07-24-testnet-caw-cascade-r2'
+// 2026-08-16 testnet redeploy: full --reset cascade from public-ready
+// (comment-scrubbed) source — new CawProfile/Ledger/Actions/Minter/NetworkManager
+// + DB reset, all contracts Etherscan-verified. New contracts from tokenId 0, so
+// every returning browser's cached tokenIds / sessions / passkey creds are dead
+// and MUST be wiped. Bumped from the 2026-07-24 epoch.
+export const DEPLOY_EPOCH = '2026-08-16-testnet-caw-cascade'
 
 const EPOCH_KEY = 'caw:deploy-epoch'
 
