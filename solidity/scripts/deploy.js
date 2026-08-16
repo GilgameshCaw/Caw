@@ -2531,6 +2531,22 @@ class MultiChainDeployer {
           `CawActionsArchive_${L}`, `CawChallengeRelay_${L}`,
         ]),
         'CawProfileMinter', 'CawProfileQuoter', 'CawProfileLens', 'CawProfileMarketplace',
+        // CawNetworkManager MUST ride along on a CawProfile redeploy even though the
+        // dependency graph points the other way (CawProfile depends on NM, not NM on
+        // CawProfile), so the transitive-dependents walk never pulls NM in. NM holds
+        // `cawProfile` and `minter` as ONE-SHOT-immutable slots (setCawProfile /
+        // setMinter revert on any second call, and their deploy steps' skipIf returns
+        // true on any non-zero slot). If NM is kept while CawProfile+Minter redeploy,
+        // those slots stay pinned to the DELETED old addresses with no way to repair:
+        //   - stale `cawProfile`  → setAuthFee/setTipTarget broadcast to a dead
+        //     CawProfile (free-auth + tip-target changes silently die).
+        //   - stale `minter`      → new CawProfileMinter fails the `msg.sender==minter`
+        //     gate → SPONSORED MINTS REVERT (Population-B onboarding bricks).
+        // Force-including NM redeploys it fresh AND clears state.linking (line ~2559),
+        // so createNetwork re-runs and re-wires setCawProfile/setMinter to the new
+        // addresses. Networks re-register with identical sequential IDs (Uruk=1,
+        // Babylon=2), so operator REPLICATE_NETWORK_IDS config stays valid.
+        'CawNetworkManager',
       ];
       for (const key of forceInclude) {
         if (CONTRACTS[key]) toRedeploy.add(key);
