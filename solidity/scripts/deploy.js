@@ -1473,6 +1473,46 @@ for (const L of L2_CHAIN_KEYS) {
   });
 }
 
+
+// =============================================================================
+// #54 follow-up assert — setter-wired CawProfile consumer read-backs (critical)
+// Re-verified against origin/v2 2cb5e13 (deploy.js identical to c2d0b541).
+// Abort path = FatalDeployError only (plain Error is swallowed; runner L2279).
+// Consumers verified setCawProfile-wired at phase:2 (CawNetworkManager L1012,
+// CawBuyAndBurn L1088); assert runs phase:7 (strictly after wire).
+// Placement: after the per-L2 for-loop close brace, before the Phase 7.9 banner.
+// =============================================================================
+for (const consumerKey of ['CawNetworkManager', 'CawBuyAndBurn']) {
+  LINKING_STEPS.push({
+    name: `Assert ${consumerKey}.cawProfile == CawProfile (setter-wired consumer read-back)`,
+    chain: 'L1',
+    phase: 7,
+    condition: (state) => state.addresses[consumerKey] && state.addresses.CawProfile,
+    custom: async (state, deployer) => {
+      const consumer = deployer.getContract(consumerKey);
+      if (!consumer) {
+        throw new FatalDeployError(
+          `${consumerKey} handle missing — cannot verify cawProfile wiring. ` +
+          `Generation is incomplete; ABORT rather than ship an unverified cascade.`
+        );
+      }
+      const expected = state.addresses.CawProfile.toLowerCase();
+      const actual = (await consumer.cawProfile()).toLowerCase();
+      if (actual !== expected) {
+        throw new FatalDeployError(
+          `SETTER-WIRED CONSUMER MISMATCH: ${consumerKey}.cawProfile()=${actual} ` +
+          `but CawProfile deployed at ${state.addresses.CawProfile} (expected ${expected}). ` +
+          `${consumerKey} is setCawProfile-wired (phase-2, OnlyOnce-behaviour) — it points at a ` +
+          `stale CawProfile with no setter left to repair it. This is the 2026-08-04 ` +
+          `cascade-omission failure mode. ABORT and redeploy the full CawProfile cascade ` +
+          `(see #54 force-include) so setCawProfile runs against the fresh address.`
+        );
+      }
+      console.log(`   Assertion passed: ${consumerKey}.cawProfile()==CawProfile (${expected})`);
+    },
+  });
+}
+
 // =============================================================================
 // Phase 7.9 — sponsor CAW approval for the Minter.
 // =============================================================================
