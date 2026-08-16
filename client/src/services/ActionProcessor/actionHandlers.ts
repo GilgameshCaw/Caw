@@ -220,10 +220,25 @@ export async function handleCawAction(
             shouldNotify = true
           } catch (createErr: any) {
             // Unique constraint violation (senderId, recipientId, cawonce) —
-            // another validator's concurrent transaction won the race and
-            // created this row between our findFirst and create (TOCTOU).
-            // The row now exists either way, so this is a no-op, not a
-            // failure.
+            // two possible causes, both correctly resolved as a no-op:
+            //   1. Another validator's concurrent transaction won the race
+            //      and created this row between our findFirst and create
+            //      (TOCTOU). The row now exists either way.
+            //   2. This action's own recipients[]/amounts[] names the same
+            //      recipientId at two different indices (e.g. recipients=
+            //      [5,5]). CawActions._distributeAmountsMem has no on-chain
+            //      uniqueness check on recipients[i] — only numRecipients
+            //      <=10 and the amounts-length relation are enforced — so
+            //      such a payload is structurally valid and both amounts
+            //      ARE credited on-chain via addTokensToBalance. Here,
+            //      first-index-wins: whichever index this loop reaches
+            //      first records the Tip row; the second index's amount is
+            //      silently absent from the Tip table and its aggregates,
+            //      even though it landed on-chain. TipAttachmentControl.tsx
+            //      dedupes recipientId before submission so this doesn't
+            //      happen through normal UI use, but a client bypassing
+            //      the frontend can still produce it. Known tradeoff, not
+            //      a bug in this constraint — see PR #55 discussion.
             if (createErr?.code !== 'P2002') throw createErr
           }
         }
@@ -1145,6 +1160,29 @@ async function handleTipAction(
     recipients: rawAction.recipients,
     amounts: rawAction.amounts
   })
+
+  // The tip: text protocol ("tip:userId:cawonce" / "tip:") is single-
+  // recipient by design -- it names exactly one target. Only recipients[0]
+  // is processed below, matching that semantics. If a payload names more
+  // than one recipient here, it's malformed relative to this protocol
+  // (multi-recipient tips belong in handleCawAction via a CAW/REPLY action,
+  // not here) -- CawActions._distributeAmountsMem has no on-chain check
+  // preventing recipients.length > 1 on an OTHER action though, so a
+  // client bypassing TipModal.tsx (which always sends a single-element
+  // array) could still submit one. On-chain, every recipient in such a
+  // payload IS paid; off-chain, only recipients[0] gets a Tip row --
+  // recipients[1:] are indexed nowhere. Deliberately not looping over all
+  // recipients here to "rescue" them: inventing an interpretation for
+  // recipients[1:] (e.g. treating them as profile tips) would put words
+  // in the sender's mouth that the tip: protocol doesn't actually specify.
+  // Chose the low-risk option -- log and continue processing recipients[0]
+  // only, rather than rewriting this into a loop -- since this has never
+  // occurred in production (checked V1: zero rows match this shape) and
+  // the fix's blast radius (any regression here touches every tip on the
+  // network) outweighs defending against a payload shape nobody has sent.
+  if (Array.isArray(rawAction.recipients) && rawAction.recipients.length > 1) {
+    console.warn(`[handleTipAction] Malformed tip payload: expected 1 recipient for tip: action, got ${rawAction.recipients.length} (sender ${senderId}, cawonce ${action.cawonce}). Only recipients[0] will be recorded; the rest were paid on-chain but will not appear in the Tip table.`)
+  }
 
   const recipientTokenId = Number(rawAction.recipients?.[0])
   const tipAmount = Number(rawAction.amounts?.[0])
