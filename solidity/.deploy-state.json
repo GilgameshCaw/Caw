@@ -1,40 +1,40 @@
 {
   "addresses": {
     "MintableCaw": "0x56817dc696448135203C0556f702c6a953260411",
-    "SessionMessageParser_L2b": "0xb3Ceb18DCE2Dd0fFf05c2F0cdad547A5aba3d650",
-    "SessionMessageParser_L2": "0x950f914138a9cEC0ad1FD84551943d52107DacFE",
-    "PathwayExpander_L1": "0x6c10c9cE2ed0652b046C6C6579E29342723d4d7F",
-    "PathwayExpander_L2b": "0xce971284f1f1DC3a0FF650432Fd03A936e7201ce",
-    "PathwayExpander_L2": "0xb8e061DB410464e317b9D594Df7697B01A62Af25",
-    "CawFontDataA": "0x7b09b65253A887e6F820a84A7b5785Aedc3c2d5f",
-    "CawFontDataB": "0xd1989b417eF31a661fe417596aCaEcD1Af38d2F9",
-    "CawProfileURI": "0x6Ed996BAA347F747aB5B0Dd377ACE963725bC783",
-    "CawBuyAndBurn": "0x300F761743540f6583CD9227E03Aedc82C477FEF",
-    "CawL1PriceReader": "0x09e5D351C6E7F92B539332953637642d0244DF34",
-    "SessionMessageParser_L1": "0x1eB74777D15D9e6C41008Dd428Eb352A5Efa4cbE",
-    "SmartEOA": "0x2e1B89a71E7dDebb01a36292ba705ac52FEBbBF0",
-    "CawProfileLedger_L2": "0x4Bbd94f8368Da4e61bdeF6d8CE5C7FB72DeDD5b8",
-    "CawProfileLedger_L2b": "0xd83e9d38969613228971FC90b3b54E045e6BcC37",
-    "CawCapOracle_L2": "0x1703775b71F8e61fBea6f8Dfea5c600bBfd7582b",
-    "CawCapOracle_L2b": "0xe31ddB8dbdce3220d0F7a15f5895765d09881000",
-    "CawActions_L2": "0x1c408187A1006c0906be68032D32D9d34971fDCF",
-    "CawActions_L2b": "0x5Fbaa10e83C10Ce5768EA7ffc9b66f08ce5e0827",
-    "CawActionsERC1271_L2": "0xab3E75B931C1Bcd1A44c025Ba49b4B1afb9FFa46",
-    "CawActionsERC1271_L2b": "0xEE2C3F0a6361B26eB790F1cD7210FfC33A687794",
-    "CawNetworkManager": "0x29a8EEABa4A632b2800Ade158239a93cca1234c7",
-    "CawProfileLedger_L1": "0xdAF4783E70970F66A0a8474168C3562b6d713051",
-    "CawCapOracle_L1": "0xc0539982115dfF01f1b2C846049481f1460Db227",
-    "CawActions_L1": "0x702BE289646D5736E7932f90486979F38ACF9034",
-    "CawActionsERC1271_L1": "0x0731EEA09639713CB7cF574EcDD3deb34D31d86E",
-    "CawProfile": "0x6ADB4a3Acd80bB2105BD45F5009D08AEA445B3d8",
-    "CawProfileMinter": "0xE999711e90208E75E685192B3A1B7180e3Ce9bDa",
-    "CawProfileQuoter": "0xa81CF89C5Dce752815c5D3cA19CCB997528a2710",
-    "CawProfileLens": "0xeF3E2b4E10BE7Be03e5E507181D915a3bf663f7A",
-    "CawProfileMarketplace": "0x30e2a4f2cd6F74254672a6d6685A071961aFb638",
-    "CawActionsArchive_L2": "0x26ed02EC62b2f54e591860d918336f70e3350340",
-    "CawActionsArchive_L2b": "0xe86e00bBF10b2787a734e86623942f2DF0EACdA7",
-    "CawChallengeRelay_L2": "0xA66A3f644B5F6925E5B0cB712B203B39B70E293B",
-    "CawChallengeRelay_L2b": "0x0a379E89A90D375ccF7F326Af8FC56D76280a35b"
+    "SessionMessageParser_L2b": "0xA6D80849b29345eFE221BA8cA4C3481F85c7afc9",
+    "SessionMessageParser_L2": "0xCca6aA7570b1626f20d1d90818e7Abce4b39DFD5",
+    "PathwayExpander_L1": "0xdc358F569f778d567c4d150290D5F1AC4c18Ab2B",
+    "PathwayExpander_L2": "0xEaAAD32cf127c0B55D28aDd084C00EF5dF248ae0",
+    "PathwayExpander_L2b": "0x5E44b8a508fa60B278D176C381Ef36Da5275e861",
+    "CawProfileLedger_L2": "0x93593A023629EB84B389770d76A81C5f982F02a9",
+    "CawProfileLedger_L2b": "0x2B7f85B2f28d9d691947498FA8aE8eF8F4317197",
+    "CawCapOracle_L2": "0x6dCDaE58c927015864A3f2C1A195A60dF6D3C54E",
+    "CawCapOracle_L2b": "0x850622d0481719b72F5685Bda9ed3B0dA02c5c71",
+    "CawActions_L2": "0x73246104f57001EDC6d0659Fa37Afb672a76E763",
+    "CawActions_L2b": "0x5D35790EE0E3f1641aea635C11882C4a9fca23a0",
+    "CawActionsERC1271_L2b": "0x5F41CB93b2a95aC6A77A4d73043dEB244EA3802F",
+    "CawActionsERC1271_L2": "0x78AB5d7be8Ba2BC722f58B862c16Ee77fEcbCF74",
+    "CawFontDataA": "0x43840B562b412B59741B20BAB7FAa06569ff98Fd",
+    "CawFontDataB": "0x6df9f0a1A98006eBEc92A4e789662e6343445e19",
+    "CawProfileURI": "0xd91AF2c28faF3561274d12f5CD62e7E65Ae9ae7B",
+    "CawBuyAndBurn": "0x008e096877Dbf12fa5c0F07489855adE3874b4e7",
+    "CawNetworkManager": "0x35c27e4bCC13101Acdf6418DeDEd99ccD3838075",
+    "CawL1PriceReader": "0x3aB6d4f45597de28981f28539c5A2f0BB8290E98",
+    "SessionMessageParser_L1": "0x2125F8ECc50159c62bc7261D980E18f45EF021a7",
+    "CawProfileLedger_L1": "0x617Ef7b3CeD96D277693C530DA3eA410de92df72",
+    "CawCapOracle_L1": "0xBf8aC3af521b7e182Ff5e34b1366A3f16dbd29C5",
+    "CawActions_L1": "0xe33339b3D826E7fC61557D7e82A4348710790136",
+    "CawActionsERC1271_L1": "0x2418592Eb4bd5212b3c64408769f95F73dCb45c6",
+    "CawProfile": "0x3BA577936Ff6Cfe07DC2D00e6669436C6Dace319",
+    "CawProfileMinter": "0x5613353c6B6F55fBc82487D36a5316A2cAdE7Ee0",
+    "CawProfileQuoter": "0x66da3A1fd97c175f74e5f3Aabbe630B08f2c6c8a",
+    "CawProfileLens": "0xFfFEF4bD46C222aa566CF1F17e7F47c1eDDE225b",
+    "CawProfileMarketplace": "0x858F60fC71bAfBdC6Ba170aCC7dc8974F6270CBD",
+    "SmartEOA": "0x918082aB668D7661bCe65C3CAAF047648f7D4271",
+    "CawActionsArchive_L2": "0x2423D40BB16FcFe71821E24ae507746dc7449F74",
+    "CawActionsArchive_L2b": "0x3B526a24a740F8FD5Ed9688E109414Ec10786B8D",
+    "CawChallengeRelay_L2": "0xeb8ee1EB63976631bdaD061AFB04d0e4329e11E7",
+    "CawChallengeRelay_L2b": "0x10723C6e9fD79683143564df246Bf17870eff20d"
   },
   "linking": {
     "networkCreated": true,
@@ -46,20 +46,192 @@
   "deployerAddress": "0xF71338f3eAa483aA66125598B09BA1988e694a95",
   "bootstrap": {
     "ratio": "2285392970879593379821646",
-    "expiry": "1786943892"
+    "expiry": "1786949616"
   },
   "predictedAddresses": {
-    "CawProfile": "0x6ADB4a3Acd80bB2105BD45F5009D08AEA445B3d8",
-    "CawCapOracle_L2": "0x1703775b71F8e61fBea6f8Dfea5c600bBfd7582b",
-    "CawCapOracle_L2b": "0xe31ddB8dbdce3220d0F7a15f5895765d09881000",
-    "CawActions_L2": "0x1c408187A1006c0906be68032D32D9d34971fDCF",
-    "CawActionsERC1271_L2": "0xab3E75B931C1Bcd1A44c025Ba49b4B1afb9FFa46",
-    "CawActions_L2b": "0x5Fbaa10e83C10Ce5768EA7ffc9b66f08ce5e0827",
-    "CawActionsERC1271_L2b": "0xEE2C3F0a6361B26eB790F1cD7210FfC33A687794",
-    "CawCapOracle_L1": "0xc0539982115dfF01f1b2C846049481f1460Db227",
-    "CawActions_L1": "0x702BE289646D5736E7932f90486979F38ACF9034",
-    "CawActionsERC1271_L1": "0x0731EEA09639713CB7cF574EcDD3deb34D31d86E",
-    "CawProfileMinter": "0xE999711e90208E75E685192B3A1B7180e3Ce9bDa"
+    "CawProfile": "0x3BA577936Ff6Cfe07DC2D00e6669436C6Dace319",
+    "CawCapOracle_L2": "0x6dCDaE58c927015864A3f2C1A195A60dF6D3C54E",
+    "CawCapOracle_L2b": "0x850622d0481719b72F5685Bda9ed3B0dA02c5c71",
+    "CawActions_L2": "0x73246104f57001EDC6d0659Fa37Afb672a76E763",
+    "CawActionsERC1271_L2": "0x78AB5d7be8Ba2BC722f58B862c16Ee77fEcbCF74",
+    "CawActions_L2b": "0x5D35790EE0E3f1641aea635C11882C4a9fca23a0",
+    "CawActionsERC1271_L2b": "0x5F41CB93b2a95aC6A77A4d73043dEB244EA3802F",
+    "CawCapOracle_L1": "0xBf8aC3af521b7e182Ff5e34b1366A3f16dbd29C5",
+    "CawActions_L1": "0xe33339b3D826E7fC61557D7e82A4348710790136",
+    "CawActionsERC1271_L1": "0x2418592Eb4bd5212b3c64408769f95F73dCb45c6",
+    "CawProfileMinter": "0x5613353c6B6F55fBc82487D36a5316A2cAdE7Ee0"
   },
-  "l2DeployBlock": 45544810
+  "l2DeployBlock": 45547765,
+  "verification": {
+    "CawFontDataA": {
+      "verified": true,
+      "ts": "2026-08-16T07:11:52.928Z",
+      "message": "Already Verified"
+    },
+    "CawFontDataB": {
+      "verified": true,
+      "ts": "2026-08-16T07:12:08.697Z",
+      "message": "Already Verified"
+    },
+    "CawProfileURI": {
+      "verified": true,
+      "ts": "2026-08-16T07:12:48.373Z",
+      "message": "Pass - Verified"
+    },
+    "CawBuyAndBurn": {
+      "verified": true,
+      "ts": "2026-08-16T07:13:29.003Z",
+      "message": "Pass - Verified"
+    },
+    "CawNetworkManager": {
+      "verified": true,
+      "ts": "2026-08-16T07:14:09.921Z",
+      "message": "Pass - Verified"
+    },
+    "CawL1PriceReader": {
+      "verified": true,
+      "ts": "2026-08-16T07:14:51.573Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfile": {
+      "verified": true,
+      "ts": "2026-08-16T07:15:34.467Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:16:26.477Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:17:06.066Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:17:57.740Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileMinter": {
+      "verified": true,
+      "ts": "2026-08-16T07:18:39.489Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileQuoter": {
+      "verified": true,
+      "ts": "2026-08-16T07:19:18.735Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLens": {
+      "verified": true,
+      "ts": "2026-08-16T07:19:59.082Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileMarketplace": {
+      "verified": true,
+      "ts": "2026-08-16T07:20:39.047Z",
+      "message": "Pass - Verified"
+    },
+    "SmartEOA": {
+      "verified": true,
+      "ts": "2026-08-16T07:21:30.070Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:22:09.257Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:22:48.455Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L1": {
+      "verified": true,
+      "ts": "2026-08-16T07:23:28.731Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:24:21.643Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:25:00.836Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:25:40.136Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:26:21.298Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:27:00.878Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:27:52.255Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:28:31.378Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2": {
+      "verified": true,
+      "ts": "2026-08-16T07:29:11.412Z",
+      "message": "Pass - Verified"
+    },
+    "SessionMessageParser_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:29:51.084Z",
+      "message": "Pass - Verified"
+    },
+    "CawProfileLedger_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:30:30.173Z",
+      "message": "Pass - Verified"
+    },
+    "CawCapOracle_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:31:10.420Z",
+      "message": "Pass - Verified"
+    },
+    "CawActions_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:31:49.773Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsERC1271_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:32:32.734Z",
+      "message": "Pass - Verified"
+    },
+    "CawActionsArchive_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:33:13.252Z",
+      "message": "Pass - Verified"
+    },
+    "CawChallengeRelay_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:33:52.539Z",
+      "message": "Pass - Verified"
+    },
+    "PathwayExpander_L2b": {
+      "verified": true,
+      "ts": "2026-08-16T07:34:32.806Z",
+      "message": "Pass - Verified"
+    }
+  }
 }
