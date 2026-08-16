@@ -146,6 +146,25 @@ const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 // it'd try to ship hashes from a chain with no relay and fail per cycle).
 const L2_CHAIN_KEYS = ['L2', 'L2b'];
 
+/**
+ * Thrown by a linking step whose failure means the WHOLE deploy generation is
+ * dead and must not continue — e.g. a cross-chain peer / nonce-prediction
+ * read-back mismatch, which is unfixable in place (setPeer OnlyOnce, immutable,
+ * owner renounced). Ordinary step failures are logged and skipped by the phase
+ * loop (one bad setPeer shouldn't kill a run); a FatalDeployError is re-thrown
+ * past that loop so it propagates out of deployAll()/redeploy() and ABORTS
+ * before main()'s finalization writes the broken addresses into deployments.ts
+ * / addresses.ts / config.json. (Added 2026-08-16: the phase-7 peer assert
+ * fired but was swallowed, so the broken cascade finalized and wrote its dead
+ * addresses to the app config anyway.)
+ */
+class FatalDeployError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'FatalDeployError';
+  }
+}
+
 // Chain configurations. Env vars are role-named (L1_RPC_URL, L2_RPC_URL,
 // L2B_RPC_URL, L2C_RPC_URL...) so the same names work across testnet/mainnet.
 const CHAINS = {
@@ -1052,7 +1071,7 @@ const LINKING_STEPS = [
       }
       const storedCawActions = await oracle.cawActions();
       if (storedCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
-        throw new Error(
+        throw new FatalDeployError(
           `NONCE PREDICTION MISMATCH: CawCapOracle_L1.cawActions=${storedCawActions} ` +
           `but CawActions_L1 deployed at ${actionsAddr}. ` +
           `The cap-push mechanism is broken — abort and redeploy from scratch.`
@@ -1229,7 +1248,7 @@ for (const L of L2_CHAIN_KEYS) {
       }
       const storedCawActions = await ledger.cawActions();
       if (storedCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
-        throw new Error(
+        throw new FatalDeployError(
           `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.cawActions=${storedCawActions} ` +
           `but CawActions_${L} deployed at ${actionsAddr}. ` +
           `Posting will revert on every node (getTokens() calls cawActions.nextCawonce(), ` +
@@ -1246,7 +1265,7 @@ for (const L of L2_CHAIN_KEYS) {
       if (capOracleAddr) {
         const storedCapOracle = await ledger.capOracle();
         if (storedCapOracle.toLowerCase() !== capOracleAddr.toLowerCase()) {
-          throw new Error(
+          throw new FatalDeployError(
             `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.capOracle=${storedCapOracle} ` +
             `but CawCapOracle_${L} deployed at ${capOracleAddr}.`
           );
@@ -1263,7 +1282,7 @@ for (const L of L2_CHAIN_KEYS) {
         if (capOracle) {
           const oracleCawActions = await capOracle.cawActions();
           if (oracleCawActions.toLowerCase() !== actionsAddr.toLowerCase()) {
-            throw new Error(
+            throw new FatalDeployError(
               `NONCE PREDICTION MISMATCH: CawCapOracle_${L}.cawActions=${oracleCawActions} ` +
               `but CawActions_${L} deployed at ${actionsAddr}. The cap-push mechanism is ` +
               `broken (setCapRatio/setTipRatio calls go to the wrong contract) — abort and ` +
@@ -1276,7 +1295,7 @@ for (const L of L2_CHAIN_KEYS) {
       if (erc1271Addr) {
         const storedErc1271 = await ledger.erc1271Sibling();
         if (storedErc1271.toLowerCase() !== erc1271Addr.toLowerCase()) {
-          throw new Error(
+          throw new FatalDeployError(
             `NONCE PREDICTION MISMATCH: CawProfileLedger_${L}.erc1271Sibling=${storedErc1271} ` +
             `but CawActionsERC1271_${L} deployed at ${erc1271Addr}.`
           );
@@ -1416,7 +1435,7 @@ for (const L of L2_CHAIN_KEYS) {
       const expected = ethers.zeroPadValue(state.addresses.CawProfile, 32).toLowerCase();
       const actual = (await ledger.peers(l1Eid)).toLowerCase();
       if (actual !== expected) {
-        throw new Error(
+        throw new FatalDeployError(
           `CROSS-CHAIN PEER MISMATCH: CawProfileLedger_${L}.peers(L1 eid ${l1Eid})=${actual} ` +
           `but the L1 CawProfile deployed at ${state.addresses.CawProfile} (expected ${expected}). ` +
           `The L2 ledger's L1 peer was baked from a STALE/mis-predicted L1 address. This is ` +
@@ -1441,7 +1460,7 @@ for (const L of L2_CHAIN_KEYS) {
       const expected = ethers.zeroPadValue(state.addresses[`CawProfileLedger_${L}`], 32).toLowerCase();
       const actual = (await profile.peers(lEid)).toLowerCase();
       if (actual !== expected) {
-        throw new Error(
+        throw new FatalDeployError(
           `CROSS-CHAIN PEER MISMATCH: CawProfile.peers(${L} eid ${lEid})=${actual} ` +
           `but CawProfileLedger_${L} deployed at ${state.addresses[`CawProfileLedger_${L}`]} (expected ${expected}). ` +
           `The L1 profile's ${L}-ledger peer was baked from a stale/mis-predicted address. ` +
@@ -2245,19 +2264,30 @@ class MultiChainDeployer {
         linksByChain[chain].push(step);
       }
 
-      // Run each chain's steps sequentially, but all chains in parallel
-      await Promise.allSettled(
+      // Run each chain's steps sequentially, but all chains in parallel.
+      // Ordinary step failures are logged and skipped (one bad setPeer must not
+      // kill the whole run). A FatalDeployError means the generation is dead —
+      // re-throw it out of the chain worker so it surfaces in the settled
+      // results below and aborts the deploy BEFORE finalization writes the
+      // broken addresses to the app config.
+      const settled = await Promise.allSettled(
         Object.entries(linksByChain).map(async ([chain, steps]) => {
           for (const step of steps) {
             try {
               await this.executeLink(step);
             } catch (e) {
+              if (e instanceof FatalDeployError) throw e;  // abort — do not swallow
               console.error(`Failed: ${step.name} - ${e.message}`);
               // Continue with other steps on this chain
             }
           }
         })
       );
+      // Promise.allSettled never rejects — inspect for a fatal and re-throw so
+      // it propagates out of deployPhase → deployAll/redeploy → main(), skipping
+      // the deployments.ts / addresses.ts / config.json finalization entirely.
+      const fatal = settled.find(r => r.status === 'rejected' && r.reason instanceof FatalDeployError);
+      if (fatal) throw fatal.reason;
     }
   }
 
@@ -2374,11 +2404,23 @@ class MultiChainDeployer {
       }
       const predictedProfile = ethers.getCreateAddress({ from: l1Wallet.address, nonce: l1Nonce + noncesAhead });
       this.state.predictedAddresses = this.state.predictedAddresses || {};
-      if (!this.state.predictedAddresses.CawProfile) {
-        this.state.predictedAddresses.CawProfile = predictedProfile;
-        console.log(`   Pre-predicted CawProfile address (L1 nonce+${noncesAhead}): ${predictedProfile}`);
-        this.saveState();
+      // ALWAYS recompute against the LIVE nonce and overwrite. The old guard
+      // (`if (!predictedAddresses.CawProfile)`) reused a persisted value from a
+      // prior run — which is exactly what bricked the 2026-08-16 cascade: a
+      // stale 0x4C5f2AD9 (getCreateAddress at nonce 2823) survived into a run
+      // whose real CawProfile landed at nonce 2916. redeploy() now clears
+      // predictedAddresses, but recompute-and-warn here is the belt to that
+      // suspenders and also covers plain resume runs where the map survives.
+      const priorPrediction = this.state.predictedAddresses.CawProfile;
+      if (priorPrediction && priorPrediction.toLowerCase() !== predictedProfile.toLowerCase()) {
+        console.warn(
+          `   ⚠️  Stale predicted CawProfile discarded: had ${priorPrediction}, ` +
+          `now ${predictedProfile} (L1 nonce+${noncesAhead}). Using the fresh value.`,
+        );
       }
+      this.state.predictedAddresses.CawProfile = predictedProfile;
+      console.log(`   Pre-predicted CawProfile address (L1 nonce+${noncesAhead}): ${predictedProfile}`);
+      this.saveState();
     }
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -2570,6 +2612,21 @@ class MultiChainDeployer {
       delete this.state.addresses[key];
       delete this.contracts[key];
     }
+    // Clear STALE nonce predictions. predictedAddresses persists to disk and is
+    // NEVER regenerated for a key that already has a value — the pre-phase-1
+    // CawProfile predictor guards on `if (!predictedAddresses.CawProfile)` and
+    // the in-deploy sibling predictors only overwrite their own key when their
+    // predictor contract actually redeploys. On a partial redeploy that leaves
+    // a stale entry in place, the OLD prediction (computed against a much lower
+    // L1 nonce from a prior run) gets baked into this run's immutables. That is
+    // exactly what bricked the 2026-08-16 cascade: predictedAddresses.CawProfile
+    // held 0x4C5f2AD9 (getCreateAddress at nonce 2823, from an earlier attempt)
+    // while CawProfile actually deployed at nonce 2916 (0x9535367E), so the L2
+    // ledgers' immutable cawProfile peer pointed at a dead address — unfixable
+    // (setPeer OnlyOnce, owner renounced), caught only by the phase-7 read-back.
+    // Wipe the whole map: every predictor rebuilds its entry from a LIVE nonce
+    // read during this run, so nothing here should survive from a prior run.
+    this.state.predictedAddresses = {};
     // Only clear networkCreated if CawNetworkManager itself is being redeployed
     if (toRedeploy.has('CawNetworkManager')) {
       this.state.linking = {};
