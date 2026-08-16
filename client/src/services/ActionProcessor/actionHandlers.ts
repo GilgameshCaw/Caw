@@ -220,10 +220,26 @@ export async function handleCawAction(
             shouldNotify = true
           } catch (createErr: any) {
             // Unique constraint violation (senderId, recipientId, cawonce) —
-            // two possible causes, both correctly resolved as a no-op:
+            // three possible causes, all correctly resolved as a no-op:
             //   1. Another validator's concurrent transaction won the race
             //      and created this row between our findFirst and create
             //      (TOCTOU). The row now exists either way.
+            //   1b. Specifically: checkDomainObjectExists' tip branch
+            //      (checkOtherExists) has two callers with different
+            //      concurrency guarantees. actionCreation.ts runs inside
+            //      ActionProcessor's processChain (serialized against every
+            //      other live-path call), but DataCleaner's orphan-action
+            //      reconciliation calls the same check on its own timer,
+            //      outside that chain, gated only by a 2-minute debounce.
+            //      The live path's own worst case (Tx2: 3 retries x 30s
+            //      timeout) is also exactly 2 minutes — no margin by
+            //      design. If a live-path run and DataCleaner's orphan
+            //      sweep for the same action ever overlap inside that
+            //      window, this constraint is the only thing preventing a
+            //      duplicate row here, not a second line of defense — one
+            //      of the two callers isn't serialized at all. Don't relax
+            //      the debounce or the retry ceiling without re-checking
+            //      this margin.
             //   2. This action's own recipients[]/amounts[] names the same
             //      recipientId at two different indices (e.g. recipients=
             //      [5,5]). CawActions._distributeAmountsMem has no on-chain
@@ -1268,7 +1284,12 @@ async function handleTipAction(
       shouldNotify = true
     } catch (createErr: any) {
       // Unique constraint violation — another validator's concurrent
-      // transaction won the race (TOCTOU). Row exists either way.
+      // transaction won the race (TOCTOU). Row exists either way. This can
+      // also be checkOtherExists' two differently-serialized callers
+      // (actionCreation.ts inside ActionProcessor's processChain vs
+      // DataCleaner's orphan-action reconciliation on its own timer) —
+      // see the fuller note on the @@unique constraint in schema.prisma
+      // and the equivalent comment in handleCawAction above.
       if (createErr?.code !== 'P2002') throw createErr
       console.log('[handleTipAction] Tip create raced with concurrent processor, treating as no-op')
     }

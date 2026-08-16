@@ -613,6 +613,19 @@ model Tip {
 
   @@index([senderId])
   @@index([senderId, recipientId, cawId])
+  // This is not just a TOCTOU backstop behind serialized application
+  // code. checkOtherExists (the tip-branch of checkDomainObjectExists) has
+  // two callers with different concurrency guarantees: actionCreation.ts
+  // runs inside ActionProcessor's processChain (serialized against every
+  // other live-path call), but DataCleaner's orphan-action reconciliation
+  // calls the same check on its own timer, outside that chain, gated only
+  // by a 2-minute debounce. The live path's own worst case (Tx2: 3 retries
+  // x 30s timeout) is also exactly 2 minutes -- no margin by design. If a
+  // live-path run and DataCleaner's orphan sweep for the same action ever
+  // overlap inside that window, this constraint is the only thing
+  // preventing a duplicate row -- not a second line of defense, since one
+  // of the two callers isn't serialized at all. Don't relax the debounce
+  // or the retry ceiling without re-checking this margin.
   @@unique([senderId, recipientId, cawonce])
   @@index([senderId, pending])
   @@index([recipientId])
