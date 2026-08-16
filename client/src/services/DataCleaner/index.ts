@@ -12,6 +12,7 @@ import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
+import { countManager } from '../CountManager'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -122,35 +123,47 @@ async function cleanupPendingLikes() {
           // Note: count was incremented at /api/actions optimistic write time;
           // PENDING→SUCCESS is a no-op so we only flip pending here.
         } else if (pendingLike.createdAt < thirtyMinutesAgo) {
-          // No action found after 30 minutes, delete the optimistic like
-          logger.log(` Removing failed like for user ${pendingLike.userId} on caw ${pendingLike.cawId}`)
-
-          await prisma.like.delete({
-            where: {
-              userId_cawId: {
+          // No action found after 30 minutes, delete the optimistic like.
+          //
+          // Previously this deleted the row and recalculated Caw.likeCount
+          // via a raw COUNT(*) over confirmed likes -- which both (a) never
+          // rolled back liker.likedCount / author.likesReceivedCount (they
+          // were bumped optimistically at submit time in CountManager.
+          // onLikeCreated and never undone), and (b) clobbered likeCount
+          // with a snapshot that ignored any other like on the same caw
+          // still legitimately pending at that instant. Routes through
+          // CountManager.onStatusChanged now instead, same PENDING->FAILED
+          // rollback path txQueueFailure.ts already uses for the
+          // TxQueue-detected-failure case -- this was the DataCleaner
+          // timeout case that never got migrated onto it.
+          const likeDeleted = await prisma.$transaction(async (tx) => {
+            // deleteMany + pending:true guard (rather than a bare delete
+            // by unique key) so a row that's already been confirmed or
+            // removed by a concurrent cleanup pass is a no-op here instead
+            // of throwing -- and so the rollback below only fires when we
+            // actually removed the row, avoiding a double-decrement.
+            const deleted = await tx.like.deleteMany({
+              where: {
                 userId: pendingLike.userId,
-                cawId: pendingLike.cawId
+                cawId: pendingLike.cawId,
+                pending: true,
               }
+            })
+
+            if (deleted.count > 0) {
+              await countManager.onStatusChanged(tx, 'like', pendingLike.id, 'PENDING', 'FAILED', {
+                cawId: pendingLike.cawId,
+                userId: pendingLike.userId,
+              })
             }
+            return deleted.count
           })
 
-          // Recalculate the correct like count instead of blindly decrementing
-          const actualLikeCount = await prisma.like.count({
-            where: {
-              cawId: pendingLike.cawId,
-              action: 'LIKE',
-              pending: false
-            }
-          })
-
-          await prisma.caw.update({
-            where: { id: pendingLike.cawId },
-            data: {
-              likeCount: actualLikeCount
-            }
-          })
-
-          logger.log(` Updated caw ${pendingLike.cawId} like count to ${actualLikeCount}`)
+          if (likeDeleted > 0) {
+            logger.log(` Removed failed like and rolled back like/likedCount/likesReceivedCount for caw ${pendingLike.cawId}, user ${pendingLike.userId}`)
+          } else {
+            logger.log(` Pending like for user ${pendingLike.userId} on caw ${pendingLike.cawId} was already resolved concurrently -- skipping`)
+          }
         } else {
           // Still waiting, log but don't delete yet
           logger.log(` Like still pending (${Math.floor((Date.now() - pendingLike.createdAt.getTime()) / 60000)} minutes): user ${pendingLike.userId} on caw ${pendingLike.cawId} (userId: ${pendingLike.caw.userId}, cawonce: ${pendingLike.caw.cawonce})`)
@@ -748,8 +761,40 @@ async function cleanupPendingFollows() {
 
         // 3. No Action, no completed TxQueue — wait or clean up
         if (pendingFollow.updatedAt < thirtyMinutesAgo) {
-          logger.log(` No confirmation after 30 min — removing stale follow: ${fId} -> ${tId}`)
-          await prisma.follow.delete({ where: uniqueWhere })
+          // Same rationale as the like cleanup above: this delete used to
+          // run with zero count handling, permanently inflating
+          // follower.followingCount / target.followerCount for every
+          // dropped follow. Route through CountManager.onStatusChanged
+          // (same PENDING->FAILED path txQueueFailure.ts already uses for
+          // TxQueue-detected follow failures) instead of deleting bare.
+          logger.log(` No confirmation after 30 min for follow: ${fId} -> ${tId}`)
+          const followDeleted = await prisma.$transaction(async (tx) => {
+            // deleteMany + status:PENDING guard, same reasoning as the
+            // like cleanup above: a no-op instead of throwing if the row
+            // was already resolved concurrently, and rollback only fires
+            // when we actually removed a row.
+            const deleted = await tx.follow.deleteMany({
+              where: {
+                followerId: fId,
+                followingId: tId,
+                status: 'PENDING',
+              }
+            })
+
+            if (deleted.count > 0) {
+              await countManager.onStatusChanged(tx, 'follow', pendingFollow.id, 'PENDING', 'FAILED', {
+                followerId: fId,
+                followingId: tId,
+              })
+            }
+            return deleted.count
+          })
+
+          if (followDeleted > 0) {
+            logger.log(` Removed stale follow and rolled back followingCount/followerCount for ${fId} -> ${tId}`)
+          } else {
+            logger.log(` Pending follow ${fId} -> ${tId} was already resolved concurrently -- skipping`)
+          }
         } else {
           logger.log(` Follow still pending (${Math.floor((Date.now() - pendingFollow.updatedAt.getTime()) / 60000)} min): ${fId} -> ${tId}`)
         }
