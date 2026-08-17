@@ -920,7 +920,7 @@ async function syncL2Events(): Promise<void> {
         ...authed.map(e => ({ ev: e, kind: 'authed' as const })),
       ].sort((a, b) => {
         if (a.ev.blockNumber !== b.ev.blockNumber) return a.ev.blockNumber - b.ev.blockNumber
-        return (a.ev as any).logIndex - (b.ev as any).logIndex
+        return ((a.ev as any).index ?? (a.ev as any).logIndex ?? 0) - ((b.ev as any).index ?? (b.ev as any).logIndex ?? 0)
       })
 
       for (const { ev, kind } of combined) {
@@ -1140,7 +1140,7 @@ async function syncL1FeeEvents(): Promise<void> {
         ...mintCeiling.map(e     => ({ ev: e, kind: 'MintFeeCeilingLowered'     as const })),
       ].sort((a, b) => {
         if (a.ev.blockNumber !== b.ev.blockNumber) return a.ev.blockNumber - b.ev.blockNumber
-        return (a.ev as any).logIndex - (b.ev as any).logIndex
+        return ((a.ev as any).index ?? (a.ev as any).logIndex ?? 0) - ((b.ev as any).index ?? (b.ev as any).logIndex ?? 0)
       })
 
       for (const { ev, kind } of combined) {

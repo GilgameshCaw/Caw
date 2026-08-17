@@ -292,7 +292,7 @@ export default async function listenForRawEvents(
         }
         // Offset logIndex by action position within the batch so each action
         // gets a unique (blockNumber, logIndex, transactionHash) key.
-        const logIndex = (ev.logIndex ?? 0) + i
+        const logIndex = ((ev as any).index ?? (ev as any).logIndex ?? 0) + i
         lastHash = hashNext(lastHash, action)
         batch.push({
           chainId:         config.chainId,
@@ -697,7 +697,7 @@ export default async function listenForRawEvents(
         const events: Log[] = [...sigEvents, ...erc1271Events].sort((a, b) =>
           (a as any).blockNumber !== (b as any).blockNumber
             ? (a as any).blockNumber - (b as any).blockNumber
-            : (a as any).logIndex - (b as any).logIndex
+            : ((a as any).index ?? (a as any).logIndex ?? 0) - ((b as any).index ?? (b as any).logIndex ?? 0)
         )
 
         if (events.length > 0) {

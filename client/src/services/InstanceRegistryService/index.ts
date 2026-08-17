@@ -320,7 +320,7 @@ async function refreshPeers(
     if (!parsed) continue
     ordered.push({
       blockNumber: Number((log as any).blockNumber),
-      logIndex: Number((log as any).logIndex),
+      logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
       instanceId: Number(parsed.args.instanceId),
       active: false,
     })
@@ -330,7 +330,7 @@ async function refreshPeers(
     if (!parsed) continue
     ordered.push({
       blockNumber: Number((log as any).blockNumber),
-      logIndex: Number((log as any).logIndex),
+      logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
       instanceId: Number(parsed.args.instanceId),
       active: true,
     })
