@@ -601,11 +601,92 @@ export const marketplaceIndexerService: Service = {
           // Process OfferAccepted events
           for (const event of offersAccepted) {
             const ev = event as ethers.EventLog
-            const onChainOfferId = Number(ev.args[0])
+            const args = ev.args
+            const onChainOfferId = Number(args[0])
+            const tokenId = Number(args[1])
+            const seller = String(args[2]).toLowerCase()
+            const buyer = String(args[3]).toLowerCase()
+            const price = args[4].toString()
+            const paymentToken = String(args[5])
+
             await prisma.marketplaceOffer.updateMany({
               where: { offerId: onChainOfferId, status: 'ACTIVE' },
               data: { status: 'ACCEPTED' },
             })
+
+            // Notify seller and buyer. Mirrors the Sale-event SALE_SOLD/
+            // SALE_BOUGHT pair above (L289-347) — an accepted offer is a
+            // completed sale too, it just has no MarketplaceListing/Sale
+            // row (offers aren't tied to a listing), so there's nowhere
+            // else in the indexer this notification would come from.
+            // Lookup is best-effort: if either party doesn't have a User
+            // row on this mirror, we just skip their notification.
+            try {
+              const user = await prisma.user.findUnique({ where: { tokenId } })
+              const username = user?.username || `#${tokenId}`
+
+              const [sellerUser, buyerUser] = await Promise.all([
+                prisma.user.findFirst({
+                  where: { address: { equals: seller, mode: 'insensitive' } },
+                  select: { tokenId: true },
+                }),
+                prisma.user.findFirst({
+                  where: { address: { equals: buyer, mode: 'insensitive' } },
+                  select: { tokenId: true },
+                }),
+              ])
+
+              const payload = {
+                offerId: onChainOfferId,
+                username,
+                tokenId,
+                price,
+                paymentToken: getPaymentLabel(paymentToken),
+              }
+
+              // Idempotency: same rationale as the Sale-event pair — a
+              // regressed lastBlock or DB rebuild would re-process this
+              // event, and groupKey is namespaced per-offer-per-side so
+              // a wash sale (seller == buyer) still gets both rows.
+              const sellerGroupKey = `offer_accepted_sold_${onChainOfferId}`
+              const buyerGroupKey = `offer_accepted_bought_${onChainOfferId}`
+
+              if (sellerUser) {
+                const existing = await prisma.notification.findFirst({
+                  where: { type: 'SALE_SOLD', userId: sellerUser.tokenId, groupKey: sellerGroupKey },
+                  select: { id: true },
+                })
+                if (!existing) {
+                  await createNotificationWithGroup(prisma, {
+                    userId: sellerUser.tokenId,
+                    actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
+                    type: 'SALE_SOLD',
+                    groupKey: sellerGroupKey,
+                    actionPayload: payload,
+                  })
+                  console.log(`[Marketplace] Sent SALE_SOLD notification to seller tokenId=${sellerUser.tokenId} for offer ${onChainOfferId}`)
+                }
+              }
+
+              if (buyerUser) {
+                const existing = await prisma.notification.findFirst({
+                  where: { type: 'SALE_BOUGHT', userId: buyerUser.tokenId, groupKey: buyerGroupKey },
+                  select: { id: true },
+                })
+                if (!existing) {
+                  await createNotificationWithGroup(prisma, {
+                    userId: buyerUser.tokenId,
+                    actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
+                    type: 'SALE_BOUGHT',
+                    groupKey: buyerGroupKey,
+                    actionPayload: payload,
+                  })
+                  console.log(`[Marketplace] Sent SALE_BOUGHT notification to buyer tokenId=${buyerUser.tokenId} for offer ${onChainOfferId}`)
+                }
+              }
+            } catch (err) {
+              console.warn('[Marketplace] Failed to create offer acceptance sale notifications:', err)
+            }
           }
 
           // Process OfferCancelled events
