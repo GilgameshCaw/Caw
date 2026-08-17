@@ -2589,6 +2589,13 @@ class MultiChainDeployer {
         // addresses. Networks re-register with identical sequential IDs (Uruk=1,
         // Babylon=2), so operator REPLICATE_NETWORK_IDS config stays valid.
         'CawNetworkManager',
+        // CawBuyAndBurn is the OTHER setter-wired CawProfile consumer: CawProfile
+        // is injected via the one-shot setCawProfile linking step ("Set CawProfile
+        // on BuyAndBurn"), and BuyAndBurn does NOT declare CawProfile in its
+        // dependencies — so, exactly like NM, neither the dependents closure nor the
+        // nonce-chain closure reaches it, and a partial CawProfile cascade would
+        // leave it pointing at the DELETED old CawProfile with no setter to repair.
+        'CawBuyAndBurn',
       ];
       for (const key of forceInclude) {
         if (CONTRACTS[key]) toRedeploy.add(key);
