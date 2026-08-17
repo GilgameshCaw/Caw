@@ -234,12 +234,16 @@ router.post('/conversations',
         return res.status(400).json({ error: 'Cannot create conversation with yourself' })
       }
 
-      // Verify peer has a DM identity
+      // Verify peer has a DM identity. A row can exist as an
+      // ensureDmIdentity placeholder (dm-relay.ts, publicKey: '') created
+      // to satisfy ConversationParticipant's FK before the peer's real
+      // identity relay arrived — that's not a usable identity, so check
+      // publicKey too, not just row existence.
       const peerIdentity = await prisma.dmIdentity.findUnique({
         where: { userId: Number(peerUserId) },
         include: { user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } } }
       })
-      if (!peerIdentity) {
+      if (!peerIdentity || !peerIdentity.publicKey) {
         return res.status(400).json({ error: 'Peer has not enabled DMs' })
       }
 
