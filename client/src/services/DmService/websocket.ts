@@ -79,6 +79,12 @@ export class DmWebSocketService {
     // returning sessionToken in its JSON body. Audit fix 2026-05-14 (F1
     // follow-up).
     this.io.use(async (socket: AuthenticatedSocket, next) => {
+      // Concurrent-connection cap moved to nginx (limit_conn on
+      // /socket.io/, see cli/src/steps/nginx.js's ensureConnLimitZoneConf).
+      // The Map<ip, count> that used to live here counted only after
+      // successful auth and trusted a client-suppliable header for the
+      // key — nginx's limit_conn counts before this handler ever runs,
+      // keyed on the TCP peer it observed directly. (#45, tentencaw.)
       try {
         const cookieHeader = socket.handshake.headers.cookie || ''
         const cookieRe = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]+)`)
@@ -129,6 +135,8 @@ export class DmWebSocketService {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       console.log(`[DM-WS] User ${socket.username} (${socket.userId}) connected`)
 
+      // Slot already claimed in the auth middleware above — not re-counted
+      // here to avoid double-incrementing the same connection.
       socket.join(`user:${socket.userId}`)
       this.joinUserConversations(socket)
 
@@ -216,6 +224,7 @@ export class DmWebSocketService {
         }
         // M-2: clean up rate-limit buckets
         eventBuckets.delete(socket.id)
+
       })
     })
   }
