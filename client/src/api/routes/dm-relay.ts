@@ -70,6 +70,54 @@ export function canonicalizeEnvelope(env: RelayEnvelope): string {
   })
 }
 
+// ConversationParticipant.userId has a foreign key against
+// DmIdentity.userId. An inbound relay's sender or recipient may not
+// have a DmIdentity on this node yet — the official identity relay
+// (POST /api/dm/identity/relay) is a separate, not-yet-arrived message,
+// and cross-instance propagation isn't guaranteed to land before the
+// first DM does. Without this, prisma.conversation.create /
+// conversationParticipant.upsert throws P2003 and the inbound message
+// is dropped without being persisted (confirmed in V1 production logs —
+// this constraint is hit repeatedly, in bursts, in practice).
+//
+// ensureDmIdentity upserts a placeholder DmIdentity (publicKey: '') so
+// the FK is satisfiable, and a placeholder User first if needed (same
+// id/tokenId/username pattern used elsewhere for placeholder users —
+// see actions.ts's FOLLOW handler). getPublicKey/getPublicKeysBatch
+// treat publicKey === '' as "no identity" so downstream code can't
+// mistake the placeholder for a real key; registerIdentity's upsert
+// naturally overwrites it with the real key once the official relay
+// arrives.
+async function ensureDmIdentity(userId: number): Promise<void> {
+  // On-chain CawProfile tokenIds are 1-indexed; senderId/recipientId are
+  // relayed by a signature-verified peer instance (not directly
+  // attacker-controlled — see the trust model note at the top of this
+  // file), but a misbehaving or buggy peer could still relay a malformed
+  // tokenId. Guard rather than create a placeholder for something that
+  // could never be a real profile.
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new Error(`ensureDmIdentity: invalid userId ${userId}`)
+  }
+
+  const existing = await prisma.dmIdentity.findUnique({
+    where: { userId },
+    select: { userId: true },
+  })
+  if (existing) return
+
+  await prisma.user.upsert({
+    where: { tokenId: userId },
+    update: {},
+    create: { id: userId, tokenId: userId, username: `user_${userId}` },
+  })
+
+  await prisma.dmIdentity.upsert({
+    where: { userId },
+    update: {},
+    create: { userId, walletAddress: '', publicKey: '' },
+  })
+}
+
 router.post('/', async (req, res) => {
   try {
     const {
@@ -224,6 +272,15 @@ router.post('/', async (req, res) => {
         recipientStatus = 'REQUEST'
       }
     }
+
+    // Ensure both parties satisfy ConversationParticipant's FK against
+    // DmIdentity before touching Conversation/ConversationParticipant —
+    // see ensureDmIdentity's comment above for why this can be missing
+    // on an inbound relay.
+    await Promise.all([
+      ensureDmIdentity(Number(senderId)),
+      ensureDmIdentity(Number(recipientId)),
+    ])
 
     // Get-or-create the conversation. On first contact we set the
     // recipient's participant.status per the rule above; the sender's
