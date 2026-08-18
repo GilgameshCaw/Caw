@@ -1038,6 +1038,7 @@ model MarketplacePayout {
   status          String    @default("pending")
   queuedAt        DateTime  @default(now())
   queuedTxHash    String
+  queuedLogIndex  Int?
   withdrawnAt     DateTime?
   withdrawnTxHash String?
   recipient       String?
