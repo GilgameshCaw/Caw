@@ -2332,6 +2332,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       pendingMasterCursorRef.current = null
       return
     }
+    // §14-E: On iOS WebKit, compositionend does not reliably fire, so
+    // isComposingRef stays true and handleTextChange commits interim
+    // composition text via setText on every keystroke (the IS_GECKO defer
+    // in handleTextChange doesn't apply on WebKit). That setText re-render
+    // fires this cursor-restore effect mid-composition, and focus+
+    // setSelectionRange yanks the caret to another chunk's textarea — the
+    // in-flight composition is orphaned and its text double-commits
+    // (observed: "てすとてすとてすt" growing without bound across a chunk
+    // boundary). Skip the restore while a composition is open AND this
+    // render was not driven by a real keystroke (onBeforeInput sets
+    // preInputStateRef; a genuine post-commit keystroke has a non-null
+    // snapshot and proceeds normally, so cursor-follow still works on iOS
+    // once the user commits). Real keystrokes (snap != null) and the GREW
+    // effect's own placement (via cursorRestoreSkipRef) are unaffected.
+    if (isComposingRef.current && preInputStateRef.current == null) {
+      pendingMasterCursorRef.current = null
+      return
+    }
     const masterCursor = pendingMasterCursorRef.current
     pendingMasterCursorRef.current = null
     if (masterCursor == null) return
@@ -2933,6 +2951,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           // spillover (cursor follows forward) from mid-chunk
                           // overflow (cursor stays where the user was typing).
                           const ta = e.currentTarget as HTMLTextAreaElement
+                          if (isComposingRef.current) return  // §14-E: skip snapshot while a composition is open. iOS WebKit reports e.inputType as undefined on React's onBeforeInput (measured 2026-08-18: [BI] undefined ic=true), so the old inputType check never matched and snapshots leaked through, poisoning the cursor-restore gate. isComposingRef is set on compositionstart and is reliable; a real committed keystroke fires onBeforeInput with ref already false, so cursor-follow still works.
                           preInputStateRef.current = {
                             chunkIdx: i,
                             preCursorPos: ta.selectionStart ?? 0,
@@ -3560,6 +3579,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       if (threadSel && threadSel.masterEnd > threadSel.masterStart) {
                         setThreadSel(null)
                       }
+                      if (isComposingRef.current) return  // §14-E: skip snapshot while a composition is open. iOS WebKit reports e.inputType as undefined on React's onBeforeInput (measured 2026-08-18: [BI] undefined ic=true), so the old inputType check never matched and snapshots leaked through, poisoning the cursor-restore gate. isComposingRef is set on compositionstart and is reliable; a real committed keystroke fires onBeforeInput with ref already false, so cursor-follow still works.
                       preInputStateRef.current = {
                         chunkIdx: i,
                         preCursorPos: ta.selectionStart ?? 0,
