@@ -42,6 +42,15 @@ import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
 import { getNetworkId } from '../../utils/networkId'
 
+// Outbound relay fetches previously had no timeout: a hung/unreachable
+// peer would leave the request pending indefinitely, leaking a socket
+// per attempt. Both relay functions fire fetch() for every active peer
+// without awaiting or bounding concurrency, so a single unresponsive
+// peer (down for maintenance, network partition, overloaded) holds a
+// socket open indefinitely rather than failing fast. 5s is generous
+// for a same-network HTTP POST while still bounding the worst case.
+const DM_RELAY_TIMEOUT_MS = 5_000
+
 /**
  * Build a peer fetch URL using `new URL()` so path injection via a
  * maliciously-crafted apiUrl (e.g. "https://evil.com?x=") is blocked.
@@ -240,9 +249,11 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
+      signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
     }).catch(err => {
       // Fire-and-forget. Network errors are routine (peer down,
-      // unreachable). Don't spam the log on every failure.
+      // unreachable), and so is the abort from the timeout above.
+      // Don't spam the log on every failure.
       if (process.env.DM_RELAY_VERBOSE === '1') {
         console.warn(`[DmRelay] Failed to relay to ${peer.apiUrl}:`, err.message)
       }
@@ -342,7 +353,10 @@ export async function relayDmIdentityToPeers(params: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
+      signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
     }).catch(err => {
+      // Fire-and-forget, same as relayDmToPeers above — routine network
+      // errors and timeout aborts are both expected here.
       if (process.env.DM_RELAY_VERBOSE === '1') {
         console.warn(`[DmRelay] Failed to relay identity to ${peer.apiUrl}:`, err.message)
       }
