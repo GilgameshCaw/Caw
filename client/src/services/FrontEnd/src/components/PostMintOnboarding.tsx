@@ -278,6 +278,31 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   // unknown window is still rejected at signing time (auth/server checks).
   const knownOwner = activeToken?.tokenId === tokenId ? activeToken?.owner : undefined
   const isTokenOwner = !knownOwner || knownOwner.toLowerCase() === address?.toLowerCase()
+
+  // Same lag as knownOwner above, but for the token object passed to
+  // ProfileEditForm: if activeToken hasn't caught up to THIS token yet,
+  // it's pointing at a stale, DIFFERENT profile (e.g. the wallet's
+  // pre-existing tokenId=3 while onboarding a freshly-minted tokenId=9).
+  // ProfileEditForm's PATCH /api/users/${activeToken.tokenId}/profile
+  // would then silently overwrite that other profile's displayName/avatar
+  // instead of the one actually being onboarded. Build an authoritative
+  // token from the explicit props this component already has instead of
+  // trusting the global store to have caught up.
+  //   - owner is deliberately left undefined here rather than set to the
+  //     connecting wallet's address: those are different concepts (owner
+  //     is the verified on-chain owner, address is just who's currently
+  //     connected), and ProfileEditForm doesn't read owner at all, so
+  //     there's nothing to gain from conflating them.
+  //   - stakedAmount is deliberately left undefined rather than sourced
+  //     from pendingDepositAmount: a pending, not-yet-confirmed deposit
+  //     isn't the same thing as a confirmed stake, and ProfileEditForm
+  //     only reads stakedAmount for a display-only "X CAW staked" badge —
+  //     showing nothing there is more correct than showing a pending
+  //     amount as if it were confirmed.
+  const onboardingToken = useMemo(() => {
+    if (activeToken?.tokenId === tokenId) return activeToken
+    return { tokenId, username, address }
+  }, [activeToken, tokenId, username, address])
   const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
 
   const { data: balance, refetch: refetchBalance } = useReadContract({
@@ -395,9 +420,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       // Also persist to the DB so ProfileChooser's backend-side "+X CAW pending"
       // badge renders on other devices/sessions. The user already exists here,
       // so unlike the fresh-mint path in WelcomePage this PATCH will succeed.
-      if (activeToken?.username) {
+      // Uses onboardingToken, not activeToken directly: same stale-store lag
+      // as the ProfileEditForm handoff above -- activeToken?.username could
+      // still be the OLD profile's username here, PATCHing the wrong user's
+      // lastStakedAt/pendingDepositAmount.
+      if (onboardingToken?.username) {
         try {
-          await apiFetch(`/api/users/${activeToken.username}`, {
+          await apiFetch(`/api/users/${onboardingToken.username}`, {
             method: 'PATCH',
             body: JSON.stringify({
               lastStakedAt: new Date().toISOString(),
@@ -1371,7 +1400,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               </div>
 
               <ProfileEditForm
-                activeToken={activeToken as any}
+                activeToken={onboardingToken as any}
                 profileData={profileFormData}
                 isDark={isDark}
                 saveLabel="Save"
