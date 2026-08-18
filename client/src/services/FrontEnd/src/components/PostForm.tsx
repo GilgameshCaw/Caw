@@ -516,7 +516,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
-  const frozenThreadRef = useRef(false)
+  const frozenChunksRef = useRef<{ chunkCount: number; chunkBoundaries: number[] } | null>(null)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -1991,17 +1991,22 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const effectiveTextLength = textBytes + mediaCost + pollBytes
   // Thread mode is active when text overflows one post OR the user typed a
   // manual `---` break marker (which forces a split regardless of length).
-  const rawIsThreadMode = effectiveTextLength > POST_CHAR_LIMIT
-  if (!isComposingRef.current) frozenThreadRef.current = rawIsThreadMode
-  const isThreadMode = isComposingRef.current ? frozenThreadRef.current : rawIsThreadMode
+  const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
-  const { chunkCount, chunkBoundaries } = getChunkInfo(
+  // While an IME composition is open we do NOT recompute the chunk layout.
+  // Recomputing changes how many textareas are mounted (and the value each
+  // one holds), which ends the composition. Freezing the layout — not just
+  // the single/thread flag — covers every boundary, not only the first.
+  const rawChunkInfo = getChunkInfo(
     text,
     includePageIndicators,
     firstChunkMediaCost + firstChunkPollCost,
     lastChunkMediaCost + lastChunkPollCost,
   )
+  if (!isComposingRef.current) frozenChunksRef.current = rawChunkInfo
+  const { chunkCount, chunkBoundaries } =
+    (isComposingRef.current && frozenChunksRef.current) ? frozenChunksRef.current : rawChunkInfo
 
   // ---------------------------------------------------------------------------
   // Per-chunk slices (marker-stripped) for the N-textarea thread UI.
