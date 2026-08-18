@@ -516,6 +516,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  const frozenThreadRef = useRef(false)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -1990,7 +1991,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const effectiveTextLength = textBytes + mediaCost + pollBytes
   // Thread mode is active when text overflows one post OR the user typed a
   // manual `---` break marker (which forces a split regardless of length).
-  const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
+  const rawIsThreadMode = effectiveTextLength > POST_CHAR_LIMIT
+  if (!isComposingRef.current) frozenThreadRef.current = rawIsThreadMode
+  const isThreadMode = isComposingRef.current ? frozenThreadRef.current : rawIsThreadMode
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
   const { chunkCount, chunkBoundaries } = getChunkInfo(
@@ -2214,6 +2217,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // observed as "second time entering thread mode, focus is lost."
     const skipThisRender = cursorRestoreSkipRef.current
     cursorRestoreSkipRef.current = false
+    // While an IME composition is open the browser owns the composing
+    // range. focus() + a collapsed setSelectionRange() destroys it, so the
+    // next conversion INSERTS instead of replacing the reading (observed as
+    // duplicated text). Leave pendingMasterCursorRef intact — the render
+    // after compositionend restores the caret correctly.
+    if (isComposingRef.current) return
     if (!isThreadMode) {
       // Also drop any pending master cursor on the way out — it was set
       // for a chunk layout that no longer exists.
@@ -2749,7 +2758,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3 w-full">
             {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              {isThreadMode ? (
+              {true ? (
                 <div>
                   {chunkSlices.map((slice, i) => (
                     <React.Fragment key={i}>
@@ -3346,7 +3355,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           onMouseUp={() => { threadSelDragging.current = false }}
         >
         <div className="relative">
-          {isThreadMode ? (
+          {true ? (
             <>
               {chunkSlices.map((slice, i) => (
                 <React.Fragment key={i}>
