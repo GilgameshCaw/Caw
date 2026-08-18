@@ -89,6 +89,12 @@ interface HighlightedTextareaProps {
 // Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
 export const IS_GECKO =
   typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
+// iOS WebKit fires compositionupdate but NOT compositionend reliably.
+// Restore the overlay on every compositionupdate so raw romaji does not leak
+// through the transparent textarea (measured 2026-08-17: END never fires,
+// INPUT shows fill white / opacity 0 while composing).
+export const IS_IOS =
+  typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigator.userAgent)
 
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
@@ -396,6 +402,21 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     if (highlightRef.current) highlightRef.current.style.opacity = '1'
     onCompositionEnd?.(e)
   }
+  const handleCompositionUpdateInternal = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    // iOS: compositionend is unreliable, so restore the overlay here on every
+    // update, otherwise the start-time fill white / opacity 0 stays stuck and
+    // raw romaji shows through the transparent textarea. Firefox keeps the
+    // start/end toggle (it fires compositionend); other engines fall through.
+    if (IS_IOS) {
+      const ta = internalRef.current
+      if (ta) {
+        ta.style.color = 'transparent'
+        ta.style.webkitTextFillColor = 'transparent'
+      }
+      if (highlightRef.current) highlightRef.current.style.opacity = '1'
+    }
+    onCompositionUpdate?.(e)
+  }
 
   // React suppresses its synthetic onChange during IME composition on Firefox,
   // so the composed text never reaches the parent's onChange handler. The raw
@@ -578,7 +599,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         onChange={onChange}
         onCompositionStart={handleCompositionStartInternal}
         onCompositionEnd={handleCompositionEndInternal}
-        onCompositionUpdate={onCompositionUpdate}
+        onCompositionUpdate={handleCompositionUpdateInternal}
         onClick={onClick}
         onKeyUp={onKeyUp}
         onKeyDown={onKeyDown}

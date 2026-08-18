@@ -355,6 +355,7 @@ interface PostFormProps {
   autoFocus?: boolean;
 }
 
+
 const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -516,6 +517,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  // Gecko orphan-composition watchdog (真因: 孤立compositionstartに対応する
+  // compositionendが来ずisComposingRef+ネイティブcompositionがtrue滞留→BS抑制)。
+  // タイマーhandle / 一時inputリスナーのcleanup / 監視対象textareaを保持。
+  const orphanCompTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const orphanInputCleanupRef = useRef<(() => void) | null>(null)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -523,6 +529,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // the compositionend handlers can commit it when ta.value is empty. Chrome and
   // iOS keep ta.value populated at end, so this is an unused fallback there.
   const lastComposedRef = useRef<{ value: string; caret: number } | null>(null)
+  // Last known "stable" (not-mid-composition) text, used to freeze the
+  // isThreadMode decision on Gecko while a composition is in progress — see
+  // the isThreadMode computation below for why.
+  const preCompositionTextRef = useRef(text)
+  useEffect(() => {
+    if (!(isComposingRef.current && IS_GECKO)) {
+      preCompositionTextRef.current = text
+    }
+  })
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -893,9 +908,63 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // IME session open — mark our own composition flag so handleTextChange
   // can defer commit reliably, without trusting e.nativeEvent.isComposing
   // (which Android WebView mis-reports for plain Latin typing).
+  // 番犬タイマー/一時リスナーを畳む共通cancel。正常変換のinput検出時、
+  // compositionend時、次のcompositionstart時、いずれからも安全に呼べる(冪等)。
+  const cancelOrphanWatchdog = () => {
+    if (orphanCompTimerRef.current !== null) {
+      clearTimeout(orphanCompTimerRef.current)
+      orphanCompTimerRef.current = null
+    }
+    if (orphanInputCleanupRef.current !== null) {
+      orphanInputCleanupRef.current()
+      orphanInputCleanupRef.current = null
+    }
+  }
+
   const handleCompositionStart = () => {
     isComposingRef.current = true
     lastComposedRef.current = null
+    // Gecko限定・多枠のみ番犬を仕掛ける。Blink/WebKitはこの多枠パスに来ない(#37)。
+    if (!IS_GECKO) return
+    cancelOrphanWatchdog() // 前回の取りこぼしがあれば先に畳む
+    // compstart時のactiveElementが発生枠(実測: activeEl===target一致)。
+    const el = document.activeElement as HTMLTextAreaElement | null
+    if (!el || el.tagName !== 'TEXTAREA') return
+    // 正常変換は必ずinputが続く(実測: data有りinput)。孤立はinputが来ない。
+    // ネイティブinputを直接聞く=React onChange経路の分岐に依存しない。
+    let sawInput = false
+    const onInput = () => { sawInput = true }
+    el.addEventListener('input', onInput, true)
+    orphanInputCleanupRef.current = () => {
+      el.removeEventListener('input', onInput, true)
+    }
+    orphanCompTimerRef.current = setTimeout(() => {
+      orphanCompTimerRef.current = null
+      // cleanupは最後に必ず呼ぶ(リスナー除去)。
+      const cleanup = orphanInputCleanupRef.current
+      orphanInputCleanupRef.current = null
+      if (cleanup) cleanup()
+      // input来た=正常変換=何もしない。
+      if (sawInput) return
+      // input無し & まだcomposing扱い=孤立確定。
+      if (!isComposingRef.current) return
+      isComposingRef.current = false
+      lastComposedRef.current = null
+      // ネイティブcompositionはblurで強制終了する(石板L17: フォーカス外すと復活の機序)。
+      // isComposingRef=falseだけではネイティブは解けない(実測: BS keydown native=true滞留)。
+      if (document.activeElement === el && el.tagName === 'TEXTAREA') {
+        const caret = el.selectionStart
+        const caretEnd = el.selectionEnd
+        el.blur()
+        el.focus({ preventScroll: true })
+        // caret復元(blur/focusで先頭に飛ぶ個体差を吸収)。
+        try {
+          if (caret !== null && caretEnd !== null) {
+            el.setSelectionRange(caret, caretEnd)
+          }
+        } catch { /* no-op */ }
+      }
+    }, 700)
   }
 
   // IME commit for single-mode — clears our composition flag, then pushes
@@ -903,6 +972,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // in handleTextChange above (#322).
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     isComposingRef.current = false
+    cancelOrphanWatchdog() // 正常にendが来た=孤立ではない。番犬を畳む。
     const ta = e.currentTarget
     // Commit the value captured from the raw input event during composition —
     // it's the running composed text (e.g. "あい"). Firefox's ta.value here is
@@ -913,6 +983,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     const committed = captured?.value ?? ta.value
     const cursor = captured?.caret ?? ta.selectionStart ?? committed.length
     pendingMasterCursorRef.current = cursor
+    // Composition commits don't go through onBeforeInput the way plain
+    // keystrokes do, so the chunk-growth layoutEffect's cursor-restore logic
+    // (which relies on preInputStateRef) would otherwise see a stale/null
+    // snapshot and fall back to "don't jump" — leaving the cursor wherever
+    // the browser happened to place it after a mid-composition chunk split.
+    // Supply the snapshot explicitly so composition commits get the same
+    // correct cursor-follow behavior as normal typing.
+    preInputStateRef.current = { chunkIdx: 0, preCursorPos: cursor, preSliceLen: committed.length }
     setText(committed)
     setCursorPosition(cursor)
   }
@@ -923,6 +1001,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const makeChunkCompositionEnd = (i: number) =>
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
       isComposingRef.current = false
+      cancelOrphanWatchdog() // 正常にendが来た(多枠)=孤立ではない。番犬を畳む。
       const ta = e.currentTarget
       // Same captured-value-wins logic as handleCompositionEnd (Firefox ta.value
       // lags one composition behind).
@@ -931,6 +1010,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       const committed = captured?.value ?? ta.value
       const localCursor = captured?.caret ?? ta.selectionStart ?? committed.length
       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+      // Same reasoning as handleCompositionEnd above — give the chunk-growth
+      // layoutEffect a valid snapshot for composition-driven commits.
+      preInputStateRef.current = { chunkIdx: i, preCursorPos: localCursor, preSliceLen: committed.length }
       replaceChunk(i, committed)
       setActiveChunkIndex(i)
       setActiveChunkCursor(localCursor)
@@ -1990,7 +2072,26 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const effectiveTextLength = textBytes + mediaCost + pollBytes
   // Thread mode is active when text overflows one post OR the user typed a
   // manual `---` break marker (which forces a split regardless of length).
-  const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
+  //
+  // On Gecko, freeze this decision at the last pre-composition text while a
+  // CJK composition is in progress — flipping isThreadMode mid-composition
+  // unmounts the active textarea, which can freeze Firefox's IME session
+  // entirely. Only Gecko gets the live multi-chunk view during composition;
+  // Blink/WebKit can't safely freeze this the same way (compositionend is
+  // unreliable there), so on those engines we avoid the situation entirely
+  // by staying in single-textarea mode until submit (see isThreadMode below)
+  // rather than trying to time a freeze/unfreeze around an unreliable event.
+  const textForThreadDecision = (isComposingRef.current && IS_GECKO) ? preCompositionTextRef.current : text
+  const effectiveTextLengthForThreadDecision = onChainByteLen(textForThreadDecision) + mediaCost + pollBytes
+  const trueIsThreadMode = effectiveTextLengthForThreadDecision > POST_CHAR_LIMIT
+  // Only Firefox (Gecko) shows the live multi-chunk split view during
+  // composition — its freeze mechanism above reliably resolves via
+  // compositionend. Chrome and iOS/WebKit stay in single-textarea mode
+  // regardless of length; the existing chunk-boundary/count logic still
+  // runs for the byte counter and "will be posted as N posts" messaging,
+  // and the actual split still happens correctly at submit time — only the
+  // RENDER PATH and composition handlers are affected.
+  const isThreadMode = IS_GECKO ? trueIsThreadMode : false
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
   const { chunkCount, chunkBoundaries } = getChunkInfo(
@@ -2008,13 +2109,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // In auto-split mode boundaries point to post-trimStart offsets so the raw
   // slice is also clean.
   // ---------------------------------------------------------------------------
+  // Sliced by trueIsThreadMode (not the render-affecting isThreadMode) so
+  // the char counter reflects the correct per-chunk remaining space even
+  // when we're forced into single-textarea rendering (Chrome/iOS) despite
+  // the text actually needing a thread. The chunk-mode RENDER path still
+  // only mounts when isThreadMode is true, so this doesn't reintroduce any
+  // multi-textarea composition risk — it's purely a data computation used
+  // by the char counter and the (already-disabled-when-forced) chunk JSX.
   const chunkSlices = useMemo((): string[] => {
-    if (!isThreadMode) return [text]
+    if (!trueIsThreadMode) return [text]
     return chunkBoundaries.map((start, i) => {
       const end = chunkBoundaries[i + 1] ?? text.length
       return text.slice(start, end)
     })
-  }, [text, chunkBoundaries, isThreadMode])
+  }, [text, chunkBoundaries, trueIsThreadMode])
 
   /** Replace chunk `i`'s content with `newValue` and patch the master `text`. */
   const replaceChunk = (i: number, newValue: string) => {
@@ -2221,6 +2329,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       return
     }
     if (skipThisRender) {
+      pendingMasterCursorRef.current = null
+      return
+    }
+    // §14-E: On iOS WebKit, compositionend does not reliably fire, so
+    // isComposingRef stays true and handleTextChange commits interim
+    // composition text via setText on every keystroke (the IS_GECKO defer
+    // in handleTextChange doesn't apply on WebKit). That setText re-render
+    // fires this cursor-restore effect mid-composition, and focus+
+    // setSelectionRange yanks the caret to another chunk's textarea — the
+    // in-flight composition is orphaned and its text double-commits
+    // (observed: "てすとてすとてすt" growing without bound across a chunk
+    // boundary). Skip the restore while a composition is open AND this
+    // render was not driven by a real keystroke (onBeforeInput sets
+    // preInputStateRef; a genuine post-commit keystroke has a non-null
+    // snapshot and proceeds normally, so cursor-follow still works on iOS
+    // once the user commits). Real keystrokes (snap != null) and the GREW
+    // effect's own placement (via cursorRestoreSkipRef) are unaffected.
+    if (isComposingRef.current && preInputStateRef.current == null) {
       pendingMasterCursorRef.current = null
       return
     }
@@ -2630,15 +2756,29 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const hasMediaOnlyChunk = mediaPosition === 'end' && chunkCount >= 2 && chunkBoundaries[chunkCount - 1] === text.length
   const maxCursorChunk = hasMediaOnlyChunk ? chunkCount - 2 : chunkCount - 1
   const currentChunkIndex = (() => {
-    if (!isThreadMode) return 0
-    // In thread mode with separate textareas, use the actively focused chunk.
-    return Math.min(activeChunkIndex, maxCursorChunk)
+    if (isThreadMode) {
+      // Real thread mode with separate textareas — use the actively focused chunk.
+      return Math.min(activeChunkIndex, maxCursorChunk)
+    }
+    if (trueIsThreadMode) {
+      // Forced single-textarea mode (Chrome/iOS) despite text needing a
+      // thread — derive which virtual chunk the cursor is in from
+      // cursorPosition + chunkBoundaries, so the counter shows remaining
+      // space for the actual chunk being typed into instead of going
+      // negative against the whole text.
+      let idx = 0
+      for (let i = 0; i < chunkBoundaries.length; i++) {
+        if (cursorPosition >= chunkBoundaries[i]) idx = i
+      }
+      return Math.min(idx, maxCursorChunk)
+    }
+    return 0
   })()
 
   // Calculate bytes remaining for the current chunk (uses on-chain byte lengths
   // so the counter reflects the actual space available after URL shortening)
   const calculateCharCount = () => {
-    if (!isThreadMode) {
+    if (!isThreadMode && !trueIsThreadMode) {
       return POST_CHAR_LIMIT - effectiveTextLength
     }
     // In thread mode, show remaining bytes for the focused chunk's stripped slice.
@@ -2749,7 +2889,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3 w-full">
             {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              {isThreadMode ? (
+              <div style={{ display: isThreadMode ? undefined : 'none' }}>
                 <div>
                   {chunkSlices.map((slice, i) => (
                     <React.Fragment key={i}>
@@ -2811,6 +2951,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           // spillover (cursor follows forward) from mid-chunk
                           // overflow (cursor stays where the user was typing).
                           const ta = e.currentTarget as HTMLTextAreaElement
+                          if (isComposingRef.current) return  // §14-E: skip snapshot while a composition is open. iOS WebKit reports e.inputType as undefined on React's onBeforeInput (measured 2026-08-18: [BI] undefined ic=true), so the old inputType check never matched and snapshots leaked through, poisoning the cursor-restore gate. isComposingRef is set on compositionstart and is reliable; a real committed keystroke fires onBeforeInput with ref already false, so cursor-follow still works.
                           preInputStateRef.current = {
                             chunkIdx: i,
                             preCursorPos: ta.selectionStart ?? 0,
@@ -2841,7 +2982,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
                   />
                 </div>
-              ) : (
+              </div>
+              <div style={{ display: isThreadMode ? 'none' : undefined }}>
                 <>
                   <HighlightedTextarea
                     value={text}
@@ -2855,6 +2997,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onDragOver={handleTextareaDragOver}
                     onDragLeave={handleTextareaDragLeave}
                     onDrop={handleTextareaDrop}
+                    // Purely visual split-position markers, reusing the
+                    // existing hairline-overlay mechanism in
+                    // HighlightedTextarea. Only relevant when we're forced
+                    // into single-textarea mode despite the text actually
+                    // needing a thread (trueIsThreadMode true, isThreadMode
+                    // false) — i.e. Chrome/iOS. Never touches the textarea
+                    // itself, so it carries none of the composition risk
+                    // that the real multi-textarea chunk UI had.
+                    chunkBoundaries={(!isThreadMode && trueIsThreadMode) ? chunkBoundaries : undefined}
+                    showZebra={(!isThreadMode && trueIsThreadMode)}
+                    showChunkBadge={(!isThreadMode && trueIsThreadMode)}
                     rows={replyTo ? 3 : 1}
                     placeholder={
                       replyTo
@@ -2875,7 +3028,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={textareaRef}
                   />
                 </>
-              )}
+              </div>
               {/* Drag overlay */}
               {isDragOverTextarea && (
                 <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -3346,7 +3499,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           onMouseUp={() => { threadSelDragging.current = false }}
         >
         <div className="relative">
-          {isThreadMode ? (
+          <div style={{ display: isThreadMode ? undefined : 'none' }}>
             <>
               {chunkSlices.map((slice, i) => (
                 <React.Fragment key={i}>
@@ -3426,6 +3579,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       if (threadSel && threadSel.masterEnd > threadSel.masterStart) {
                         setThreadSel(null)
                       }
+                      if (isComposingRef.current) return  // §14-E: skip snapshot while a composition is open. iOS WebKit reports e.inputType as undefined on React's onBeforeInput (measured 2026-08-18: [BI] undefined ic=true), so the old inputType check never matched and snapshots leaked through, poisoning the cursor-restore gate. isComposingRef is set on compositionstart and is reliable; a real committed keystroke fires onBeforeInput with ref already false, so cursor-follow still works.
                       preInputStateRef.current = {
                         chunkIdx: i,
                         preCursorPos: ta.selectionStart ?? 0,
@@ -3468,7 +3622,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
               />
             </>
-          ) : (
+          </div>
+          <div style={{ display: isThreadMode ? 'none' : undefined }}>
             <>
               <HighlightedTextarea
                 value={text}
@@ -3482,6 +3637,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 onDragOver={handleTextareaDragOver}
                 onDragLeave={handleTextareaDragLeave}
                 onDrop={handleTextareaDrop}
+                chunkBoundaries={(!isThreadMode && trueIsThreadMode) ? chunkBoundaries : undefined}
+                showZebra={(!isThreadMode && trueIsThreadMode)}
+                showChunkBadge={(!isThreadMode && trueIsThreadMode)}
                 rows={desktopRows}
                 placeholder={
                   replyTo
@@ -3502,7 +3660,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={textareaRef}
               />
             </>
-          )}
+          </div>
           {/* Drag overlay */}
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
