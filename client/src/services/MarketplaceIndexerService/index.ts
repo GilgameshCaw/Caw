@@ -621,9 +621,23 @@ export const marketplaceIndexerService: Service = {
             // else in the indexer this notification would come from.
             // Lookup is best-effort: if either party doesn't have a User
             // row on this mirror, we just skip their notification.
+            //
+            // If tokenId's own User row hasn't landed yet either, skip the
+            // whole notification rather than falling back to `#<tokenId>`:
+            // that placeholder gets frozen into actionPayload permanently
+            // (nothing repairs it later, unlike MarketplaceListing.username
+            // above, which has a one-shot backfill for the same shape of
+            // gap). Same best-effort posture as the seller/buyer lookup
+            // right below -- this event will not be replayed once the
+            // block is past, so a skipped notification here is silent,
+            // same as a skipped seller/buyer notification would be.
             try {
-              const user = await prisma.user.findUnique({ where: { tokenId } })
-              const username = user?.username || `#${tokenId}`
+              const user = await prisma.user.findUnique({ where: { tokenId }, select: { username: true } })
+              if (!user) {
+                console.warn(`[Marketplace] Skipping offer acceptance notifications for offer ${onChainOfferId} — tokenId ${tokenId} has no User row yet`)
+                continue
+              }
+              const username = user.username
 
               const [sellerUser, buyerUser] = await Promise.all([
                 prisma.user.findFirst({
