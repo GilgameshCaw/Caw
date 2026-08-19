@@ -101,6 +101,18 @@ async function cleanupOptimisticRows(
     // CAW (0) / RECAW (3): mark the Caw row as FAILED so the feed shows it
     // with a failure indicator rather than lingering as "pending forever".
     if ((actionType === 0 || actionType === 3) && cawonce != null) {
+      // Fetch the pending rows before updateMany so we have userId/action/
+      // originalCawId for CountManager.onStatusChanged below -- updateMany
+      // itself doesn't return the affected rows. Companion to PR #58 (which
+      // fixed this same rollback omission for like/follow): CAW/RECAW never
+      // called onStatusChanged on failure at all, so the optimistic
+      // user.cawCount/recawCount bump from creation was never undone,
+      // leaving a permanent drift on every failed post.
+      const pendingCaws = await prisma.caw.findMany({
+        where: { userId: senderId, cawonce, status: 'PENDING' },
+        select: { id: true, userId: true, action: true, originalCawId: true },
+      })
+
       await prisma.caw.updateMany({
         where: { userId: senderId, cawonce, status: 'PENDING' },
         data: { status: 'FAILED', reason: reason.slice(0, 200) }
@@ -113,6 +125,28 @@ async function cleanupOptimisticRows(
         where: { userId: senderId, cawonce, status: 'published' },
         data: { status: 'failed' },
       })
+
+      for (const pendingCaw of pendingCaws) {
+        // Caw.originalCawId is set for BOTH quotes and replies (see
+        // actionHandlers.ts's upsert) -- CountManager's rollback only
+        // wants it for quotes, where it also decrements the parent's
+        // recawCount. A reply's parent gets commentCount bumped instead
+        // (via Reply, not Caw.recawCount), so passing originalCawId
+        // through unconditionally here would incorrectly decrement a
+        // reply's parent's recawCount on failure. Check for a Reply row
+        // pointing at this caw, same distinction actionHandlers.ts's
+        // isReplyNotQuote already makes at creation time.
+        const replyRecord = pendingCaw.originalCawId != null
+          ? await prisma.reply.findFirst({ where: { replyCawId: pendingCaw.id }, select: { id: true } })
+          : null
+        const isReply = replyRecord != null
+
+        await countManager.onStatusChanged(prisma, 'caw', pendingCaw.id, 'PENDING', 'FAILED', {
+          userId: pendingCaw.userId,
+          action: pendingCaw.action,
+          originalCawId: isReply ? null : pendingCaw.originalCawId,
+        })
+      }
     }
 
     // FOLLOW (4) failed: mark the pending Follow row as FAILED so the UI
