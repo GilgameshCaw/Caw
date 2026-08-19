@@ -88,15 +88,30 @@ export function canonicalizeEnvelope(env: RelayEnvelope): string {
 // mistake the placeholder for a real key; registerIdentity's upsert
 // naturally overwrites it with the real key once the official relay
 // arrives.
+// Distinguishes an invalid-tokenId rejection from the P2003 this whole
+// function exists to prevent, so the route's catch block can log which
+// one actually happened instead of folding both into the same generic
+// "[DM Relay] Error" line.
+class InvalidRelayUserIdError extends Error {
+  constructor(userId: number) {
+    super(`ensureDmIdentity: invalid userId ${userId}`)
+    this.name = 'InvalidRelayUserIdError'
+  }
+}
+
 async function ensureDmIdentity(userId: number): Promise<void> {
   // On-chain CawProfile tokenIds are 1-indexed; senderId/recipientId are
   // relayed by a signature-verified peer instance (not directly
   // attacker-controlled — see the trust model note at the top of this
   // file), but a misbehaving or buggy peer could still relay a malformed
   // tokenId. Guard rather than create a placeholder for something that
-  // could never be a real profile.
+  // could never be a real profile. Still throws (rather than logging and
+  // skipping) because a malformed sender/recipient means the rest of
+  // this relay -- Conversation/ConversationParticipant against that same
+  // tokenId -- can't proceed meaningfully either; there's no message to
+  // save by continuing.
   if (!Number.isInteger(userId) || userId <= 0) {
-    throw new Error(`ensureDmIdentity: invalid userId ${userId}`)
+    throw new InvalidRelayUserIdError(userId)
   }
 
   const existing = await prisma.dmIdentity.findUnique({
@@ -380,7 +395,11 @@ router.post('/', async (req, res) => {
 
     return res.json({ status: 'relayed', messageId: messageRecord.id })
   } catch (error: any) {
-    console.error('[DM Relay] Error:', error.message)
+    if (error instanceof InvalidRelayUserIdError) {
+      console.error(`[DM Relay] Rejected — ${error.message} (source instance sent a malformed sender/recipient tokenId)`)
+    } else {
+      console.error('[DM Relay] Error:', error.message)
+    }
     return res.status(500).json({ error: 'Relay failed' })
   }
 })

@@ -277,8 +277,11 @@ router.get('/', async (req, res) => {
       // Attach DM identity status to each user
       if (users && users.length > 0) {
         const tokenIds = users.map((u: any) => u.tokenId)
+        // publicKey: { not: '' } excludes ensureDmIdentity placeholders --
+        // display-only badge, but keep it consistent with the other
+        // identity-existence checks in the codebase.
         const dmIdentities = await prisma.dmIdentity.findMany({
-          where: { userId: { in: tokenIds } },
+          where: { userId: { in: tokenIds }, publicKey: { not: '' } },
           select: { userId: true }
         })
         const dmEnabledSet = new Set(dmIdentities.map(d => d.userId))

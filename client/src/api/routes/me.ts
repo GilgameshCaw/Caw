@@ -214,9 +214,13 @@ async function fetchDmIdentity(tokenId: number) {
       where: { userId: tokenId },
       select: { publicKey: true },
     })
+    // A placeholder row (ensureDmIdentity, dm-relay.ts) has publicKey: ''
+    // and isn't a usable identity -- same distinction as the group-join
+    // gates above.
+    const hasRealIdentity = identity !== null && identity.publicKey !== ''
     return {
-      hasIdentity: identity !== null,
-      publicKey: identity?.publicKey ?? null,
+      hasIdentity: hasRealIdentity,
+      publicKey: hasRealIdentity ? identity.publicKey : null,
     }
   } catch (err: any) {
     console.error('[/api/me] fetchDmIdentity error:', err.message)
