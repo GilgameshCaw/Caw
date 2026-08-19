@@ -376,13 +376,31 @@ const NGINX_PATCHES = [
     isApplied: (s) => /rewrite \^ \/__prerender\$uri last;/.test(s),
   },
   {
+    // Review finding (tentencaw, PR #48): this used to hardcode
+    // "burst=100" while renderNginxConf (fresh installs) reads
+    // CAW_NGINX_RATE_LIMIT_BURST from env, and isApplied only checked
+    // for the presence of "limit_req zone=caw_general" -- so once
+    // applied, an already-patched host could never pick up a changed
+    // burst value via a later `caw update`, no matter what env was set.
+    // Now interpolates the same env var the template uses, and
+    // isApplied checks for that specific burst value rather than just
+    // the zone name, so a changed CAW_NGINX_RATE_LIMIT_BURST re-applies
+    // the patch on the next `caw update` the same way rate already can
+    // via CAW_NGINX_RATE_LIMIT_FORCE=1.
     name: 'add nginx-level rate limiting to /api/',
     pattern: /location \/api\/ \{/,
-    apply: (s) => s.replace(
-      /location \/api\/ \{/,
-      'location /api/ {\n        limit_req zone=caw_general burst=100 nodelay;',
-    ),
-    isApplied: (s) => s.includes('limit_req zone=caw_general'),
+    apply: (s) => {
+      // Strip any prior limit_req line for this zone first (a different
+      // burst value from an earlier run) so re-applying updates it in
+      // place instead of stacking a second limit_req line alongside the
+      // stale one -- nginx would only honor one of them, silently.
+      const withoutOldLine = s.replace(/[ \t]*limit_req zone=caw_general[^\n]*\n/, '')
+      return withoutOldLine.replace(
+        /location \/api\/ \{/,
+        `location /api/ {\n        limit_req zone=caw_general burst=${process.env.CAW_NGINX_RATE_LIMIT_BURST || 100} nodelay;`,
+      )
+    },
+    isApplied: (s) => s.includes(`limit_req zone=caw_general burst=${process.env.CAW_NGINX_RATE_LIMIT_BURST || 100} nodelay;`),
   },
 ]
 
