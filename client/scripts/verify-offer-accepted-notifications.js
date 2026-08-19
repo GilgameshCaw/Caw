@@ -5,6 +5,17 @@
 
 function buildNotificationPlan(event, existingNotifications) {
   // existingNotifications: array of { type, userId, groupKey } already "in the DB"
+  //
+  // Review finding (tentencaw, PR #64): the original code fell back to
+  // `#<tokenId>` when tokenId's own User row was missing, and nothing
+  // repairs that placeholder later (unlike MarketplaceListing.username,
+  // which has a one-shot backfill) -- it freezes into the notification's
+  // actionPayload permanently. Fixed by skipping the notification
+  // entirely when the User row is missing, same best-effort posture as
+  // the seller/buyer lookup below. event.tokenIdUser === null simulates
+  // that missing-row case.
+  if (event.tokenIdUser === null) return []
+
   const onChainOfferId = event.offerId
   const sellerUser = event.sellerUser
   const buyerUser = event.buyerUser
@@ -49,6 +60,7 @@ const baseEvent = {
   paymentTokenLabel: 'USDC',
   sellerUser: { tokenId: 7 },
   buyerUser: { tokenId: 9 },
+  tokenIdUser: { username: 'alice' }, // present -> normal path
 }
 
 // 1) Fresh event, no prior notifications — must create exactly 2 (seller + buyer)
@@ -73,5 +85,12 @@ check('wash sale (seller===buyer) -> 2 notifications (distinct groupKeys)', buil
 const otherOffer = { ...baseEvent, offerId: 99 }
 check('different offerId -> 2 notifications (not deduped against offer 42)', buildNotificationPlan(otherOffer, already).length, 2)
 
-console.log(`\n${5 - failures}/5 passed`)
+// 6) Review finding (tentencaw, PR #64): tokenId's own User row missing
+//    must skip the notification entirely, not fall back to `#<tokenId>`
+//    and freeze that placeholder into actionPayload forever.
+const missingTokenIdUser = { ...baseEvent, tokenIdUser: null }
+check('tokenId has no User row -> notification skipped entirely (no #<tokenId> placeholder)',
+  buildNotificationPlan(missingTokenIdUser, []).length, 0)
+
+console.log(`\n${6 - failures}/6 passed`)
 process.exit(failures > 0 ? 1 : 0)
