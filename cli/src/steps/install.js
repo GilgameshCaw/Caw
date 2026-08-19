@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
-import { ensureCliSymlink } from './update.js'
+import { ensureCliSymlink, userHome } from './update.js'
 
 /**
  * Run a long command without freezing the spinner. execSync blocks the
@@ -111,6 +111,20 @@ export async function runInstall(nodeType, config, installDir) {
 
   const clientDir = path.join(installDir, 'client')
 
+  // Privilege split for the frontend build (Postgres/npm-install steps
+  // above this point are left as-is — this addresses the highest-risk
+  // step specifically: a supply-chain-compromised vite/rollup plugin
+  // running as root has unrestricted write access to the whole server,
+  // including a validator key at rest. When install.sh invokes this CLI
+  // via sudo, SUDO_USER carries the original unprivileged user; drop to
+  // that user for the build step only, via the same
+  // 'sudo -u X -H env ... cmd' pattern update.js's runAsInstallUser()
+  // already uses for its own build/migrate steps. No-ops (falls back to
+  // running as the current user) when SUDO_USER is unset — dev-mode /
+  // non-sudo invocations are unaffected.
+  const buildAsUser = process.env.SUDO_USER || null
+  const isRoot = process.getuid && process.getuid() === 0
+
   // Create logs directory
   fs.mkdirSync(path.join(installDir, 'logs'), { recursive: true })
 
@@ -190,14 +204,59 @@ export async function runInstall(nodeType, config, installDir) {
 
       const spinner3b = ora('Building frontend (production)...').start()
       try {
-        await runStreamed('yarn', ['build'], {
-          cwd: frontendDir,
-          env: {
-            ...process.env,
-            // Preserve any operator-supplied NODE_OPTIONS, append our heap cap.
-            NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} ${nodeHeapFlag}`.trim(),
-          },
-        })
+        const buildEnv = {
+          ...process.env,
+          // Preserve any operator-supplied NODE_OPTIONS, append our heap cap.
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} ${nodeHeapFlag}`.trim(),
+        }
+        if (buildAsUser && isRoot) {
+          // Files written by the CLI up to this point (e.g. the frontend
+          // .env from generate.js) are root:root — the tree-wide chown in
+          // startServices() hasn't run yet, since that happens after the
+          // whole install completes. Without this, the dropped build below
+          // can't read .env: Vite treats a missing/unreadable VITE_NETWORK_ID
+          // as unset rather than erroring, so the build "succeeds" with
+          // NETWORK_ID baked in as NaN. Chown the frontend tree now so both
+          // .env and node_modules (freshly installed as root above) are
+          // readable/writable by buildAsUser before yarn build runs.
+          try {
+            execSync(`chown -R ${buildAsUser}:${buildAsUser} "${frontendDir}"`, { stdio: 'pipe' })
+          } catch (chownErr) {
+            console.log(warn(`  Warning: could not pre-chown ${frontendDir}: ${chownErr.message}`))
+          }
+
+          // Don't trust the chown to have worked silently — verify read
+          // access to .env as the target user before proceeding. A failed
+          // or no-op chown here must not fall through into a build that
+          // looks successful but bakes in NaN; abort instead.
+          const envPath = path.join(frontendDir, '.env')
+          try {
+            execSync(`sudo -u ${buildAsUser} test -r "${envPath}"`, { stdio: 'pipe' })
+          } catch (accessErr) {
+            spinner3b.fail(`Frontend build aborted: ${buildAsUser} cannot read ${envPath}`)
+            console.log(err(`  This would silently bake VITE_NETWORK_ID=NaN into the production`))
+            console.log(err(`  bundle instead of failing loudly. Check ownership/permissions on`))
+            console.log(err(`  ${frontendDir} (pre-chown to ${buildAsUser} may have failed above) and re-run.`))
+            throw new Error(`${buildAsUser} lacks read access to ${envPath} after pre-chown`)
+          }
+
+          // -E would carry root's NODE_OPTIONS/PATH through unchanged and
+          // still leave HOME=/root, breaking yarn's config lookup the same
+          // way update.js's runAsInstallUser() comment describes — use -H
+          // plus an explicit env wrapper instead, passing NODE_OPTIONS
+          // through explicitly since -H alone would drop it. userHome()
+          // (imported from update.js, same helper runAsInstallUser() uses)
+          // resolves the actual home dir via getent rather than assuming
+          // /home/<user> — falls back to that guess only if getent fails.
+          await runStreamed('sudo', [
+            '-u', buildAsUser, '-H', 'env',
+            `NODE_OPTIONS=${buildEnv.NODE_OPTIONS}`,
+            `HOME=${userHome(buildAsUser)}`,
+            'yarn', 'build',
+          ], { cwd: frontendDir, env: buildEnv })
+        } else {
+          await runStreamed('yarn', ['build'], { cwd: frontendDir, env: buildEnv })
+        }
         spinner3b.succeed('Frontend built — dist/ ready for nginx')
       } catch (e) {
         spinner3b.fail('Frontend build failed')
