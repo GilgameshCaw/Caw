@@ -418,8 +418,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
         } catch {}
       }
       // Also persist to the DB so ProfileChooser's backend-side "+X CAW pending"
-      // badge renders on other devices/sessions. The user already exists here,
-      // so unlike the fresh-mint path in WelcomePage this PATCH will succeed.
+      // badge renders on other devices/sessions. This only runs after a
+      // successful stake, by which point the user row exists server-side,
+      // so unlike the fresh-mint path in WelcomePage this PATCH will
+      // succeed. (onboardingToken?.username itself is always set from
+      // props -- it's the stake having already landed, not this check,
+      // that guarantees the row exists.)
       // Uses onboardingToken, not activeToken directly: same stale-store lag
       // as the ProfileEditForm handoff above -- activeToken?.username could
       // still be the OLD profile's username here, PATCHing the wrong user's
@@ -1443,7 +1447,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
         {/* ── Step 5: Follow Users (full-width, no two-column) ── */}
         {currentStep === 3 && (() => {
-          const stakedAmount = typeof activeToken?.stakedAmount === 'bigint' ? activeToken.stakedAmount : 0n
+          // Uses onboardingToken, not activeToken directly: same stale-store
+          // lag as the other two call sites, but here it gates an action
+          // (whether Follow is enabled) instead of a display value, and
+          // fails open -- a stale activeToken pointing at a well-staked old
+          // profile would let the new profile clear MIN_STAKE_FOLLOW on the
+          // old profile's stake. stakeConfirmed and depositPending can't
+          // mask this: stakeConfirmed starts false and only flips on this
+          // session's own L2 delivery, and depositPending is scoped to this
+          // tokenId, so stakedAmount was the only contaminated input.
+          const stakedAmount = typeof onboardingToken?.stakedAmount === 'bigint' ? onboardingToken.stakedAmount : 0n
           const effectiveStake = stakedAmount + (depositPending ? pendingDepositAmount : 0n)
           const MIN_STAKE_FOLLOW = 30000n * 10n**18n
           const hasEnoughStake = effectiveStake >= MIN_STAKE_FOLLOW || stakeConfirmed
