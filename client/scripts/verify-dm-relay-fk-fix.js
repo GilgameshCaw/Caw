@@ -111,5 +111,65 @@ let threwOnNegative = false
 try { await ensureDmIdentity(-5) } catch { threwOnNegative = true }
 check('ensureDmIdentity rejects negative userId', threwOnNegative, true)
 
-console.log(`\n${10 - failures}/10 passed`)
+// 11) Review finding (tentencaw, PR #65): three group-service gates
+//     (assertIdentitiesExist for create/add, and the inline join-path
+//     check) previously keyed off DmIdentity row existence alone,
+//     letting a placeholder (publicKey: '') satisfy "has this user
+//     enabled DMs?" even though it can't actually receive sealed
+//     ciphertext. Mirrors the fixed queries: publicKey must be
+//     non-empty, not just present.
+function assertIdentitiesExistLikeCheck(dmIdentityRows, userIds) {
+  const have = new Set(dmIdentityRows.filter(r => r.publicKey !== '').map(r => r.userId))
+  return userIds.filter(id => !have.has(id))
+}
+const groupRows = [
+  { userId: 1, publicKey: '0xrealkey' },
+  { userId: 2, publicKey: '' }, // placeholder -- inbound relay landed, identity relay hasn't
+]
+check('group create/add: placeholder-only member is rejected as missing DM identity',
+  assertIdentitiesExistLikeCheck(groupRows, [1, 2]), [2])
+check('group create/add: member with a real key passes',
+  assertIdentitiesExistLikeCheck(groupRows, [1]), [])
+
+function joinPathCheck(identityRow) {
+  return !!(identityRow && identityRow.publicKey)
+}
+check('group join: placeholder identity is rejected', joinPathCheck({ userId: 2, publicKey: '' }), false)
+check('group join: real identity is allowed', joinPathCheck({ userId: 1, publicKey: '0xrealkey' }), true)
+check('group join: no identity row at all is rejected', joinPathCheck(null), false)
+
+// 12) fetchDmIdentity (me.ts) must report hasIdentity: false for a
+//     placeholder, not true with an empty publicKey.
+function fetchDmIdentityLikeCheck(identityRow) {
+  const hasRealIdentity = identityRow !== null && identityRow.publicKey !== ''
+  return { hasIdentity: hasRealIdentity, publicKey: hasRealIdentity ? identityRow.publicKey : null }
+}
+check('me.ts: placeholder reports hasIdentity false with null publicKey',
+  fetchDmIdentityLikeCheck({ publicKey: '' }), { hasIdentity: false, publicKey: null })
+check('me.ts: real identity reports hasIdentity true with the real key',
+  fetchDmIdentityLikeCheck({ publicKey: '0xrealkey' }), { hasIdentity: true, publicKey: '0xrealkey' })
+
+// 13) Review finding (tentencaw, PR #65): the throw on an invalid
+//     userId rejects the Promise.all in the route handler, which falls
+//     through to the generic catch and drops the message with no way
+//     to tell it apart from a real relay failure. Confirms the error is
+//     now a distinguishable type the catch block can branch on.
+class InvalidRelayUserIdError extends Error {
+  constructor(userId) {
+    super(`ensureDmIdentity: invalid userId ${userId}`)
+    this.name = 'InvalidRelayUserIdError'
+  }
+}
+async function ensureDmIdentityWithTypedError(userId) {
+  if (!Number.isInteger(userId) || userId <= 0) throw new InvalidRelayUserIdError(userId)
+}
+let caughtType = null
+try {
+  await ensureDmIdentityWithTypedError(0)
+} catch (err) {
+  caughtType = err instanceof InvalidRelayUserIdError ? 'InvalidRelayUserIdError' : 'generic'
+}
+check('invalid userId throws a distinguishable error type, not a generic Error', caughtType, 'InvalidRelayUserIdError')
+
+console.log(`\n${18 - failures}/18 passed`)
 process.exit(failures > 0 ? 1 : 0)

@@ -55,8 +55,12 @@ async function assertNoBlocksAcrossSet(memberIds: number[]) {
 
 async function assertIdentitiesExist(userIds: number[]) {
   if (userIds.length === 0) return
+  // publicKey: { not: '' } excludes ensureDmIdentity's placeholder rows
+  // (dm-relay.ts) -- a row existing only means an inbound relay landed
+  // before the identity relay did, not that this user can actually
+  // receive sealed-per-recipient ciphertext.
   const rows = await prisma.dmIdentity.findMany({
-    where: { userId: { in: userIds } },
+    where: { userId: { in: userIds }, publicKey: { not: '' } },
     select: { userId: true },
   })
   const have = new Set(rows.map(r => r.userId))
@@ -560,12 +564,14 @@ export class GroupService {
       }
 
       // Caller must have a DM identity to receive sealed-per-recipient
-      // ciphertext.
+      // ciphertext. A placeholder row (ensureDmIdentity, dm-relay.ts) has
+      // no real publicKey and can't actually receive anything -- same
+      // check as assertIdentitiesExist above.
       const identity = await tx.dmIdentity.findUnique({
         where: { userId: actorUserId },
-        select: { userId: true },
+        select: { userId: true, publicKey: true },
       })
-      if (!identity) {
+      if (!identity || !identity.publicKey) {
         throw new GroupServiceError(400, 'NO_DM_IDENTITY', 'You must enable DMs before joining a group')
       }
 
