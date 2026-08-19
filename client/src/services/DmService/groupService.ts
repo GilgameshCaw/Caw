@@ -139,6 +139,28 @@ async function writeSystemMessage(
 }
 
 export class GroupService {
+  // Review finding (tentencaw, PR #65): memberInclude selects
+  // identity.publicKey and every call site below hands the query result
+  // straight to the client via res.json(). A placeholder DmIdentity
+  // (ensureDmIdentity, dm-relay.ts -- publicKey: '') would surface as
+  // publicKey: '' with no filtering on this path, even though the three
+  // group gates (assertIdentitiesExist, the join check) now keep a
+  // placeholder from becoming a participant in the first place. Confirmed
+  // low-stakes today (useDm.ts's consumers already do a truthy/
+  // optional-chain check before reading participant.identity?.publicKey),
+  // but sanitizing at the source is one line and removes the raw exposure
+  // entirely rather than relying on every future consumer remembering the
+  // same guard.
+  private sanitizeConversation<T extends { participants?: { identity?: { publicKey?: string | null } | null }[] } | null>(conv: T): T {
+    if (!conv?.participants) return conv
+    for (const p of conv.participants) {
+      if (p.identity && p.identity.publicKey === '') {
+        p.identity.publicKey = null
+      }
+    }
+    return conv
+  }
+
   /**
    * Create a new group. Caller becomes OWNER. Other members are added
    * as MEMBER. Enforces 3..10 size cap, identity existence, no pairwise
@@ -206,7 +228,7 @@ export class GroupService {
         name: name ?? null,
       })
 
-      return tx.conversation.findUnique({ where: { id: conv.id }, include: memberInclude })
+      return this.sanitizeConversation(await tx.conversation.findUnique({ where: { id: conv.id }, include: memberInclude }))
     })
   }
 
@@ -282,7 +304,7 @@ export class GroupService {
         targetUserIds: targets,
       })
 
-      return tx.conversation.findUnique({ where: { id: conversationId }, include: memberInclude })
+      return this.sanitizeConversation(await tx.conversation.findUnique({ where: { id: conversationId }, include: memberInclude }))
     })
   }
 
@@ -310,7 +332,7 @@ export class GroupService {
         targetUserId,
       })
 
-      return tx.conversation.findUnique({ where: { id: conversationId }, include: memberInclude })
+      return this.sanitizeConversation(await tx.conversation.findUnique({ where: { id: conversationId }, include: memberInclude }))
     })
   }
 
@@ -408,7 +430,7 @@ export class GroupService {
         })
       }
 
-      return updated
+      return this.sanitizeConversation(updated)
     })
   }
 
@@ -425,7 +447,7 @@ export class GroupService {
     if (conv.type !== 'GROUP') throw new GroupServiceError(400, 'NOT_GROUP', 'Conversation is not a group')
     const me = (conv as any).participants.find((p: any) => p.userId === actorUserId && !p.leftAt)
     if (!me) throw new GroupServiceError(403, 'NOT_PARTICIPANT', 'You are not an active member of this group')
-    return conv
+    return this.sanitizeConversation(conv)
   }
 
   // ---------- invites ----------
@@ -617,7 +639,7 @@ export class GroupService {
         where: { id: conversationId },
         include: memberInclude,
       })
-      return { conversation, joinedUserId: actorUserId }
+      return { conversation: this.sanitizeConversation(conversation), joinedUserId: actorUserId }
     })
   }
 
