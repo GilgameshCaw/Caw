@@ -55,5 +55,22 @@ const staleOnboardingToken = buildOnboardingToken(staleActiveToken, 9, 'userB', 
 check('pendingDepositAmount PATCH targets the onboarding username, not the stale one',
   buildPatchTarget(staleOnboardingToken), 'userB')
 
-console.log(`\n${5 - failures}/5 passed`)
+// 6) The follow-gate finding from review (tentencaw, PR #67): the same
+//    stale/undefined activeToken issue affects MIN_STAKE_FOLLOW's
+//    hasEnoughStake check, not just the two write paths. Unlike a
+//    display value, this gates an action and fails OPEN if
+//    activeToken.stakedAmount comes from a stale, well-staked old
+//    profile -- the new profile would clear the threshold on the old
+//    profile's stake. onboardingToken never carries a stale
+//    stakedAmount (only real or undefined), so this must resolve to 0n
+//    whenever activeToken hasn't caught up, not the stale profile's
+//    balance.
+function resolveStakedAmountForFollowGate(onboardingTokenArg) {
+  return typeof onboardingTokenArg?.stakedAmount === 'bigint' ? onboardingTokenArg.stakedAmount : 0n
+}
+const staleWithHighStake = { tokenId: 3, username: 'userA', owner: '0xAAA', stakedAmount: 50000n * 10n ** 18n }
+const onboardingTokenDuringLag = buildOnboardingToken(staleWithHighStake, 9, 'userB', '0xAAA')
+check('6: stale high-stake profile does not leak into the follow-gate threshold', resolveStakedAmountForFollowGate(onboardingTokenDuringLag), 0n)
+
+console.log(`\n${6 - failures}/6 passed`)
 process.exit(failures > 0 ? 1 : 0)
