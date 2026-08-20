@@ -1,6 +1,7 @@
 // src/services/RawEventsGatherer/index.ts
 import { z } from 'zod'
 import Redis from 'ioredis'
+import type { Log } from 'ethers'
 import { Service } from '../../Service'
 import listenForRawEvents, { RawEventInput, getRawEventsPollIntervalMs } from './listenForRawEvents'
 import { convertBigIntsToStrings } from "./utils";
@@ -90,6 +91,59 @@ export const rawEventsGathererService: Service = {
               parentHash:  last.parentHash
             }
           : null
+      }
+
+      // Batched to keep any single query's OR clause bounded -- the
+      // historical rescan intentionally has no upper cap on how many events
+      // it can cover in one pass (see the "10K * 100K windows" comment
+      // above, for multi-month-gap operators), so `events` here can run into
+      // the thousands. One query with a several-thousand-clause OR is the
+      // kind of thing that's fine in dev and slow or memory-heavy on a
+      // loaded production Postgres; chunking keeps each round trip small
+      // and predictable regardless of how large the rescan range is.
+      // 5000 is a conservative upper-bound estimate, not a measured
+      // single-rescan size -- checked this node's cumulative RawEvent
+      // count (622,843 rows total) as a sanity ceiling, but that's lifetime
+      // volume, not what any one historical rescan actually covers (a
+      // normal restart resumes from getLastProcessedEvent and only
+      // rescans a small trailing range; checked directly on cawnest.com
+      // and its most recent restart's rescan was near-empty). A worst-case
+      // full rescan (e.g. after a startBlock/creationBlock reset) could in
+      // principle put `past` somewhere in that lifetime-volume range, which
+      // is what this batch size is sized against. Sequential batches of
+      // 500 would mean over a thousand round trips in that scenario; 5000
+      // keeps it to roughly 125 while keeping each query's OR clause well
+      // clear of Postgres parameter/plan limits. Deliberately sequential
+      // rather than parallelized -- concurrent batches would each hold a
+      // Prisma pool connection at once, and this runs during service
+      // startup alongside other initialization work sharing the same pool
+      // (connection_limit=70 in this node's DATABASE_URL); a burst of
+      // concurrent queries here risks starving that startup path instead.
+      const COUNT_EXISTING_BATCH_SIZE = 5000
+      const countExisting = async (events: Log[]) => {
+        if (events.length === 0) return 0
+        let total = 0
+        for (let i = 0; i < events.length; i += COUNT_EXISTING_BATCH_SIZE) {
+          const batch = events.slice(i, i + COUNT_EXISTING_BATCH_SIZE)
+          // OR over the same [blockNumber, logIndex, transactionHash]
+          // unique key RawEvent enforces, so this counts exactly the events
+          // already stored -- no false positives from a coincidental
+          // transactionHash match alone, since two different logs never
+          // share the full triple. ethers' Log exposes the position as
+          // `.index` (v6); fall back to `.logIndex` for any provider shim
+          // that still uses the old name, matching how the rest of this
+          // service reads it.
+          total += await prisma.rawEvent.count({
+            where: {
+              OR: batch.map(e => ({
+                blockNumber: e.blockNumber,
+                logIndex: (e as any).index ?? (e as any).logIndex ?? 0,
+                transactionHash: e.transactionHash,
+              })),
+            },
+          })
+        }
+        return total
       }
 
       const store = async (e: RawEventInput) => {
@@ -228,6 +282,7 @@ export const rawEventsGathererService: Service = {
             const key = `raw-events-gatherer:${chainId}:${networkId}:floor-filled`
             await prisma.chainData.upsert({ where: { key }, update: { value: { filled: true } }, create: { key, value: { filled: true } } })
           },
+          countExisting,
         },
         onTick: () => ctx.heartbeat('poll'),
         onStall: (reason) => ctx.heartbeatDegraded('poll', reason),
