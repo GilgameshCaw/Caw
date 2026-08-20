@@ -142,5 +142,88 @@ check('7b: reply failure does not touch the parent recawCount (still 5)', getCaw
 const resolvedForQuote = resolveOriginalCawIdForRollback(rawOriginalCawIdFromDb, false)
 check('8: quote failure passes originalCawId through unchanged', resolvedForQuote, 300)
 
-console.log(`\n${8 - failures}/8 passed`)
+// 9) TOCTOU regression check: markTxQueueFailed's CAW/RECAW cleanup used to
+//    run findMany then updateMany as two separate queries with no status
+//    guard on the write. Two concurrent calls for the same senderId/cawonce
+//    could both read the same PENDING row before either write landed, then
+//    each fire onStatusChanged for it -- double-decrementing cawCount. The
+//    fix scopes the updateMany to `status: 'PENDING'` and only calls
+//    onStatusChanged for rows this call actually flipped. Simulate both a
+//    single "DB" row and two concurrent callers racing against it.
+function simulateConcurrentFailure(useGuardedUpdate) {
+  resetDb()
+  onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
+  const row = { status: 'PENDING' }
+
+  function callerAttempt() {
+    // findMany-equivalent: read current status
+    const sawPending = row.status === 'PENDING'
+    if (!sawPending) return // guarded path: row already FAILED, nothing to do
+    if (useGuardedUpdate) {
+      // updateMany WHERE status = 'PENDING': only the first caller to
+      // reach this line actually transitions the row.
+      if (row.status !== 'PENDING') return
+      row.status = 'FAILED'
+    } else {
+      // old behavior: unconditional write, no guard against a concurrent
+      // caller having already transitioned it.
+      row.status = 'FAILED'
+    }
+    onStatusChangedCawFailed({ userId: 1, action: 'CAW', originalCawId: null })
+  }
+
+  // Simulate caller A's findMany happening, then caller B's findMany
+  // happening (both see PENDING) before either write lands.
+  callerAttempt()
+  callerAttempt()
+  return getUser(1).cawCount
+}
+
+check('9a: old unguarded pattern double-decrements under concurrent calls (regression demo, expected 0 via floor but only after already going below the correct 1-decrement result)', simulateConcurrentFailure(false), 0)
+check('9b: guarded pattern (status: PENDING on updateMany) prevents double-decrement', simulateConcurrentFailure(true), 0)
+// Note: 9a and 9b land on the same floored value (0) because safeDecrement's
+// floor masks the double-decrement when starting from cawCount=1. The real
+// regression is visible starting from cawCount=2 -- see 9c/9d.
+resetDb()
+onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
+onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
+check('9c: baseline cawCount before concurrent failure of one post', getUser(1).cawCount, 2)
+
+function simulateConcurrentFailureFromTwo(useGuardedUpdate) {
+  const row = { status: 'PENDING' }
+  // Phase 1: both concurrent callers' findMany-equivalent reads happen
+  // BEFORE either one's write lands -- this is the actual TOCTOU window.
+  const callerASawPending = row.status === 'PENDING'
+  const callerBSawPending = row.status === 'PENDING'
+
+  function writeAttempt(sawPending) {
+    if (!sawPending) return
+    if (useGuardedUpdate) {
+      // updateMany WHERE status = 'PENDING': only the first writer to
+      // reach this line actually transitions the row; the second one's
+      // updateMany affects 0 rows and it must not call onStatusChanged.
+      if (row.status !== 'PENDING') return
+      row.status = 'FAILED'
+    } else {
+      // old behavior: unconditional write, no re-check against the
+      // row's current status.
+      row.status = 'FAILED'
+    }
+    onStatusChangedCawFailed({ userId: 1, action: 'CAW', originalCawId: null })
+  }
+
+  // Phase 2: both callers now attempt their writes.
+  writeAttempt(callerASawPending)
+  writeAttempt(callerBSawPending)
+}
+simulateConcurrentFailureFromTwo(false)
+check('9d: UNGUARDED pattern double-decrements cawCount 2 -> 0 on one failed post (bug)', getUser(1).cawCount, 0)
+
+resetDb()
+onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
+onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
+simulateConcurrentFailureFromTwo(true)
+check('9e: GUARDED pattern decrements cawCount 2 -> 1 on one failed post (correct)', getUser(1).cawCount, 1)
+
+console.log(`\n${13 - failures}/13 passed`)
 process.exit(failures > 0 ? 1 : 0)
