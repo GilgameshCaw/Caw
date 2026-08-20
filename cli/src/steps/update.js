@@ -355,7 +355,7 @@ export async function planMigrations(installDir) {
   return { pending, destructive, risky }
 }
 
-function readDatabaseUrl(installDir) {
+export function readDatabaseUrl(installDir) {
   const envPath = path.join(installDir, 'client', '.env')
   if (!fs.existsSync(envPath)) return null
   const txt = fs.readFileSync(envPath, 'utf8')
