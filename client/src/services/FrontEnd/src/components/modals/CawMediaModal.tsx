@@ -335,24 +335,29 @@ export default function CawMediaModal() {
             isMainPost={true}
             hideMedia={true}
             uiDensity="compact"
+            userHoverPortal={true}
             contentClassName="text-base md:text-lg leading-relaxed"
           />
 
           {/* Keep separators minimal in modal: FeedItem already includes its own divider. */}
 
           {isAuthenticated && (
-            <PostForm
-              replyTo={caw}
-              onSuccess={() => {
-                // Refresh replies after posting
-                apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
-                  .then(d => {
-                    setCaw(d.caw)
-                    setComments(d.comments)
-                  })
-                  .catch(() => {})
-              }}
-            />
+            /* Match feed dividers: keep PostForm layout intact, but add a full-width
+               separator under it so the reply box doesn't "float" into the first reply. */
+            <div className={`-mx-4 px-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+              <PostForm
+                replyTo={caw}
+                onSuccess={() => {
+                  // Refresh replies after posting
+                  apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+                    .then(d => {
+                      setCaw(d.caw)
+                      setComments(d.comments)
+                    })
+                    .catch(() => {})
+                }}
+              />
+            </div>
           )}
 
           {/* Replies */}
