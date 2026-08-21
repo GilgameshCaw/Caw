@@ -3,7 +3,9 @@
 // which has no catch around the historical-sync call site and would
 // otherwise crash the service on restart for nodes on non-archive RPCs).
 // Mirrors the all-or-nothing countExisting check added before the
-// processEvents(past, ...) call.
+// processEvents(past, ...) call, and the flag-based branch (rather than
+// clearing `past`) added after review found that clearing `past` corrupts
+// the poll cursor's seed value read further down in the same function.
 // Run: node scripts/verify-raw-events-rescan-skip.js
 
 let failures = 0
@@ -28,29 +30,40 @@ function makeStore(existingKeys) {
   }
 }
 
-// --- Mirrors the all-or-nothing skip logic added before
-//     `await processEvents(past, httpContract)` ---
-async function resolvePastAfterSkipCheck(past, rawEventsProvider) {
-  if (past.length > 0 && rawEventsProvider.countExisting) {
-    const existingCount = await rawEventsProvider.countExisting(past)
-    if (existingCount === past.length) {
-      return [] // skip: nothing new to derive
-    }
-  }
-  return past // unchanged: at least one genuinely new event
+// --- Mirrors the CURRENT implementation: a flag decides whether
+//     processEvents() runs, but `past` itself is never mutated. Also
+//     mirrors the lastSyncedBlock seed read that lives further down in the
+//     real function: `past.length > 0 ? past[past.length - 1].blockNumber
+//     : startBlock`. Returns both so tests can check the skip decision AND
+//     that the seed still resolves off the real scanned range. ---
+async function resolveSkipAndSeed(past, rawEventsProvider, startBlock) {
+  const skipDerive =
+    past.length > 0 &&
+    !!rawEventsProvider.countExisting &&
+    (await rawEventsProvider.countExisting(past)) === past.length
+
+  // past is intentionally NOT reassigned here -- this is the bug tentencaw
+  // caught: the original implementation did `past = []` on skip, which
+  // corrupted this exact read.
+  const lastSyncedBlockSeed = past.length > 0 ? past[past.length - 1].blockNumber : startBlock
+
+  return { skipDerive, past, lastSyncedBlockSeed }
 }
 
-// 1) Empty past: no-op regardless of provider. Guards against calling
-//    countExisting on an empty array (would be a wasted DB round trip).
+// 1) Empty past: no skip decision needed, seed falls through to startBlock
+//    regardless (nothing was scanned). Guards against calling countExisting
+//    on an empty array (would be a wasted DB round trip).
 async function test1() {
   const provider = makeStore([])
-  const result = await resolvePastAfterSkipCheck([], provider)
-  check('1: empty past stays empty, countExisting not required to be called', result, [])
+  const { skipDerive, past, lastSyncedBlockSeed } = await resolveSkipAndSeed([], provider, 1000)
+  check('1a: empty past never triggers skip', skipDerive, false)
+  check('1b: empty past stays empty', past, [])
+  check('1c: empty past seeds from startBlock', lastSyncedBlockSeed, 1000)
 }
 
-// 2) All events already stored: rescan should skip entirely (past -> []),
-//    which is what prevents the fetch_failed throw for settled history on
-//    non-archive RPCs.
+// 2) All events already stored: skipDerive is true (processEvents is
+//    skipped), but `past` itself must remain the full scanned array so the
+//    seed below reads the real last-scanned block, not startBlock.
 async function test2() {
   const events = [
     { blockNumber: 100, logIndex: 0, transactionHash: '0xaaa' },
@@ -58,56 +71,62 @@ async function test2() {
     { blockNumber: 101, logIndex: 0, transactionHash: '0xccc' },
   ]
   const provider = makeStore(events.map(e => `${e.blockNumber}:${e.logIndex}:${e.transactionHash}`))
-  const result = await resolvePastAfterSkipCheck(events, provider)
-  check('2: all-known past is skipped (resolves to empty array)', result, [])
+  const { skipDerive, past, lastSyncedBlockSeed } = await resolveSkipAndSeed(events, provider, 50)
+  check('2a: all-known past triggers skip', skipDerive, true)
+  check('2b: past is NOT cleared -- stays the full scanned array', past, events)
+  check('2c: seed reads the real last-scanned block (101), not startBlock (50)', lastSyncedBlockSeed, 101)
 }
 
-// 3) None stored (fresh node, cold start): rescan must proceed unchanged so
-//    genuinely new events still get processed normally.
+// 3) None stored (fresh node, cold start): no skip, processEvents runs on
+//    the full array, seed reads the last scanned block as usual.
 async function test3() {
   const events = [
     { blockNumber: 200, logIndex: 0, transactionHash: '0xddd' },
     { blockNumber: 200, logIndex: 1, transactionHash: '0xeee' },
   ]
   const provider = makeStore([])
-  const result = await resolvePastAfterSkipCheck(events, provider)
-  check('3: none-known past passes through unchanged', result, events)
+  const { skipDerive, past, lastSyncedBlockSeed } = await resolveSkipAndSeed(events, provider, 10)
+  check('3a: none-known past does not trigger skip', skipDerive, false)
+  check('3b: none-known past passes through unchanged', past, events)
+  check('3c: seed reads the last scanned block', lastSyncedBlockSeed, 200)
 }
 
-// 4) Partial overlap (some already stored, some genuinely new): must NOT
-//    skip and must NOT filter down to just the new ones -- all-or-nothing,
-//    per tentencaw's point that per-event filtering would break the
-//    sequential parentHash chaining in processEvents, which depends on
-//    processing the full contiguous range in order.
+// 4) Partial overlap (some already stored, some genuinely new): no skip --
+//    all-or-nothing, per tentencaw's original point that per-event
+//    filtering would break the sequential parentHash chaining in
+//    processEvents, which depends on processing the full contiguous range
+//    in order.
 async function test4() {
   const events = [
     { blockNumber: 300, logIndex: 0, transactionHash: '0xfff' }, // already stored
     { blockNumber: 300, logIndex: 1, transactionHash: '0x111' }, // genuinely new
   ]
   const provider = makeStore(['300:0:0xfff'])
-  const result = await resolvePastAfterSkipCheck(events, provider)
-  check('4: partial overlap passes through the FULL unfiltered array (all-or-nothing)', result, events)
+  const { skipDerive, past } = await resolveSkipAndSeed(events, provider, 10)
+  check('4a: partial overlap does not trigger skip', skipDerive, false)
+  check('4b: partial overlap passes through the FULL unfiltered array (all-or-nothing)', past, events)
 }
 
 // 5) Backward compatibility: rawEventsProvider without countExisting (older
 //    caller, or a provider that hasn't implemented the optional method)
-//    must behave exactly as before this fix -- past always passes through.
+//    must never skip -- processEvents always runs, matching pre-fix
+//    behavior.
 async function test5() {
   const events = [
     { blockNumber: 400, logIndex: 0, transactionHash: '0x222' },
   ]
   const providerWithoutCountExisting = {} // countExisting intentionally absent
-  const result = await resolvePastAfterSkipCheck(events, providerWithoutCountExisting)
-  check('5: provider without countExisting leaves past untouched (backward compatible)', result, events)
+  const { skipDerive, past } = await resolveSkipAndSeed(events, providerWithoutCountExisting, 10)
+  check('5a: provider without countExisting never skips', skipDerive, false)
+  check('5b: past left untouched (backward compatible)', past, events)
 }
 
-// 6) The specific regression tentencaw reported: 59 events, all already
-//    stored, on a non-archive RPC that can no longer serve their tx bodies.
-//    Before this fix, processEvents would throw fetch_failed for all 59 on
-//    every restart, and since the historical-sync call site has no catch
-//    around it (unlike poll()'s), that crashes the whole service. After
-//    this fix, the rescan recognizes all 59 are already ingested and never
-//    calls processEvents on them at all.
+// 6) The specific regression tentencaw originally reported: 59 events, all
+//    already stored, on a non-archive RPC that can no longer serve their tx
+//    bodies. Before the countExisting fix, processEvents would throw
+//    fetch_failed for all 59 on every restart, crashing the service since
+//    the historical-sync call site has no catch around it. After the fix,
+//    skipDerive is true and processEvents is never called on them.
 async function test6() {
   const events = Array.from({ length: 59 }, (_, i) => ({
     blockNumber: 1000 + i,
@@ -115,16 +134,13 @@ async function test6() {
     transactionHash: `0xtx${i}`,
   }))
   const provider = makeStore(events.map(e => `${e.blockNumber}:${e.logIndex}:${e.transactionHash}`))
-  const result = await resolvePastAfterSkipCheck(events, provider)
-  check('6: reported regression scenario (59/59 already stored) resolves to empty, avoiding the fetch_failed throw', result, [])
+  const { skipDerive, lastSyncedBlockSeed } = await resolveSkipAndSeed(events, provider, 500)
+  check('6a: reported regression scenario (59/59 already stored) triggers skip', skipDerive, true)
+  check('6b: seed reads the last of the 59 scanned blocks, not the floor (500)', lastSyncedBlockSeed, 1058)
 }
 
-// 7) countExisting itself is batched internally (COUNT_EXISTING_BATCH_SIZE
-//    in RawEventsGatherer/index.ts) to keep any single query's OR clause
-//    bounded on nodes with large RawEvent tables. Simulate a countExisting
-//    that enforces its own batch limit (mirrors the real implementation's
-//    chunking) and confirm the skip logic still resolves correctly when the
-//    event count crosses multiple batches.
+// --- Batched countExisting, same as the real implementation's internal
+//     chunking (COUNT_EXISTING_BATCH_SIZE in RawEventsGatherer/index.ts) ---
 function makeBatchedStore(existingKeys, batchSize) {
   const stored = new Set(existingKeys)
   return {
@@ -142,16 +158,39 @@ function makeBatchedStore(existingKeys, batchSize) {
   }
 }
 
+// 7) All-known past spanning multiple internal countExisting batches still
+//    triggers the skip correctly.
 async function test7() {
-  // 12 events, batch size 5 -> 3 batches (5, 5, 2). All stored.
   const events = Array.from({ length: 12 }, (_, i) => ({
     blockNumber: 500 + i,
     logIndex: 0,
     transactionHash: `0xbatch${i}`,
   }))
   const provider = makeBatchedStore(events.map(e => `${e.blockNumber}:${e.logIndex}:${e.transactionHash}`), 5)
-  const result = await resolvePastAfterSkipCheck(events, provider)
-  check('7: all-known past spanning multiple internal batches still resolves to empty', result, [])
+  const { skipDerive } = await resolveSkipAndSeed(events, provider, 10)
+  check('7: all-known past spanning multiple internal batches still triggers skip', skipDerive, true)
+}
+
+// 8) THE REGRESSION tentencaw caught in review: the original implementation
+//    did `past = []` when skipping, which corrupted the lastSyncedBlock
+//    seed read (`past.length > 0 ? past[...].blockNumber : startBlock`) --
+//    on a node with a configured startBlock, that fell through to the
+//    floor instead of the real high-water mark, sending every subsequent
+//    poll tick re-walking the whole floor-to-tip range on every restart
+//    where the skip fires. This test locks in that the CURRENT
+//    implementation (flag-based, past left untouched) does not reproduce
+//    that: the seed must equal the real last-scanned block even when the
+//    skip fires and the configured startBlock floor is far below it.
+async function test8() {
+  const events = [
+    { blockNumber: 45723253, logIndex: 0, transactionHash: '0xlatest1' },
+    { blockNumber: 45723253, logIndex: 1, transactionHash: '0xlatest2' },
+  ]
+  const provider = makeStore(events.map(e => `${e.blockNumber}:${e.logIndex}:${e.transactionHash}`))
+  const configuredFloorStartBlock = 40000000 // far below the real watermark
+  const { skipDerive, lastSyncedBlockSeed } = await resolveSkipAndSeed(events, provider, configuredFloorStartBlock)
+  check('8a: skip fires (regression precondition)', skipDerive, true)
+  check('8b: seed is the real watermark (45723253), NOT the configured floor (40000000) -- the exact bug tentencaw caught', lastSyncedBlockSeed, 45723253)
 }
 
 async function main() {
@@ -162,7 +201,8 @@ async function main() {
   await test5()
   await test6()
   await test7()
-  console.log(`\n${7 - failures}/7 passed`)
+  await test8()
+  console.log(`\n${19 - failures}/19 passed`)
   process.exit(failures > 0 ? 1 : 0)
 }
 

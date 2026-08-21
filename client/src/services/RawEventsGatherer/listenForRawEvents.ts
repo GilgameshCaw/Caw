@@ -529,15 +529,26 @@ export default async function listenForRawEvents(
   // throw for settled history it doesn't need to touch. All-or-nothing
   // check (not per-event filtering) so the sequential parentHash chaining in
   // processEvents stays untouched when any part of `past` is genuinely new.
-  if (past.length > 0 && config.rawEventsProvider.countExisting) {
-    const existingCount = await config.rawEventsProvider.countExisting(past)
-    if (existingCount === past.length) {
-      console.log(`[RawEventsGatherer] Historical rescan: all ${past.length} events already stored, skipping re-derive`)
-      past = []
-    }
-  }
+  //
+  // Branches on a flag rather than clearing `past` itself: `past` is read
+  // again below (lastSyncedBlock = past.length > 0 ? past[...].blockNumber
+  // : startBlock) to seed the poll cursor's starting point. Emptying `past`
+  // here would fall that ternary through to startBlock -- the configured
+  // floor -- instead of the block the historical scan actually reached,
+  // sending every subsequent poll tick re-walking the whole floor-to-tip
+  // range on every restart where the skip fires. Keeping `past` intact
+  // preserves the real high-water mark for that read while still avoiding
+  // the processEvents() call itself.
+  const skipDerive =
+    past.length > 0 &&
+    !!config.rawEventsProvider.countExisting &&
+    (await config.rawEventsProvider.countExisting(past)) === past.length
 
-  await processEvents(past, httpContract)
+  if (skipDerive) {
+    console.log(`[RawEventsGatherer] Historical rescan: all ${past.length} events already stored, skipping re-derive`)
+  } else {
+    await processEvents(past, httpContract)
+  }
 
   // Setup WebSocket for real-time events
   async function setupWebSocket() {
