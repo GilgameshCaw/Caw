@@ -3,8 +3,6 @@ import { useLocation } from 'react-router-dom'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
-import { useActiveToken } from '~/store/tokenDataStore'
-import ManifestoContent from '~/components/ManifestoContent'
 import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
 import { useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
@@ -25,10 +23,6 @@ interface HelpPageProps {
 const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const { isDark } = useTheme()
   const t = useT()
-  // Captive (no profile) → MainLayout hides the sidebars, so the help content
-  // can use more width; otherwise keep the narrower post-standard container.
-  const activeToken = useActiveToken()
-  const isCaptive = !activeToken?.username
   const location = useLocation()
   const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
@@ -58,25 +52,25 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const getActiveTab = (): TabType => {
     if (defaultTab) return defaultTab
     const path = location.pathname
-    if (path === '/resources') return 'resources'
-    if (path === '/resources/faq') return 'faq'
-    if (path === '/resources/history') return 'history'
-    if (path === '/resources/manifesto') return 'manifesto'
-    if (path === '/resources/getting-started' || path === '/resources/gettingstarted' || path === '/resources/howto') return 'gettingstarted'
-    if (path === '/resources/developers') return 'developers'
-    return 'resources'
+    if (path === '/help/faq' || path === '/help') return 'faq'
+    if (path === '/help/history') return 'history'
+    if (path === '/help/manifesto') return 'manifesto'
+    if (path === '/help/gettingstarted' || path === '/help/howto') return 'gettingstarted'
+    if (path === '/help/developers') return 'developers'
+    if (path === '/help/resources') return 'resources'
+    return 'faq'
   }
 
   const activeSection = getActiveTab()
 
   const handleTabClick = (tab: TabType) => {
     const routes: Record<TabType, string> = {
-      faq: '/resources/faq',
-      history: '/resources/history',
-      manifesto: '/resources/manifesto',
-      gettingstarted: '/resources/getting-started',
-      developers: '/resources/developers',
-      resources: '/resources'
+      faq: '/help/faq',
+      history: '/help/history',
+      manifesto: '/help/manifesto',
+      gettingstarted: '/help/gettingstarted',
+      developers: '/help/developers',
+      resources: '/help/resources'
     }
     navigate(routes[tab])
   }
@@ -93,13 +87,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       icon: <HiDocumentText className="w-6 h-6" />,
       title: t('help.resources.official.manifesto.title'),
       description: t('help.resources.official.manifesto.description'),
-      url: '/resources/manifesto'
-    },
-    {
-      icon: <HiDocumentText className="w-6 h-6" />,
-      title: t('help.resources.official.whitepaper.title'),
-      description: t('help.resources.official.whitepaper.description'),
-      url: '/resources/whitepaper'
+      url: '/help/manifesto'
     },
     {
       icon: <HiCode className="w-6 h-6" />,
@@ -164,11 +152,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
             {item.title}
           </h3>
-          {/* Only external links get the "opens elsewhere" icon — internal
-              routes (manifesto, white paper) shouldn't look external. */}
-          {!isInternal && (
-            <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-          )}
+          <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
         </div>
         <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
           {item.description}
@@ -246,7 +230,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   )
 
   return (
-      <div className={`${isCaptive ? 'max-w-[850px]' : 'max-w-2xl'} mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
+      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
@@ -267,136 +251,140 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </div>
         </div>
 
-        {/* Tab Navigation - Desktop */}
-        <div className={`hidden md:flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-          <TabButton tab="resources" label={t('help.tab.resources')} />
-          <TabButton tab="faq" label={t('help.tab.faq')} />
-          <TabButton tab="history" label={t('help.tab.history')} />
-          <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
-          <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
-          <TabButton tab="developers" label={t('help.tab.developers')} />
-        </div>
+        {/* Tab Navigation */}
+        <div className={`-mx-6 mb-6 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+          <div className="px-6">
+            {/* Desktop */}
+            <div className="hidden md:flex">
+              <TabButton tab="faq" label={t('help.tab.faq')} />
+              <TabButton tab="history" label={t('help.tab.history')} />
+              <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
+              <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
+              <TabButton tab="developers" label={t('help.tab.developers')} />
+              <TabButton tab="resources" label={t('help.tab.resources')} />
+            </div>
 
-        {/* Tab Navigation - Mobile with dropdowns */}
-        <div className={`md:hidden flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`} ref={dropdownRef}>
-          {/* Resources - standalone (first) */}
-          <button
-            onClick={() => handleTabClick('resources')}
-            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
-              activeSection === 'resources'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            {t('help.tab.resources')}
-            {activeSection === 'resources' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-
-          {/* FAQ Dropdown */}
-          <div className="relative flex-1">
-            <button
-              onClick={() => setMobileDropdown(mobileDropdown === 'faq' ? null : 'faq')}
-              className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
-                (activeSection === 'faq' || activeSection === 'gettingstarted')
-                  ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                  : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-              }`}
-            >
-              {activeSection === 'gettingstarted' ? t('help.tab.getting_started') : t('help.tab.faq')}
-              <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'faq' ? 'rotate-180' : ''}`} />
-              {(activeSection === 'faq' || activeSection === 'gettingstarted') && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-              )}
-            </button>
-            {mobileDropdown === 'faq' && (
-              <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
-                isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
-              }`}>
+            {/* Mobile with dropdowns */}
+            <div className="md:hidden flex" ref={dropdownRef}>
+              {/* FAQ Dropdown */}
+              <div className="relative flex-1">
                 <button
-                  onClick={() => { handleTabClick('faq'); setMobileDropdown(null) }}
-                  className={`w-full px-4 py-3 text-sm text-left ${
-                    activeSection === 'faq'
-                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
-                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  onClick={() => setMobileDropdown(mobileDropdown === 'faq' ? null : 'faq')}
+                  className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
+                    (activeSection === 'faq' || activeSection === 'gettingstarted')
+                      ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                      : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
                   }`}
                 >
-                  {t('help.tab.faq')}
+                  {activeSection === 'gettingstarted' ? t('help.tab.getting_started') : t('help.tab.faq')}
+                  <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'faq' ? 'rotate-180' : ''}`} />
+                  {(activeSection === 'faq' || activeSection === 'gettingstarted') && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+                  )}
                 </button>
-                <button
-                  onClick={() => { handleTabClick('gettingstarted'); setMobileDropdown(null) }}
-                  className={`w-full px-4 py-3 text-sm text-left ${
-                    activeSection === 'gettingstarted'
-                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
-                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
-                  }`}
-                >
-                  {t('help.tab.getting_started')}
-                </button>
+                {mobileDropdown === 'faq' && (
+                  <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
+                    isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+                  }`}>
+                    <button
+                      onClick={() => { handleTabClick('faq'); setMobileDropdown(null) }}
+                      className={`w-full px-4 py-3 text-sm text-left ${
+                        activeSection === 'faq'
+                          ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                          : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t('help.tab.faq')}
+                    </button>
+                    <button
+                      onClick={() => { handleTabClick('gettingstarted'); setMobileDropdown(null) }}
+                      className={`w-full px-4 py-3 text-sm text-left ${
+                        activeSection === 'gettingstarted'
+                          ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                          : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t('help.tab.getting_started')}
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* History Dropdown */}
-          <div className="relative flex-1">
-            <button
-              onClick={() => setMobileDropdown(mobileDropdown === 'history' ? null : 'history')}
-              className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
-                (activeSection === 'history' || activeSection === 'manifesto')
-                  ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                  : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-              }`}
-            >
-              {activeSection === 'manifesto' ? t('help.tab.manifesto') : t('help.tab.history')}
-              <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'history' ? 'rotate-180' : ''}`} />
-              {(activeSection === 'history' || activeSection === 'manifesto') && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-              )}
-            </button>
-            {mobileDropdown === 'history' && (
-              <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
-                isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
-              }`}>
+              {/* History Dropdown */}
+              <div className="relative flex-1">
                 <button
-                  onClick={() => { handleTabClick('history'); setMobileDropdown(null) }}
-                  className={`w-full px-4 py-3 text-sm text-left ${
-                    activeSection === 'history'
-                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
-                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  onClick={() => setMobileDropdown(mobileDropdown === 'history' ? null : 'history')}
+                  className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
+                    (activeSection === 'history' || activeSection === 'manifesto')
+                      ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                      : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
                   }`}
                 >
-                  {t('help.tab.history')}
+                  {activeSection === 'manifesto' ? t('help.tab.manifesto') : t('help.tab.history')}
+                  <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'history' ? 'rotate-180' : ''}`} />
+                  {(activeSection === 'history' || activeSection === 'manifesto') && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+                  )}
                 </button>
-                <button
-                  onClick={() => { handleTabClick('manifesto'); setMobileDropdown(null) }}
-                  className={`w-full px-4 py-3 text-sm text-left ${
-                    activeSection === 'manifesto'
-                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
-                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
-                  }`}
-                >
-                  {t('help.tab.manifesto')}
-                </button>
+                {mobileDropdown === 'history' && (
+                  <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
+                    isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+                  }`}>
+                    <button
+                      onClick={() => { handleTabClick('history'); setMobileDropdown(null) }}
+                      className={`w-full px-4 py-3 text-sm text-left ${
+                        activeSection === 'history'
+                          ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                          : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t('help.tab.history')}
+                    </button>
+                    <button
+                      onClick={() => { handleTabClick('manifesto'); setMobileDropdown(null) }}
+                      className={`w-full px-4 py-3 text-sm text-left ${
+                        activeSection === 'manifesto'
+                          ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                          : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t('help.tab.manifesto')}
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+
+              {/* Developers - standalone */}
+              <button
+                onClick={() => handleTabClick('developers')}
+                className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
+                  activeSection === 'developers'
+                    ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                    : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                {t('help.tab.developers_short')}
+                {activeSection === 'developers' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+                )}
+              </button>
+
+              {/* Resources - standalone */}
+              <button
+                onClick={() => handleTabClick('resources')}
+                className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
+                  activeSection === 'resources'
+                    ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                    : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                {t('help.tab.resources')}
+                {activeSection === 'resources' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+                )}
+              </button>
+            </div>
           </div>
-
-          {/* Developers - standalone */}
-          <button
-            onClick={() => handleTabClick('developers')}
-            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
-              activeSection === 'developers'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            {t('help.tab.developers_short')}
-            {activeSection === 'developers' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-
         </div>
 
         {/* FAQ Section */}
@@ -452,7 +440,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </h3>
                 <p>
                   {t('help.history.scavenger_hunt.body_before_link')}
-                  <Link to="/resources/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>{t('help.history.scavenger_hunt.link_text')}</Link>
+                  <Link to="/help/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>{t('help.history.scavenger_hunt.link_text')}</Link>
                   {t('help.history.scavenger_hunt.body_after_link')}
                 </p>
 
@@ -468,10 +456,194 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         )}
 
         {/* Manifesto Section */}
-        {/* The manifesto body (shared with the standalone /manifesto route)
-            renders below the Help tab bar. */}
         {activeSection === 'manifesto' && (
-          <ManifestoContent />
+          <div className="space-y-6">
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
+              <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                {t('help.manifesto.attribution_before_link')}
+                <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>{t('help.manifesto.attribution_link_text')}</Link>
+              </p>
+              <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                {t('help.manifesto.heading')}
+              </h2>
+
+              <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                <p>
+                  {t('help.manifesto.p1')}
+                </p>
+
+                <p>
+                  {t('help.manifesto.p2')}
+                </p>
+
+                <p>
+                  {t('help.manifesto.p3')}
+                </p>
+
+                <p>
+                  {t('help.manifesto.p4')}
+                </p>
+
+                <p>
+                  {t('help.manifesto.p5')}
+                </p>
+
+                <div className="pl-4 space-y-2">
+                  <p>{t('help.manifesto.preamble.item1')}</p>
+                  <p>{t('help.manifesto.preamble.item2')}</p>
+                  <p>{t('help.manifesto.preamble.item3')}</p>
+                </div>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {t('help.manifesto.propose.heading')}
+                </h3>
+                <p>
+                  {t('help.manifesto.propose.a')}
+                </p>
+                <p>
+                  {t('help.manifesto.propose.b')}
+                </p>
+                <p>
+                  {t('help.manifesto.propose.general_function')}
+                </p>
+
+                <div className="space-y-3 pl-2">
+                  <p><strong>i.</strong> {t('help.manifesto.proto.i')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.i_a')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.i_b')}</p>
+
+                  <p><strong>ii.</strong> {t('help.manifesto.proto.ii')}</p>
+
+                  <p><strong>iii.</strong> {t('help.manifesto.proto.iii')}</p>
+
+                  <p><strong>iv.</strong> {t('help.manifesto.proto.iv')}</p>
+
+                  <p><strong>v.</strong> {t('help.manifesto.proto.v')}</p>
+                  <div className="pl-4 space-y-2">
+                    <p><strong>i.</strong> {t('help.manifesto.proto.v_i')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_i_a')}</p>
+                    <p><strong>ii.</strong> {t('help.manifesto.proto.v_ii')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_ii_a')}</p>
+                    <p><strong>iii.</strong> {t('help.manifesto.proto.v_iii')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_iii_a')}</p>
+                  </div>
+
+                  <p><strong>vi.</strong> {t('help.manifesto.proto.vi')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.vi_a')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.vi_b')}</p>
+
+                  <p><strong>vii.</strong> {t('help.manifesto.proto.vii')}</p>
+
+                  <p><strong>viii.</strong> {t('help.manifesto.proto.viii')}</p>
+
+                  <p>{t('help.manifesto.proto.data_storage')}</p>
+                </div>
+
+                <p>
+                  {t('help.manifesto.frontends_intro_a')}
+                </p>
+                <p>
+                  {t('help.manifesto.frontends_intro_b')}
+                </p>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {t('help.manifesto.frontends.heading')}
+                </h3>
+                <p>
+                  {t('help.manifesto.frontends.p1')}
+                </p>
+                <p>
+                  {t('help.manifesto.frontends.p2')}
+                </p>
+                <p>
+                  <strong className={isDark ? 'text-white' : 'text-gray-900'}>{t('help.manifesto.frontends.p3_strong')}</strong>
+                </p>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {t('help.manifesto.appendix.heading')}
+                </h3>
+
+                <p><strong>a.</strong> {t('help.manifesto.appendix.a')}</p>
+                <p>
+                  {t('help.manifesto.appendix.a_followup')}
+                </p>
+
+                <p className="mt-4"><strong>b.</strong> {t('help.manifesto.appendix.b')}</p>
+                <p>
+                  {t('help.manifesto.appendix.b_mc_i')}<br />
+                  {t('help.manifesto.appendix.b_mc_ii')}<br />
+                  {t('help.manifesto.appendix.b_mc_iii')}
+                </p>
+                <p>
+                  {t('help.manifesto.appendix.b_caveat')}
+                </p>
+                <p>{t('help.manifesto.appendix.cost_calcs_intro')}</p>
+                <p className="pl-4">
+                  {t('help.manifesto.appendix.cost_i')}<br />
+                  {t('help.manifesto.appendix.cost_ii')}<br />
+                  {t('help.manifesto.appendix.cost_iii')}<br />
+                  {t('help.manifesto.appendix.cost_iv')}
+                </p>
+                <p>
+                  {t('help.manifesto.appendix.math_explanation')}
+                </p>
+                <p>{t('help.manifesto.appendix.recommended_intro')}</p>
+                <ul className={`space-y-1 pl-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li>{t('help.manifesto.appendix.cost.username_1')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_2')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_3')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_4')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_5')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_6')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_7')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_8')}</li>
+                </ul>
+
+                <ul className={`space-y-1 pl-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li>{t('help.manifesto.appendix.cost.follow')}</li>
+                  <li>{t('help.manifesto.appendix.cost.send_caw')}</li>
+                  <li>{t('help.manifesto.appendix.cost.like')}</li>
+                  <li>{t('help.manifesto.appendix.cost.recaw')}</li>
+                </ul>
+
+                <p className="mt-4"><strong>c.</strong> {t('help.manifesto.appendix.c')}</p>
+                <p className="pl-4">
+                  {t('help.manifesto.appendix.c_i')}<br />
+                  {t('help.manifesto.appendix.c_ii')}
+                </p>
+                <p>
+                  {t('help.manifesto.appendix.c_example')}
+                </p>
+                <p>
+                  {t('help.manifesto.appendix.c_example_explanation')}
+                </p>
+
+                <div className={`mt-6 pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                  <p className={`italic ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                    {t('help.manifesto.signoff')}
+                  </p>
+                  <p className="mt-4">
+                    {t('help.manifesto.ps')}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Link to full manifesto */}
+            <a
+              href="https://github.com/cawdevelopment/manifesto"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-lg transition-colors ${
+                isDark
+                  ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20'
+                  : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+              }`}
+            >
+              {t('help.manifesto.view_on_github')}
+              <HiExternalLink className="w-4 h-4" />
+            </a>
+          </div>
         )}
 
         {/* Getting Started Section */}
