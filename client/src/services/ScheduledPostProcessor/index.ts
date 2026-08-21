@@ -319,14 +319,55 @@ async function processDueScheduledPosts() {
 
     for (const scheduledPost of dueScheduledPosts) {
       if (scheduledPost.threadId && failedThreadIds.has(scheduledPost.threadId)) {
-        logger.warn(`Skipping thread chunk ${scheduledPost.id} — earlier chunk in thread ${scheduledPost.threadId} failed`)
-        await prisma.scheduledCaw.update({
-          where: { id: scheduledPost.id },
+        // Scoped to status: 'pending' for the same reason as the claim
+        // below: an unconditional update() here could clobber a row that
+        // a concurrent, overlapping tick has already claimed (processing)
+        // and is actively broadcasting on-chain. If that's the case, skip
+        // it instead of overwriting -- the owning tick's own
+        // processScheduledPost will resolve it to 'published' or 'failed'
+        // on its own. Only actually mark 'failed' here if this tick is the
+        // one that still finds it 'pending' (i.e. nobody else has touched
+        // it yet).
+        const skipResult = await prisma.scheduledCaw.updateMany({
+          where: { id: scheduledPost.id, status: 'pending' },
           data: { status: 'failed' },
         })
-        failCount++
+        if (skipResult.count > 0) {
+          logger.warn(`Skipping thread chunk ${scheduledPost.id} — earlier chunk in thread ${scheduledPost.threadId} failed`)
+          failCount++
+        } else {
+          logger.log(`Thread chunk ${scheduledPost.id} was already claimed by another worker tick; not overwriting`)
+        }
         continue
       }
+      // Atomic status claim: pending -> processing. This is the actual
+      // concurrency guard. processScheduledPost() never checks or sets
+      // status until its own success/failure branches at the end, so two
+      // overlapping ticks of this 60s-interval worker (a batch that takes
+      // longer than 60s to process, DB/RPC slowness, etc.) could otherwise
+      // both findMany the same still-pending row and both broadcast it
+      // on-chain. updateMany's WHERE clause re-checks status: 'pending' at
+      // the DB level, so only the tick that actually flips the row proceeds
+      // -- a second, overlapping tick's updateMany affects 0 rows and is
+      // skipped here rather than double-processing.
+      //
+      // MUST run as its own autocommit statement, not inside an
+      // interactive $transaction alongside other work. The safety here
+      // relies on this updateMany committing (and releasing its row lock)
+      // immediately so a concurrent tick's updateMany sees the committed
+      // 'processing' status right away. Wrapping this in a $transaction with
+      // other statements would let overlapping ticks both still see
+      // 'pending' until the outer transaction commits, reopening the exact
+      // race this claim exists to close.
+      const claimResult = await prisma.scheduledCaw.updateMany({
+        where: { id: scheduledPost.id, status: 'pending' },
+        data: { status: 'processing' },
+      })
+      if (claimResult.count === 0) {
+        logger.log(`Scheduled post ${scheduledPost.id} was already claimed by another worker tick; skipping`)
+        continue
+      }
+
       const success = await processScheduledPost(scheduledPost)
       if (success) {
         successCount++
