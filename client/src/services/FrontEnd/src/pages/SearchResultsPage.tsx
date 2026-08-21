@@ -113,34 +113,36 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
       </div>
 
       {/* Tab Navigation */}
-      <div className={`flex space-x-1 mb-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
-        {[
-          { id: 'all' as const, label: t('search_results.tab.all'), icon: HiCollection },
-          { id: 'caws' as const, label: t('search_results.tab.caws'), icon: HiCollection },
-          { id: 'users' as const, label: t('search_results.tab.users'), icon: HiUsers },
-          { id: 'hashtags' as const, label: t('search_results.tab.hashtags'), icon: HiHashtag }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => {
-              setActiveTab(tab.id)
-              const newPath = tab.id === 'all' ? '/search' : `/search/${tab.id}`
-              navigate(`${newPath}?q=${encodeURIComponent(query)}`)
-            }}
-            className={`flex items-center space-x-2 px-4 py-3 transition-all ${
-              activeTab === tab.id
-                ? isDark
-                  ? 'border-b-2 border-blue-500 text-white'
-                  : 'border-b-2 border-blue-500 text-gray-900'
-                : isDark
-                  ? 'text-white/60 hover:text-white'
-                  : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <tab.icon className="w-4 h-4" />
-            <span>{tab.label}</span>
-          </button>
-        ))}
+      <div className={`-mx-6 mb-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
+        <div className="px-6 flex space-x-1">
+          {[
+            { id: 'all' as const, label: t('search_results.tab.all'), icon: HiCollection },
+            { id: 'caws' as const, label: t('search_results.tab.caws'), icon: HiCollection },
+            { id: 'users' as const, label: t('search_results.tab.users'), icon: HiUsers },
+            { id: 'hashtags' as const, label: t('search_results.tab.hashtags'), icon: HiHashtag }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setActiveTab(tab.id)
+                const newPath = tab.id === 'all' ? '/search' : `/search/${tab.id}`
+                navigate(`${newPath}?q=${encodeURIComponent(query)}`)
+              }}
+              className={`flex items-center space-x-2 px-4 py-3 transition-all ${
+                activeTab === tab.id
+                  ? isDark
+                    ? 'border-b-2 border-blue-500 text-white'
+                    : 'border-b-2 border-blue-500 text-gray-900'
+                  : isDark
+                    ? 'text-white/60 hover:text-white'
+                    : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Results */}

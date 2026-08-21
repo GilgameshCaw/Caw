@@ -11,6 +11,7 @@ import {
   POLL_DURATION_CHOICES,
 } from '~/../../../tools/pollMarker'
 import { useT } from '~/i18n/I18nProvider'
+import ThemedListbox from '~/components/forms/ThemedListbox'
 
 // byteLen mirrors the on-chain byte counter — we use it here so the per-
 // option budget the composer enforces matches what the post char counter
@@ -357,19 +358,15 @@ const PollComposer: React.FC<Props> = ({
       }`}>
         <div className="flex items-center gap-2">
           <span>{t('poll.duration')}</span>
-          <select
+          <ThemedListbox<string>
+            isDark={isDark}
             value={duration}
-            onChange={e => onChangeDuration(e.target.value)}
-            className={`px-2 py-1 rounded border text-xs cursor-pointer ${
-              isDark
-                ? 'bg-white/5 border-white/10 text-white'
-                : 'bg-gray-50 border-gray-200 text-gray-900'
-            }`}
-          >
-            {POLL_DURATION_CHOICES.map(c => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
+            onChange={onChangeDuration}
+            size="sm"
+            portal
+            className="w-28"
+            options={POLL_DURATION_CHOICES.map(c => ({ value: c.value, label: c.label }))}
+          />
         </div>
         {/* Multi-select toggle. Adds the ::pm:: sidecar so the
             indexer treats each vote action as a toggle on the

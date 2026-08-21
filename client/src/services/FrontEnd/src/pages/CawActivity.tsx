@@ -437,8 +437,9 @@ const CawActivity: React.FC = () => {
             else's profile, "my" wouldn't be ambiguous-free, so we
             hide the switcher and stay on My Stats. */}
         {isViewingSelf && (
-          <div className="-mx-6 mb-4">
-            <Tabs<'my' | 'all'>
+          <div className={`-mx-6 mb-4 border-b ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
+            <div className="px-6">
+              <Tabs<'my' | 'all'>
               tabs={[
                 { id: 'my', label: t('staking.activity.tab.my') },
                 { id: 'all', label: t('staking.activity.tab.all') },
@@ -450,7 +451,9 @@ const CawActivity: React.FC = () => {
                 else next.set('tab', newTab)
                 return next
               })}
+              showDivider={false}
             />
+            </div>
           </div>
         )}
 
