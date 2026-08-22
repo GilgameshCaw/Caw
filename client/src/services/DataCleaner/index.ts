@@ -813,7 +813,7 @@ async function cleanupOrphanActions() {
         // 5s tx budget) and re-run domain processing.
         const resolved = await resolveActionUsers(rawAction)
         await prisma.$transaction(
-          (tx) => processDomainEffects(tx, action, rawAction, resolved),
+          (tx) => processDomainEffects(tx, action, rawAction, resolved, /* fromReconciliation */ true),
           { timeout: 15_000 },
         )
         recovered++

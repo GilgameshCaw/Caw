@@ -776,7 +776,8 @@ export async function handleFollowAction(
 export async function handleUnfollowAction(
   tx: PrismaTransactionClient,
   action: any,
-  rawAction: any
+  rawAction: any,
+  fromReconciliation = false
 ): Promise<void> {
   const followerId = await findOrCreateUser(action.senderId)
   const followingId = await findOrCreateUser(rawAction.receiverId)
@@ -787,6 +788,15 @@ export async function handleUnfollowAction(
 
   if (!existing) {
     console.log(`User ${followerId} was not following user ${followingId}`)
+    return
+  }
+
+  // Orphan-reconciliation idempotency guard: a SUCCESS+FOLLOW row seen during
+  // reconciliation replay may be a re-follow issued *after* this UNFOLLOW.
+  // The live path (fromReconciliation=false) still deletes it as before; only
+  // orphan replay skips. Legitimate unfollows resolve via the PENDING+UNFOLLOW
+  // optimistic-undo path, which this guard does not touch.
+  if (fromReconciliation && existing.status === 'SUCCESS' && existing.action === 'FOLLOW') {
     return
   }
 
