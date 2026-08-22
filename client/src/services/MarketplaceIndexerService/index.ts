@@ -370,8 +370,24 @@ export const marketplaceIndexerService: Service = {
                 data: { status: 'OUTBID' },
               })
 
-              await prisma.marketplaceBid.create({
-                data: {
+              // Idempotency: MarketplaceIndexer holds the checkpoint and
+              // re-scans the WHOLE 2000-block range whenever ANY handler
+              // in this poll fails (see PayoutWithdrawn below) — including
+              // failures unrelated to bids. .create() would insert a
+              // second row for the same on-chain bid on every retry.
+              // @@unique([listingId, bidder, txHash]) makes this an
+              // upsert: a retry hits the `update` branch (a no-op) instead
+              // of duplicating the row. `wasNew` gates the OUTBID
+              // notification below so a retry doesn't re-notify.
+              const before = await prisma.marketplaceBid.findUnique({
+                where: { listingId_bidder_txHash: { listingId: listing.id, bidder, txHash: ev.transactionHash } },
+                select: { id: true },
+              })
+              const wasNew = !before
+              await prisma.marketplaceBid.upsert({
+                where: { listingId_bidder_txHash: { listingId: listing.id, bidder, txHash: ev.transactionHash } },
+                update: {},
+                create: {
                   listingId: listing.id,
                   bidder,
                   amount,
@@ -388,8 +404,14 @@ export const marketplaceIndexerService: Service = {
                 },
               })
 
-              // Notify the previous highest bidder that they've been outbid
-              if (previousBidder && previousBidder.toLowerCase() !== bidder.toLowerCase()) {
+              // Notify the previous highest bidder that they've been outbid.
+              // Only on a genuinely new bid — a retry that hit the upsert's
+              // no-op `update` branch must not re-fire this notification
+              // (createNotificationWithGroup below has its own group-key
+              // dedup too, but skipping here avoids the extra lookup and
+              // matches the "gate on new row" pattern used by Sale/
+              // OfferAccepted).
+              if (wasNew && previousBidder && previousBidder.toLowerCase() !== bidder.toLowerCase()) {
                 try {
                   // Find any profile owned by the outbid wallet
                   const outbidUser = await prisma.user.findFirst({
@@ -754,8 +776,20 @@ export const marketplaceIndexerService: Service = {
             const seller = String(ev.args[0]).toLowerCase()
             const amount = BigInt(ev.args[1].toString())
             try {
-              await prisma.marketplacePayout.create({
-                data: {
+              // Idempotency: MarketplaceIndexer holds the checkpoint and
+              // re-scans the WHOLE 2000-block range whenever ANY handler
+              // in this poll fails (e.g. PayoutWithdrawn below) — a plain
+              // .create() duplicated this row on every retry and directly
+              // inflated a seller's pending-payout total in the UI.
+              // @@unique([queuedTxHash, seller]) makes this an upsert: one
+              // tx can queue multiple sellers (so queuedTxHash alone isn't
+              // unique), but (queuedTxHash, seller) is — a single
+              // PayoutQueued log for a given seller is one event. A retry
+              // hits the no-op `update` branch instead of duplicating.
+              await prisma.marketplacePayout.upsert({
+                where: { queuedTxHash_seller: { queuedTxHash: ev.transactionHash, seller } },
+                update: {},
+                create: {
                   seller,
                   amount,
                   status: 'pending',
@@ -764,10 +798,7 @@ export const marketplaceIndexerService: Service = {
               })
               console.log(`[MarketplaceIndexer] PayoutQueued: seller=${seller.slice(0, 10)}... amount=${amount.toString()} tx=${ev.transactionHash.slice(0, 10)}...`)
             } catch (err: any) {
-              // Idempotency: duplicate tx on re-index will hit unique-ish constraint.
-              // We don't have a unique constraint on queuedTxHash alone (one tx can
-              // queue multiple sellers), so log and continue rather than throw.
-              console.warn(`[MarketplaceIndexer] PayoutQueued insert error (may be re-index):`, err.message?.slice(0, 100))
+              console.warn(`[MarketplaceIndexer] PayoutQueued upsert error:`, err.message?.slice(0, 100))
             }
           }
 

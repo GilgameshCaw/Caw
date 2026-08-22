@@ -839,6 +839,7 @@ model MarketplaceBid {
   createdAt DateTime           @default(now())
   listing   MarketplaceListing @relation(fields: [listingId], references: [id])
 
+  @@unique([listingId, bidder, txHash])
   @@index([listingId, status])
   @@index([bidder])
 }
@@ -1056,6 +1057,7 @@ model MarketplacePayout {
   withdrawnTxHash String?
   recipient       String?
 
+  @@unique([queuedTxHash, seller])
   @@index([queuedTxHash])
   @@index([seller, status])
   @@index([status])

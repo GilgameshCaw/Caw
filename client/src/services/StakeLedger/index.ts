@@ -524,11 +524,22 @@ export async function recordDeposit(
   })
   if (existing) return
 
-  s.totalCaw += amountWei
+  // Compute the post-deposit state WITHOUT mutating the in-memory
+  // singleton `s` yet. addToBalance/balanceOf are pure — they read `s`
+  // but don't write it. The mutation (s.totalCaw += / s.ownership.set)
+  // must happen strictly AFTER the DB write below commits successfully:
+  // on retry (checkpoint held, block range re-scanned), the dedup check
+  // above only sees a row that made it to disk. If we mutated `s` before
+  // the `tx.cawOwnershipSnapshot.create` and that create then threw
+  // (caller's transaction rolls back, no row persists), a retry would
+  // redo the dedup check (still finds nothing), fall through here again,
+  // and mutate `s` a SECOND time for a deposit that was only ever
+  // written to the DB once — silently inflating totalCaw/ownership in
+  // memory while the DB stays correct. Computing `after` here and only
+  // applying it post-commit closes that window.
   const own = ownershipOf(s, tokenId)
   const startingBalance = balanceOf(own, s.multiplier)
   const after = addToBalance(own, s.multiplier, amountWei)
-  s.ownership.set(tokenId, after.ownership)
 
   await tx.cawOwnershipSnapshot.create({
     data: {
@@ -567,6 +578,21 @@ export async function recordDeposit(
       onChainStakeUpdatedAt: new Date(),
     },
   })
+  // Apply the in-memory mutation ONLY NOW, after every DB write above has
+  // been issued without throwing. If any of the tx.* calls above throw,
+  // we return via the catch in the caller (DepositWatcher) with `s` left
+  // untouched — the checkpoint is held, the block range is retried, the
+  // dedup check at the top of this function (which reads confirmed DB
+  // state) is the sole source of truth for "was this deposit already
+  // applied", and it will correctly see nothing and let us try again
+  // exactly once. Do not move this earlier: this function runs inside the
+  // caller's `prisma.$transaction(...)` callback, and `s` is a
+  // module-level singleton shared across polls — an early mutation here
+  // combined with a mid-transaction failure elsewhere in the batch is
+  // exactly the drift bug this ordering fixes.
+  s.totalCaw += amountWei
+  s.ownership.set(tokenId, after.ownership)
+
   await tx.stakeLedgerState.upsert({
     where: { networkId: CAW_CLIENT_ID },
     create: {
