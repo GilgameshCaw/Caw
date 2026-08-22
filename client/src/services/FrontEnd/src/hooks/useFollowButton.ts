@@ -307,6 +307,16 @@ export function useFollowButton({
   const handleFollowClick = async () => {
     console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
+
+    // Guard against an unresolved receiver: if targetUserId is 0/undefined
+    // (tokenId not yet resolved, or a stale prop), bail before signing.
+    // Without this, receiverId:0 is baked into the payload and an invalid
+    // FOLLOW is signed + enqueued. All call sites pass user.tokenId with no
+    // >0 check, so this hook-level guard is the shared backstop.
+    if (!targetUserId || targetUserId <= 0) {
+      console.log('[FollowButton] Early return — invalid targetUserId', { targetUserId })
+      return
+    }
     // Don't do anything if wrong wallet
     if (wrongWallet) {
       console.log('[FollowButton] Early return — wrongWallet')
