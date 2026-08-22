@@ -3,7 +3,7 @@
 // catch up to upstream" command. Composable: each phase is an exported
 // function the top-level orchestrator calls in sequence.
 
-import { execSync } from 'child_process'
+import { execSync, execFileSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import inquirer from 'inquirer'
@@ -196,6 +196,10 @@ function runAsInstallUser(cmd, opts = {}) {
   const isRoot = process.getuid && process.getuid() === 0
   const installUser = process.env.SUDO_USER || 'caw'
   if (isRoot && installUser !== 'root') {
+    // installUser comes from $SUDO_USER — validate it's a real username
+    // before it lands in a root-executed shell string (defense-in-depth
+    // against a spoofed/CI-injected SUDO_USER carrying shell metacharacters).
+    assertSafeUsername(installUser)
     const home = userHome(installUser)
     // -E preserves env (so DATABASE_URL flows to prisma); HOME= override
     // points yarn / npm / git at the target user's config dir.
@@ -205,14 +209,33 @@ function runAsInstallUser(cmd, opts = {}) {
 }
 
 /**
+ * Assert a string is a valid POSIX-ish system username before it is
+ * interpolated into a shell command or passed to sudo. $SUDO_USER is set
+ * by sudo from the authenticated invoker (so real sudo can't inject here),
+ * but a faked-sudo wrapper (Docker/CI) or a `SUDO_USER=... ` env-injection
+ * could carry shell metacharacters that would otherwise reach a
+ * root-executed `sudo -u ${user} ...` string. Reject anything that isn't a
+ * plain username. Throws on violation.
+ */
+export function assertSafeUsername(user) {
+  if (typeof user !== 'string' || !/^[a-z_][a-z0-9_-]*$/.test(user)) {
+    throw new Error(`Refusing to run as unsafe username: ${JSON.stringify(user)}`)
+  }
+  return user
+}
+
+/**
  * Resolve a system user's home directory via getent. Falls back to
  * /home/<user> if getent isn't available or the user has no entry —
  * the latter shouldn't happen for the install user but the fallback
  * keeps the CLI from crashing on exotic environments.
  */
 export function userHome(user) {
+  assertSafeUsername(user)
   try {
-    const out = execSync(`getent passwd ${user}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    // execFileSync (argv-form, no shell) — `user` is passed as a discrete
+    // argument to getent, never interpolated into a shell string.
+    const out = execFileSync('getent', ['passwd', user], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     const parts = out.split(':')
     if (parts.length >= 6 && parts[5]) return parts[5]
   } catch {}
@@ -549,6 +572,7 @@ function deployMigrations(clientDir) {
   // applied — not silent.
   const installUser = process.env.SUDO_USER || 'caw'
   const sudoNeeded = process.getuid && process.getuid() === 0 && installUser !== 'root'
+  if (sudoNeeded) assertSafeUsername(installUser)
   const cmd = sudoNeeded
     ? `sudo -u ${installUser} -E env HOME=${userHome(installUser)} npx prisma migrate deploy`
     : `npx prisma migrate deploy`
@@ -857,7 +881,10 @@ export async function buildFrontend(installDir) {
   const frontendDir = path.join(installDir, 'client', 'src', 'services', 'FrontEnd')
   if (isRoot && installUser !== 'root' && fs.existsSync(frontendDir)) {
     try {
-      execSync(`chown -R ${installUser}:${installUser} ${frontendDir}`, { stdio: 'pipe' })
+      assertSafeUsername(installUser)
+      // argv-form: installUser + frontendDir are discrete args, never
+      // interpolated into a root-executed shell string.
+      execFileSync('chown', ['-R', `${installUser}:${installUser}`, frontendDir], { stdio: 'pipe' })
     } catch (e) {
       console.log(warn(`  Could not chown ${frontendDir} to ${installUser} — build may hit EACCES: ${e.message?.split('\n')[0]}`))
     }

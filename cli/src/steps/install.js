@@ -1,10 +1,10 @@
-import { execSync, exec, spawn } from 'child_process'
+import { execSync, execFileSync, exec, spawn } from 'child_process'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
-import { ensureCliSymlink, userHome } from './update.js'
+import { ensureCliSymlink, userHome, assertSafeUsername } from './update.js'
 
 /**
  * Run a long command without freezing the spinner. execSync blocks the
@@ -122,7 +122,10 @@ export async function runInstall(nodeType, config, installDir) {
   // already uses for its own build/migrate steps. No-ops (falls back to
   // running as the current user) when SUDO_USER is unset — dev-mode /
   // non-sudo invocations are unaffected.
+  // $SUDO_USER — validate it's a real username before it's used in any
+  // privileged chown / sudo call below (defense-in-depth vs a spoofed value).
   const buildAsUser = process.env.SUDO_USER || null
+  if (buildAsUser) assertSafeUsername(buildAsUser)
   const isRoot = process.getuid && process.getuid() === 0
 
   // Create logs directory
@@ -220,7 +223,10 @@ export async function runInstall(nodeType, config, installDir) {
           // .env and node_modules (freshly installed as root above) are
           // readable/writable by buildAsUser before yarn build runs.
           try {
-            execSync(`chown -R ${buildAsUser}:${buildAsUser} "${frontendDir}"`, { stdio: 'pipe' })
+            // execFileSync (argv-form, no shell): buildAsUser ($SUDO_USER)
+            // and frontendDir are passed as discrete args, never spliced
+            // into a shell string.
+            execFileSync('chown', ['-R', `${buildAsUser}:${buildAsUser}`, frontendDir], { stdio: 'pipe' })
           } catch (chownErr) {
             console.log(warn(`  Warning: could not pre-chown ${frontendDir}: ${chownErr.message}`))
           }
@@ -231,7 +237,9 @@ export async function runInstall(nodeType, config, installDir) {
           // looks successful but bakes in NaN; abort instead.
           const envPath = path.join(frontendDir, '.env')
           try {
-            execSync(`sudo -u ${buildAsUser} test -r "${envPath}"`, { stdio: 'pipe' })
+            // argv-form: buildAsUser + envPath are discrete args to sudo,
+            // never interpolated into a root-executed shell string.
+            execFileSync('sudo', ['-u', buildAsUser, 'test', '-r', envPath], { stdio: 'pipe' })
           } catch (accessErr) {
             spinner3b.fail(`Frontend build aborted: ${buildAsUser} cannot read ${envPath}`)
             console.log(err(`  This would silently bake VITE_NETWORK_ID=NaN into the production`))
@@ -469,6 +477,7 @@ export async function startServices(nodeType, installDir) {
   // Chown the install dir to caw:caw so the running services have access.
   // Skip when not running as root (dev / non-sudo invocation).
   const runAsUser = process.env.SUDO_USER
+  if (runAsUser) assertSafeUsername(runAsUser)
   // Non-null only when this install actually hands installDir to an
   // unprivileged user. Anything root runs out of that tree afterwards has to
   // drop to this user, or the boundary the chown creates isn't real.
@@ -476,7 +485,9 @@ export async function startServices(nodeType, installDir) {
   if (treeOwner) {
     const spinner0 = ora(`Chowning ${installDir} to ${runAsUser}...`).start()
     try {
-      execSync(`chown -R ${runAsUser}:${runAsUser} ${installDir}`, { stdio: 'pipe' })
+      // argv-form: runAsUser ($SUDO_USER) + installDir are discrete args,
+      // never spliced into a root-executed shell string.
+      execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, installDir], { stdio: 'pipe' })
       spinner0.succeed(`Files now owned by ${runAsUser}`)
     } catch (e) {
       spinner0.warn(`Couldn't chown — pm2 apps may have permission issues: ${e.message}`)
