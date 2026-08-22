@@ -4,6 +4,7 @@ import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { formatUsd } from '~/utils/numberFormat'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { formatEther, formatUnits } from 'viem'
 import {
@@ -432,6 +433,11 @@ const Notifications: React.FC = () => {
           }
         }
         if (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:')) return { title: 'Profile update failed' }
+        // Sponsor invite code purchase (SponsorInviteSection signs an OTHER
+        // action with the short "sp-i:" prefix).
+        if (plaintext.startsWith('sp-i:')) return { title: 'Invite code purchase failed' }
+        // Hide/moderation OTHER-subtype.
+        if (plaintext.startsWith('hide:')) return { title: "Couldn't hide that post" }
         return { title: 'Action failed' }
       default:
         return { title: 'Action failed' }
@@ -450,6 +456,60 @@ const Notifications: React.FC = () => {
     const cleaned = reasonMatch ? reasonMatch[1] : (raw || '')
 
     const lower = cleaned.toLowerCase()
+
+    // Contract error-NAME map (authoritative). The validator surfaces reverts as
+    // "ErrorName — operator note" (see ValidatorService CAW_ACTIONS_ERRORS). Match
+    // on the stable error name rather than the English note, so a user always gets
+    // plain language even when the note reads like a contract label. Ordered map:
+    // first name found in the reason wins. Anything not covered here falls through
+    // to the substring heuristics + generic fallback below.
+    const NAMED: [string, string][] = [
+      ['insufficientbalance', "You don't have enough deposited CAW for this action."],
+      ['sessionlimitexceeded', 'This Quick Sign session has hit its spending cap. Re-enable Quick Sign to reset it.'],
+      ['sessioninvalid',       'Your Quick Sign session is no longer valid. Re-enable Quick Sign and try again.'],
+      ['outofscope',           "Quick Sign isn't authorized for this kind of action. Re-enable it with the right permissions."],
+      ['wrongprofileforsession', 'That Quick Sign session belongs to a different profile. Switch profiles or re-enable Quick Sign.'],
+      ['nosession',            'No active Quick Sign session. Enable Quick Sign and try again.'],
+      ['usernotauth',          'This account isn’t set up on this network yet.'],
+      ['unknownowner',         'This account isn’t set up on this network yet.'],
+      ['nottokenowner',        "You don't own this profile."],
+      ['selffollow',           "You can't follow your own account."],
+      ['texttoolong',          'The post text was too long.'],
+      ['toomanyrecipients',    'Too many tip recipients on this action.'],
+      ['invalidactiontype',    'This action type isn’t supported.'],
+      ['withdrawzeroamount',   'Enter an amount greater than zero to withdraw.'],
+      ['nowithdrawfee',        'Withdrawals aren’t available right now. Please try again later.'],
+      // Signature / batch-integrity failures — the user can just retry; the detail
+      // is for operators, not them.
+      ['invalidsig',       'Signature validation failed on-chain. Try again.'],
+      ['batchsiginvalid',  'Signature validation failed on-chain. Try again.'],
+      ['signermismatch',   'Signature validation failed on-chain. Try again.'],
+      ['badsiggroupcount', 'Signature validation failed on-chain. Try again.'],
+      ['sigsincomplete',   'Signature validation failed on-chain. Try again.'],
+      // Cawonce / ordering — transient; a retry with a fresh cawonce fixes it.
+      ['cawonceused',            'Something went wrong while processing this action on-chain. Try again.'],
+      ['noncontiguouscawonces',  'Something went wrong while processing this action on-chain. Try again.'],
+      // Everything else in the table (validator/config/internal errors the user
+      // can neither cause nor fix) → generic.
+      ['notsibling', 'Something went wrong while processing this action on-chain.'],
+      ['onlyself', 'Something went wrong while processing this action on-chain.'],
+      ['notcaporacle', 'Something went wrong while processing this action on-chain.'],
+      ['noactions', 'Something went wrong while processing this action on-chain.'],
+      ['toomanyactions', 'Something went wrong while processing this action on-chain.'],
+      ['trailingbytes', 'Something went wrong while processing this action on-chain.'],
+      ['emptygroup', 'Something went wrong while processing this action on-chain.'],
+      ['groupoverflows', 'Something went wrong while processing this action on-chain.'],
+      ['mixednetworks', 'Something went wrong while processing this action on-chain.'],
+      ['mixedsenders', 'Something went wrong while processing this action on-chain.'],
+      ['zknotconfigured', 'Something went wrong while processing this action on-chain.'],
+      ['zksignersmismatch', 'Something went wrong while processing this action on-chain.'],
+      ['invalidvalidator', 'Something went wrong while processing this action on-chain.'],
+      ['notca', 'Something went wrong while processing this action on-chain.'],
+    ]
+    for (const [name, msg] of NAMED) {
+      if (lower.includes(name)) return msg
+    }
+
     if (lower.includes('insufficient')) return "You don't have enough deposited CAW for this action."
     if (lower.includes('not authenticated')) return 'Account not yet authenticated with this client.'
     if (lower.includes('cawonce') || lower.includes('conflict')) {
@@ -472,6 +532,17 @@ const Notifications: React.FC = () => {
     if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
       return 'Something went wrong while processing this action on-chain.'
     }
+    // Transient network / provider teardown (e.g. ethers "provider destroyed;
+    // cancelled request … UNSUPPORTED_OPERATION"). These are retryable hiccups, not
+    // a bad action — say so instead of dumping the raw ethers string.
+    if (
+      lower.includes('provider destroyed') || lower.includes('cancelled request') ||
+      lower.includes('unsupported_operation') || lower.includes('too many requests') ||
+      lower.includes('429') || lower.includes('rate limit') || lower.includes('timeout') ||
+      lower.includes('econnreset') || lower.includes('econnrefused') || lower.includes('enotfound')
+    ) {
+      return 'A temporary network issue interrupted this. Please try again.'
+    }
     // Catch raw JS/engine errors that aren't user-friendly
     if (lower.includes('cannot read properties') || lower.includes('typeerror') || lower.includes('referenceerror') || lower.includes('undefined')) {
       return 'Something went wrong.'
@@ -479,7 +550,13 @@ const Notifications: React.FC = () => {
     // Anything still wrapped in an ethers stack trace at this point is too
     // verbose to show — fall back to a generic message rather than dumping
     // calldata, addresses, or invocation blobs into the notification card.
-    if (cleaned.includes('CALL_EXCEPTION') || cleaned.includes('action="call"') || cleaned.length > 140) {
+    // The ethers markers (code=/version=/operation=) catch raw errors of ANY
+    // length, not just the long ones the >140 guard would.
+    if (
+      cleaned.includes('CALL_EXCEPTION') || cleaned.includes('action="call"') ||
+      cleaned.includes('code=') || cleaned.includes('version=') || cleaned.includes('operation="') ||
+      cleaned.length > 140
+    ) {
       return 'Something went wrong while processing this action on-chain.'
     }
     return cleaned || 'Something went wrong.'
@@ -630,7 +707,7 @@ const Notifications: React.FC = () => {
           const formatted = cawNum >= 1_000_000 ? `${(cawNum / 1_000_000).toFixed(1)}M`
             : cawNum >= 1_000 ? `${(cawNum / 1_000).toFixed(1)}K`
             : cawNum.toFixed(0)
-          const usd = cawPrice > 0 ? ` (~$${(cawNum * cawPrice).toFixed(2)})` : ''
+          const usd = cawPrice > 0 ? ` (~$${formatUsd(cawNum * cawPrice)})` : ''
           tipLabel = ` ${formatted} CAW${usd}`
         }
         return notification.caw

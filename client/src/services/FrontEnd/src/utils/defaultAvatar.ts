@@ -1,8 +1,12 @@
+// Avatar assets live at public/images/avatars/1.png .. 131.png
+// (1-100 male, 101-131 female — see AvatarPicker MALE_RANGE/FEMALE_RANGE).
+const MAX_AVATAR_ID = 131
+
 /**
- * Returns the default avatar URL for a given ID (1-100).
+ * Returns the default avatar URL for a given ID (1-131).
  */
 export function getDefaultAvatarUrl(id: number): string {
-  const clamped = Math.max(1, Math.min(100, id || 1))
+  const clamped = Math.max(1, Math.min(MAX_AVATAR_ID, id || 1))
   return `/images/avatars/${clamped}.png`
 }
 
