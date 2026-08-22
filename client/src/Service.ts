@@ -17,6 +17,7 @@ export type HeartbeatContext = {
    * @param loopName Optional loop identifier. Defaults to 'main'.
    */
   heartbeat(loopName?: string): void;
+  heartbeatDegraded(loopName?: string, reason?: string): void;
 
   /**
    * Declare a loop and its max-staleness timeout. The watchdog treats any
