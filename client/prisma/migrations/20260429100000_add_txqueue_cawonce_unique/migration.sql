@@ -17,7 +17,7 @@
 -- the SAME cawonce after marking the original 'retried'. Without the
 -- partial filter, the unique constraint would block legit retries.
 
-ALTER TABLE "TxQueue" ADD COLUMN "cawonce" INTEGER;
+ALTER TABLE "TxQueue" ADD COLUMN IF NOT EXISTS "cawonce" INTEGER;
 
 -- Backfill from payload->data->cawonce. Cast through TEXT then INTEGER
 -- because JSON numbers come out of jsonb as numeric.
@@ -25,7 +25,7 @@ UPDATE "TxQueue"
    SET "cawonce" = (payload->'data'->>'cawonce')::int
  WHERE payload->'data'->>'cawonce' IS NOT NULL;
 
-CREATE UNIQUE INDEX "TxQueue_senderId_cawonce_active_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "TxQueue_senderId_cawonce_active_unique"
     ON "TxQueue" ("senderId", "cawonce")
  WHERE status IN ('pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit')
    AND "cawonce" IS NOT NULL;

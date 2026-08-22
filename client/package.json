@@ -7,7 +7,7 @@
     "cawai:test-reply": "tsx src/services/CawAI/test-reply.ts",
     "migrate:filebase": "node -r ./dotenv-preload.js --import tsx src/tools/migrateMediaToFilebase.ts",
     "prisma:push": "prisma db push --accept-data-loss",
-    "prisma:reset": "prisma db push --force-reset",
+    "prisma:reset": "prisma migrate reset --force --skip-seed",
     "prisma:migrate": "prisma migrate dev",
     "test": "tsc --noEmit && mocha --import=tsx tests/**/*.test.ts",
     "redis": "redis-server --port 6379 --appendonly yes",

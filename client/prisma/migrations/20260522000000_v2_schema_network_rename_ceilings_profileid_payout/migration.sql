@@ -19,36 +19,41 @@
 -- ===========================================================================
 
 -- The Prisma shadow DB is drifted (no migrate dev); we use hand-rolled SQL.
--- On a fresh V2 DB the "Client" table doesn't exist yet and "Network" will
--- be created by `prisma db push`. For VPS deploys upgrading from V1, run
--- this migration first, then prisma generate.
 --
--- If running against an existing V1-era DB (not the intended path, but
--- supported for reference migration), un-comment the ALTER TABLE statements
--- below. On a fresh V2 DB (the primary target), they are no-ops because
--- prisma db push will create the tables with the new names directly.
+-- Historically this block was commented out because the fresh-DB
+-- bootstrap path was `prisma db push` (which creates "Network" /
+-- "NetworkAuth" directly from schema.prisma, making these renames
+-- no-ops that would error against a table that doesn't exist). Now that
+-- `00000000000000_init` and the SessionKey/ClientAuth backfill migration
+-- (20260505120000) create "Client" / "ClientAuth" / "ReplicationTx"."clientId"
+-- / "StakeLedgerState"."clientId" under their original V1 names, a
+-- `prisma migrate deploy` replay needs these renames to actually run so
+-- the resulting shape matches schema.prisma's Network / NetworkAuth /
+-- networkId. Each statement is guarded with IF EXISTS so it stays a
+-- no-op if ever re-run against a DB where the rename already happened
+-- (e.g. a `db push`-bootstrapped install upgrading to migrations).
 
--- Rename the primary table (no-op on fresh DB; uncomment on V1→V2 upgrade):
--- ALTER TABLE IF EXISTS "Client" RENAME TO "Network";
+-- Rename the primary table:
+ALTER TABLE IF EXISTS "Client" RENAME TO "Network";
 
--- Rename ClientAuth → NetworkAuth (no-op on fresh DB):
--- ALTER TABLE IF EXISTS "ClientAuth" RENAME TO "NetworkAuth";
+-- Rename ClientAuth → NetworkAuth:
+ALTER TABLE IF EXISTS "ClientAuth" RENAME TO "NetworkAuth";
 
--- Rename clientId column in NetworkAuth (no-op on fresh DB):
--- ALTER TABLE IF EXISTS "NetworkAuth" RENAME COLUMN "clientId" TO "networkId";
+-- Rename clientId column in NetworkAuth:
+ALTER TABLE IF EXISTS "NetworkAuth" RENAME COLUMN "clientId" TO "networkId";
 
--- Rename the unique constraint on NetworkAuth (no-op on fresh DB):
--- ALTER INDEX IF EXISTS "ClientAuth_clientId_tokenId_key" RENAME TO "NetworkAuth_networkId_tokenId_key";
+-- Rename the unique constraint on NetworkAuth:
+ALTER INDEX IF EXISTS "ClientAuth_clientId_tokenId_key" RENAME TO "NetworkAuth_networkId_tokenId_key";
 
--- Rename clientId column in ReplicationTx (no-op on fresh DB):
--- ALTER TABLE IF EXISTS "ReplicationTx" RENAME COLUMN "clientId" TO "networkId";
+-- Rename clientId column in ReplicationTx:
+ALTER TABLE IF EXISTS "ReplicationTx" RENAME COLUMN "clientId" TO "networkId";
 
--- Update the index on ReplicationTx (no-op on fresh DB):
--- DROP INDEX IF EXISTS "ReplicationTx_clientId_createdAt_idx";
--- CREATE INDEX IF NOT EXISTS "ReplicationTx_networkId_createdAt_idx" ON "ReplicationTx" ("networkId", "createdAt");
+-- Update the index on ReplicationTx:
+DROP INDEX IF EXISTS "ReplicationTx_clientId_createdAt_idx";
+CREATE INDEX IF NOT EXISTS "ReplicationTx_networkId_createdAt_idx" ON "ReplicationTx" ("networkId", "createdAt");
 
--- Rename clientId column in StakeLedgerState (no-op on fresh DB):
--- ALTER TABLE IF EXISTS "StakeLedgerState" RENAME COLUMN "clientId" TO "networkId";
+-- Rename clientId column in StakeLedgerState:
+ALTER TABLE IF EXISTS "StakeLedgerState" RENAME COLUMN "clientId" TO "networkId";
 
 -- ===========================================================================
 -- B. Per-fee ceiling columns on Network
