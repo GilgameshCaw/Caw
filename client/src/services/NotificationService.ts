@@ -591,7 +591,7 @@ export class NotificationService {
    * Pass the tx `client` when called from inside an interactive transaction.
    * Same pool-leak rationale as createFollowNotification.
    */
-  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number, client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma) {
+  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number, client: Pick<typeof prisma, 'notification' | 'notificationGroup'> = prisma, cawonce?: number) {
     // Don't notify for self-tips
     if (recipientId === tipperId) return
 
@@ -600,15 +600,40 @@ export class NotificationService {
       return
     }
 
-    // Check if notification already exists to avoid duplicates
-    const existing = await client.notification.findFirst({
-      where: {
-        userId: recipientId,
-        actorId: tipperId,
-        type: NotificationType.TIP,
-        cawId: cawId || undefined
-      }
-    })
+    // Dedup key. Post tips (cawId set) collapse into the existing
+    // cawId-based check -- multiple tips on the same caw from the same
+    // tipper should roll up under one notification, same as before.
+    //
+    // Profile tips (cawId null) previously deduped on
+    // { userId, actorId, type: TIP, cawId: undefined } -- with cawId
+    // omitted from the WHERE entirely (Prisma drops `undefined` keys),
+    // that matched ANY prior profile-tip notification between the same
+    // two users, so a second, third, etc. profile tip from the same
+    // sender never got its own notification once the first one existed.
+    // Scoping to cawonce (unique per tip transaction) instead means each
+    // distinct tip gets checked independently, while a genuine replay of
+    // the SAME cawonce (DataCleaner and ActionProcessor both confirming
+    // the same tip) still correctly dedupes to one notification.
+    const existing = cawId
+      ? await client.notification.findFirst({
+          where: {
+            userId: recipientId,
+            actorId: tipperId,
+            type: NotificationType.TIP,
+            cawId,
+          }
+        })
+      : cawonce != null
+        ? await client.notification.findFirst({
+            where: {
+              userId: recipientId,
+              actorId: tipperId,
+              type: NotificationType.TIP,
+              cawId: null,
+              actionPayload: { path: ['cawonce'], equals: cawonce },
+            }
+          })
+        : null // No cawonce and no cawId: can't dedupe safely, so don't suppress -- see caller note.
 
     if (!existing) {
       await createNotificationWithGroup(client, {
@@ -617,7 +642,10 @@ export class NotificationService {
         type: NotificationType.TIP,
         cawId: cawId || undefined,
         groupKey: cawId ? `tip_caw_${cawId}` : undefined,
-        actionPayload: amount ? { tipAmount: String(amount) } : undefined,
+        actionPayload: {
+          ...(amount ? { tipAmount: String(amount) } : {}),
+          ...(cawonce != null ? { cawonce } : {}),
+        },
       })
     }
   }

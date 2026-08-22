@@ -260,7 +260,7 @@ export async function handleCawAction(
         }
         if (shouldNotify) {
           try {
-            await NotificationService.createTipNotification(recipientId, authorId, newCaw.id, tipAmount, tx)
+            await NotificationService.createTipNotification(recipientId, authorId, newCaw.id, tipAmount, tx, action.cawonce)
           } catch (notifErr) {
             console.error(`[handleCawAction] Failed to create embedded tip notification for recipient ${recipientId}:`, notifErr)
           }
@@ -1298,7 +1298,7 @@ async function handleTipAction(
   // Create notification
   if (shouldNotify) {
     try {
-      await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount), tx)
+      await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount), tx, action.cawonce)
     } catch (err) {
       console.error('[handleTipAction] Failed to create tip notification:', err)
     }
