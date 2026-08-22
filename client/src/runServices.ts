@@ -146,6 +146,11 @@ const HEARTBEAT_CHECK_INTERVAL_MS = 30_000;
 type LoopState = {
   lastHeartbeat: number;
   timeoutMs: number;
+  /** Set when a loop reports it ran but could not progress; cleared on the next
+   *  successful heartbeat. Recorded for the stats line, not for the watchdog. */
+  degradedSince?: number;
+  degradedReason?: string;
+  degradedWarned?: boolean;
 };
 
 // Restart-rate alert (2026-07-10 auto-heal observability): if a service restarts
@@ -174,10 +179,34 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
           const existing = loops.get(loopName);
           if (existing) {
             existing.lastHeartbeat = Date.now();
+            // Progress means recovery: drop any degraded marker.
+            existing.degradedSince = undefined;
+            existing.degradedReason = undefined;
+            existing.degradedWarned = undefined;
           } else {
             loops.set(loopName, {
               lastHeartbeat: Date.now(),
               timeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+            });
+          }
+        },
+        heartbeatDegraded(loopName = 'main', reason) {
+          const now = Date.now();
+          const existing = loops.get(loopName);
+          if (existing) {
+            // The loop ran — it just couldn't make progress. Keep it out of
+            // the dead-loop path (restarting doesn't fix an upstream that's
+            // erroring, and on a service with a cold-start scan it makes
+            // things worse) but record how long it's been stuck.
+            existing.lastHeartbeat = now;
+            existing.degradedSince ??= now;
+            existing.degradedReason = reason;
+          } else {
+            loops.set(loopName, {
+              lastHeartbeat: now,
+              timeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+              degradedSince: now,
+              degradedReason: reason,
             });
           }
         },
@@ -222,6 +251,8 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
       try {
         // Grace period on first start so services have time to run their
         // first loop iteration before we expect heartbeats.
+        const readyAt = Date.now();
+        for (const state of loops.values()) state.lastHeartbeat = readyAt;
         await delay(HEARTBEAT_CHECK_INTERVAL_MS);
 
         let statsCountdown = 0; // Count ticks until we log stats
@@ -231,6 +262,10 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
           const loopEntries = Array.from(loops.entries());
           for (const [loopName, state] of loopEntries) {
             const age = now - state.lastHeartbeat;
+            if (state.degradedSince && now - state.degradedSince > state.timeoutMs && !state.degradedWarned) {
+              console.warn(`[runServices] ${instance.instance} loop '${loopName}' alive but not progressing for ${Math.round((now - state.degradedSince) / 1000)}s: ${state.degradedReason ?? 'unknown'}`);
+              state.degradedWarned = true;
+            }
             if (age > state.timeoutMs) {
               throw new Error(
                 `heartbeat stale for loop '${loopName}': ${Math.round(age / 1000)}s > ${Math.round(state.timeoutMs / 1000)}s`,
@@ -245,7 +280,7 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
           // Log stats less often than we check heartbeats, to avoid log spam
           if (statsCountdown <= 0) {
             const loopSummary = Array.from(loops.entries())
-              .map(([name, s]) => `${name}=${Math.round((now - s.lastHeartbeat) / 1000)}s`)
+              .map(([name, s]) => `${name}=${Math.round((now - s.lastHeartbeat) / 1000)}s` + (s.degradedSince ? ` degraded ${Math.round((now - s.degradedSince) / 1000)}s${s.degradedReason ? ` (${s.degradedReason})` : ``}` : ``))
               .join(', ');
             console.log(
               `stats for ${instance.instance}:`,

@@ -208,6 +208,7 @@ export const rawEventsGathererService: Service = {
           storeBatch:            storeBatchAndPublish,
         },
         onTick: () => ctx.heartbeat('poll'),
+        onStall: (reason) => ctx.heartbeatDegraded('poll', reason),
       })
 
       stopListener = listener.stop
