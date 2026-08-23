@@ -246,6 +246,30 @@ async function refreshPeers(
     if (managerDeployBlock < 0) {
       try {
         const resolved = await findContractDeployBlock(provider, clientManagerAddress, latestBlock)
+        // A 0 return here is a live signal, not just "genuinely
+        // undeployed": per @tentencaw's review, the caller can't actually
+        // tell those apart. findContractDeployBlock's own re-check (see
+        // its doc comment) already covers the transient-blip-at-head
+        // case, but a real answer of 0 for a contract we know is deployed
+        // (this whole function only runs because clientManagerAddress
+        // resolved to something) is not a state this scan should trust
+        // enough to walk genesis-to-head from. Treat it the same as the
+        // throw below: skip this tick rather than caching a value that
+        // would trigger the exact ~1,156-window explosion this fix exists
+        // to prevent.
+        if (resolved === 0) {
+          // Tradeoff worth being explicit about: if clientManagerAddress
+          // were ever genuinely misconfigured (pointing at a real address
+          // with no contract deployed there), this branch would skip
+          // forever rather than eventually accepting 0 as a real answer.
+          // Accepted deliberately -- clientManagerAddress is the protocol's
+          // core registry contract, expected to always exist in any real
+          // deployment, so treating an unexpected 0 as "still ambiguous"
+          // and refusing to act on it is the safer failure mode for a
+          // misconfiguration than silently walking genesis-to-head on it.
+          console.warn('[InstanceRegistry] NetworkManager deploy block resolved to 0 (ambiguous with a live RPC hiccup); skipping this tick\'s scan, will retry next tick')
+          return { added: [], changed: [], skipped: true }
+        }
         managerDeployBlock = resolved
       } catch (err: any) {
         console.warn(`[InstanceRegistry] Could not resolve NetworkManager deploy block (${err?.message}); skipping this tick's scan, will retry next tick`)
@@ -258,19 +282,29 @@ async function refreshPeers(
     // between registration clusters doesn't bail the walk early.
     const span = Math.max(0, latestBlock - managerDeployBlock)
     const neededWindows = Math.ceil(span / 10_000) + 2
-    // Spacing windows out (rather than firing ~600 eth_getLogs back-to-back
-    // as fast as the RPC responds, measured at ~150ms apart) meaningfully
+    // Spacing windows out (rather than firing eth_getLogs back-to-back as
+    // fast as the RPC responds, measured at ~150ms apart) meaningfully
     // reduces the chance of self-inflicted rate limiting turning into a
     // scanIncomplete abort. Deliberately kept small: refreshAndLog has no
     // in-flight guard against the pollIntervalMs setInterval (default 60s),
     // so a delay long enough to make one cold scan run past the next tick
     // would let two scans overlap and race on managerDeployBlock/
-    // lastScannedBlock instead of just being slow. 50ms x a worst-case
-    // ~600 windows is ~30s, leaving headroom under the default 60s
-    // interval. Not measured against this node's actual rate limit
-    // threshold -- if scanIncomplete still fires regularly, raise this
-    // together with pollIntervalMs (or add an in-flight guard) rather than
-    // raising it alone.
+    // lastScannedBlock instead of just being slow.
+    //
+    // The genesis-fallback fix above (skip rather than cache 0/incomplete
+    // state as managerDeployBlock) means the ~600-window case this
+    // constant was originally sized against (per @tentencaw's review,
+    // ~90s of scan time before delayMs is even added -- already past the
+    // 60s tick on its own) should no longer be reachable in the steady
+    // state. neededWindows is now ~7 in the common case (span ~50k blocks
+    // at the current deploy block), where 50ms of delay is negligible
+    // either way. Kept as a secondary safety margin for any other path
+    // that still reaches a large scan (e.g. a genuinely fresh deploy far
+    // from head) rather than as the primary defense it was originally
+    // written to be. Not measured against this node's actual rate limit
+    // threshold -- if scanIncomplete still fires regularly in that
+    // remaining case, raise this together with pollIntervalMs (or add an
+    // in-flight guard) rather than raising it alone.
     const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs], {
       fromBlock: managerDeployBlock,
       stopOnEmptyWindow: false,
@@ -371,7 +405,19 @@ async function refreshPeers(
   )
   const activations = ordered.map(o => ({ instanceId: o.instanceId, active: o.active }))
 
-  return await applyToCache(networkId, registered, updates, activations)
+  const applied = await applyToCache(networkId, registered, updates, activations)
+  // scanIncomplete means the log walk itself was cut short by an RPC
+  // error mid-scan (see onError above) -- applyToCache still writes
+  // whatever partial registered/updates/activations it received into
+  // peerCache unconditionally, so the cache silently ends up holding a
+  // truncated view rather than a complete one. That's precisely the
+  // 2c1700b5 shape ("a node re-registering because a truncated cold scan
+  // missed its own prior registration") in a different spot from the
+  // managerDeployBlock-resolution-failure case above. Folding it into the
+  // same skipped signal means selfRegister's _lastRefreshSkipped guard
+  // (which already exists for the resolution-failure case) covers this
+  // one too, without selfRegister needing to know the difference.
+  return { ...applied, skipped: scanIncomplete }
 }
 
 // =====================================================================
