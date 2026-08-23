@@ -241,10 +241,24 @@ async function refreshPeers(
     // between registration clusters doesn't bail the walk early.
     const span = Math.max(0, latestBlock - managerDeployBlock)
     const neededWindows = Math.ceil(span / 10_000) + 2
+    // Spacing windows out (rather than firing ~600 eth_getLogs back-to-back
+    // as fast as the RPC responds, measured at ~150ms apart) meaningfully
+    // reduces the chance of self-inflicted rate limiting turning into a
+    // scanIncomplete abort. Deliberately kept small: refreshAndLog has no
+    // in-flight guard against the pollIntervalMs setInterval (default 60s),
+    // so a delay long enough to make one cold scan run past the next tick
+    // would let two scans overlap and race on managerDeployBlock/
+    // lastScannedBlock instead of just being slow. 50ms x a worst-case
+    // ~600 windows is ~30s, leaving headroom under the default 60s
+    // interval. Not measured against this node's actual rate limit
+    // threshold -- if scanIncomplete still fires regularly, raise this
+    // together with pollIntervalMs (or add an in-flight guard) rather than
+    // raising it alone.
     const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs], {
       fromBlock: managerDeployBlock,
       stopOnEmptyWindow: false,
       maxWindows: neededWindows,
+      delayMs: 50,
       onError: (from, to, err) => {
         scanIncomplete = true
         console.warn(`[InstanceRegistry] getLogs failed for ${from}..${to} during cold scan (peer list may be incomplete): ${(err as any)?.message ?? err}`)

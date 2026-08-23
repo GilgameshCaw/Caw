@@ -116,6 +116,39 @@ describe('scanLogsBackward — sparse-scatter fix', () => {
     const logs = await scanLogsBackward(provider, ADDR, TOPICS, { chunkBlocks: 10_000 })
     expect(logs.map((l: any) => l.blockNumber)).to.deep.equal([95_000])
   })
+
+  it('delayMs (default 0) does not add wall-clock time for existing callers', async () => {
+    const provider = makeProvider({
+      head: 30_000,
+      events: [{ block: 25_000 }, { block: 15_000 }, { block: 5_000 }],
+    })
+    const start = Date.now()
+    await scanLogsBackward(provider, ADDR, TOPICS, { chunkBlocks: 10_000, fromBlock: 0, stopOnEmptyWindow: false })
+    const elapsed = Date.now() - start
+    // 3 windows, no delayMs specified -- should complete near-instantly
+    // (fake provider has no real I/O latency). Generous bound to avoid
+    // flaking on a loaded CI box while still catching a regression that
+    // accidentally defaults delayMs to something nonzero.
+    expect(elapsed).to.be.lessThan(50)
+  })
+
+  it('delayMs spaces out windows by the given amount', async () => {
+    const provider = makeProvider({
+      head: 30_000,
+      events: [{ block: 25_000 }, { block: 15_000 }, { block: 5_000 }],
+    })
+    const start = Date.now()
+    await scanLogsBackward(provider, ADDR, TOPICS, {
+      chunkBlocks: 10_000,
+      fromBlock: 0,
+      stopOnEmptyWindow: false,
+      delayMs: 30,
+    })
+    const elapsed = Date.now() - start
+    // 3 windows -> 2 gaps between them (no delay before the first window,
+    // per the i > 0 guard) -> at least ~60ms of enforced delay.
+    expect(elapsed).to.be.gte(55)
+  })
 })
 
 describe('findContractDeployBlock', () => {
