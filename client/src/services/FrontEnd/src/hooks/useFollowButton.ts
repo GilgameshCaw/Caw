@@ -143,6 +143,18 @@ export function useFollowButton({
     const actionType = pendingActionRef.current
     const effectiveTokenId = activeToken.tokenId
 
+    // Same receiver guard as handleFollowClick, but for the wallet-connect
+    // resubmit path: this effect reads targetUserId from its closure and never
+    // re-checks it. If it was valid at click time but went stale/0 during the
+    // awaiting-connection window, an invalid FOLLOW would still be signed here.
+    if (!targetUserId || targetUserId <= 0) {
+      console.log('[FollowButton] Skipping wallet-connect resubmit — invalid targetUserId', { targetUserId })
+      isSubmittingRef.current = false
+      setAwaitingConnection(false)
+      pendingActionRef.current = null
+      return
+    }
+
     // Clear awaiting state immediately to prevent re-runs
     setAwaitingConnection(false)
     pendingActionRef.current = null
