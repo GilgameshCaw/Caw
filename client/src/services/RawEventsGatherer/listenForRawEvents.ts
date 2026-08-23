@@ -25,12 +25,82 @@ const PROCESS_ACTIONS_IFACE = new Interface([
   'function processActionsERC1271(uint32 validatorId, bytes packedActions, bytes[] sigs, bytes32[] rs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
 ])
 
+// safeProcessActions emits one ActionRejected per rejected action, in the
+// SAME tx receipt as the ActionsProcessed commitment. This is the ground
+// truth for which (senderId, cawonce) pairs in packedActions were rejected
+// by the contract (bad sig, senderId=0/ownerOf revert, cawonce race,
+// insufficient balance, etc.) and therefore never applied to chain state —
+// see CawActions.sol safeProcessActions/​_safeProcessOneGroup. Neither
+// topic is indexed, so senderId/cawonce/reason all live in log.data.
+const ACTION_REJECTED_IFACE = new Interface([
+  'event ActionRejected(uint32 senderId, uint32 cawonce, bytes reason)',
+])
+const ACTION_REJECTED_TOPIC = ACTION_REJECTED_IFACE.getEvent('ActionRejected')!.topicHash
+
 
 // Cache packedActions per txHash so multiple events from the same tx don't
 // re-fetch (rare with the new event since one tx → one event, but cheap to
 // keep and protects against future safeProcessActions partial-success cases).
 const txDataCache = new Map<string, string>()
 const TX_CACHE_MAX = 200
+
+// Cache the rejected-(senderId,cawonce) set per txHash, mirroring txDataCache.
+// A tx can contain many rejected actions from multiple sig groups; we only
+// want to fetch+parse the receipt once per tx even though processEvents/the
+// WS handlers may see multiple ActionsProcessed-derived batches reference it
+// (e.g. sig path + ERC-1271 sibling emitting for the same underlying tx is
+// not expected, but historical + live paths can both touch the same tx during
+// backfill overlap).
+const rejectedSetCache = new Map<string, Set<string>>()
+const REJECTED_CACHE_MAX = 200
+
+function rejectedKey(senderId: number | bigint, cawonce: number | bigint): string {
+  return `${senderId}:${cawonce}`
+}
+
+// Fetch the tx receipt and extract the set of rejected (senderId, cawonce)
+// keys from its ActionRejected logs. Distinguishes "receipt fetch/parse
+// failed" (caller must treat this like fetch_failed — abort and retry,
+// never guess) from "no rejections" (empty set is a perfectly normal,
+// successful result).
+type FetchRejectedSetResult =
+  | { kind: 'ok'; rejected: Set<string> }
+  | { kind: 'fetch_failed' }
+
+async function fetchRejectedSetFromTx(
+  provider: { getTransactionReceipt: (h: string) => Promise<{ logs: ReadonlyArray<{ topics: ReadonlyArray<string>; data: string }> } | null> },
+  txHash: string,
+): Promise<FetchRejectedSetResult> {
+  const hit = rejectedSetCache.get(txHash)
+  if (hit !== undefined) return { kind: 'ok', rejected: hit }
+  let receipt: { logs: ReadonlyArray<{ topics: ReadonlyArray<string>; data: string }> } | null
+  try {
+    receipt = await provider.getTransactionReceipt(txHash)
+  } catch {
+    return { kind: 'fetch_failed' }
+  }
+  if (!receipt) return { kind: 'fetch_failed' }
+  const rejected = new Set<string>()
+  try {
+    for (const log of receipt.logs) {
+      if (!log.topics || log.topics[0] !== ACTION_REJECTED_TOPIC) continue
+      const parsed = ACTION_REJECTED_IFACE.parseLog({ topics: log.topics as string[], data: log.data })
+      if (!parsed) continue
+      rejected.add(rejectedKey(parsed.args.senderId, parsed.args.cawonce))
+    }
+  } catch {
+    // Malformed log data for what looked like an ActionRejected topic --
+    // can't trust a partial rejection set (could under-count and let a
+    // rejected action through as if it succeeded). Treat as fetch failure.
+    return { kind: 'fetch_failed' }
+  }
+  if (rejectedSetCache.size >= REJECTED_CACHE_MAX) {
+    const firstKey = rejectedSetCache.keys().next().value as string | undefined
+    if (firstKey) rejectedSetCache.delete(firstKey)
+  }
+  rejectedSetCache.set(txHash, rejected)
+  return { kind: 'ok', rejected }
+}
 
 // Max blocks per eth_getLogs window. Default 10K suits Infura/Alchemy, but many
 // public Base Sepolia RPCs cap eth_getLogs far lower (sepolia.base.org: 2000).
@@ -265,6 +335,24 @@ export default async function listenForRawEvents(
       const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
       const actions = unpackActions(packedBuf)
 
+      // packedActions is the FULL submitted batch, INCLUDING actions the
+      // contract rejected per-item in safeProcessActions (bad sig, senderId=0/
+      // ownerOf revert, cawonce race, insufficient balance, etc.) — see the
+      // contract's own comment above its ActionsProcessed emit. Cross-reference
+      // ActionRejected logs from the same receipt to know which (senderId,
+      // cawonce) pairs never actually applied to chain state, so we don't
+      // persist a RawEvent for something the contract discarded.
+      const rejectedResult = await fetchRejectedSetFromTx(httpProvider, ev.transactionHash)
+      if (rejectedResult.kind === 'fetch_failed') {
+        // Same load-bearing reasoning as the packedActions fetch_failed path
+        // above: we cannot tell which actions were rejected, so persisting
+        // anything here risks either writing a rejected (phantom) action or
+        // -- if we guessed and skipped a good one -- losing a real action.
+        // Throw to abort the batch and retry rather than guess.
+        throw new Error(`[RawEventsGatherer] Could not fetch/parse ActionRejected logs for tx ${ev.transactionHash} (block ${ev.blockNumber}) — aborting batch to retry`)
+      }
+      const rejectedSet = rejectedResult.rejected
+
       // Build the full batch in one pass. parentHash must chain sequentially,
       // but the inserts themselves don't need to.
       //
@@ -277,6 +365,8 @@ export default async function listenForRawEvents(
       // gate on networkId so we don't pollute our feed with other clients'
       // posts — see domainProcessor.ts.
       const batch: RawEventInput[] = []
+      let skippedCount = 0
+      const skippedKeys: string[] = []
       for (let i = 0; i < actions.length; i++) {
         const a = actions[i]
         const action = {
@@ -291,9 +381,23 @@ export default async function listenForRawEvents(
           text:            decompressEventText(a.text)
         }
         // Offset logIndex by action position within the batch so each action
-        // gets a unique (blockNumber, logIndex, transactionHash) key.
+        // gets a unique (blockNumber, logIndex, transactionHash) key. Derived
+        // from the original loop index i (not a compacted post-skip index) so
+        // keys stay stable across re-index even when some i are skipped below.
         const logIndex = ((ev as any).index ?? (ev as any).logIndex ?? 0) + i
+        // ALWAYS advance the hash chain for every action in packed order,
+        // rejected included — the on-chain batchHash = keccak256(packedActions)
+        // commits to the FULL batch in packed order, and this local parentHash
+        // chain must mirror that ordering or it diverges from the on-chain
+        // commitment.
         lastHash = hashNext(lastHash, action)
+        if (rejectedSet.has(rejectedKey(a.senderId, a.cawonce))) {
+          // Contract rejected this action -- it never took effect on-chain,
+          // so it must not become a processable RawEvent downstream.
+          skippedCount++
+          skippedKeys.push(rejectedKey(a.senderId, a.cawonce))
+          continue
+        }
         batch.push({
           chainId:         config.chainId,
           blockNumber:     ev.blockNumber,
@@ -304,6 +408,10 @@ export default async function listenForRawEvents(
           topics:          ev.topics,
           contractAddress: ev.address
         })
+      }
+
+      if (skippedCount > 0) {
+        console.log(`[RawEventsGatherer] Skipped ${skippedCount} contract-rejected action(s) in tx ${ev.transactionHash} (senderId:cawonce = ${skippedKeys.join(', ')})`)
       }
 
       if (config.rawEventsProvider.storeBatch) {
@@ -438,9 +546,23 @@ export default async function listenForRawEvents(
           const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
           const wsActions = unpackActions(packedBuf)
 
+          // Cross-reference ActionRejected logs from the same receipt — see
+          // processEvents() for the full rationale. Same no-cursor-to-protect
+          // reasoning as the packedActions fetch above: on failure, skip this
+          // one WS event rather than throw; the HTTP poller's own fetch of
+          // this tx will retry correctly if it was a genuine RPC hiccup.
+          const rejectedResult = await fetchRejectedSetFromTx(httpProvider, ev.log.transactionHash)
+          if (rejectedResult.kind !== 'ok') {
+            console.warn(`[RawEventsGatherer] WS: could not fetch ActionRejected logs for tx ${ev.log.transactionHash} — skipping (HTTP poller will retry if this was an RPC error)`)
+            return
+          }
+          const wsRejectedSet = rejectedResult.rejected
+
           // Build batch, then either bulk-store or fall back to per-row.
           // Same pattern as processEvents() — parentHash chain stays sequential.
           const batch: RawEventInput[] = []
+          let wsSkippedCount = 0
+          const wsSkippedKeys: string[] = []
           for (let i = 0; i < wsActions.length; i++) {
             const a = wsActions[i]
             // Cross-client ingest — see processEvents() for rationale.
@@ -456,7 +578,14 @@ export default async function listenForRawEvents(
               text:            decompressEventText(a.text)
             }
             const logIndex = (ev.log.index ?? 0) + i
+            // ALWAYS advance the hash chain, rejected included — see
+            // processEvents() for why this must mirror on-chain batchHash order.
             lastHash = hashNext(lastHash, action)
+            if (wsRejectedSet.has(rejectedKey(a.senderId, a.cawonce))) {
+              wsSkippedCount++
+              wsSkippedKeys.push(rejectedKey(a.senderId, a.cawonce))
+              continue
+            }
             batch.push({
               chainId:         config.chainId,
               blockNumber:     ev.log.blockNumber,
@@ -467,6 +596,10 @@ export default async function listenForRawEvents(
               topics:          [ ...ev.log.topics ] ,
               contractAddress: ev.log.address
             })
+          }
+
+          if (wsSkippedCount > 0) {
+            console.log(`[RawEventsGatherer] Skipped ${wsSkippedCount} contract-rejected action(s) in tx ${ev.log.transactionHash} (senderId:cawonce = ${wsSkippedKeys.join(', ')})`)
           }
 
           if (config.rawEventsProvider.storeBatch) {
@@ -507,7 +640,19 @@ export default async function listenForRawEvents(
             const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
             const wsActions = unpackActions(packedBuf)
 
+            // Cross-reference ActionRejected logs from the same receipt — see
+            // processEvents() for the full rationale. No cursor to protect
+            // here either; skip this one event on failure rather than throw.
+            const rejectedResult = await fetchRejectedSetFromTx(httpProvider, ev.log.transactionHash)
+            if (rejectedResult.kind !== 'ok') {
+              console.warn(`[RawEventsGatherer] WS ERC-1271: could not fetch ActionRejected logs for tx ${ev.log.transactionHash} — skipping (HTTP poller will retry if this was an RPC error)`)
+              return
+            }
+            const wsRejectedSet = rejectedResult.rejected
+
             const batch: RawEventInput[] = []
+            let wsSkippedCount = 0
+            const wsSkippedKeys: string[] = []
             for (let i = 0; i < wsActions.length; i++) {
               const a = wsActions[i]
               const action = {
@@ -522,7 +667,14 @@ export default async function listenForRawEvents(
                 text:            decompressEventText(a.text)
               }
               const logIndex = (ev.log.index ?? 0) + i
+              // ALWAYS advance the hash chain, rejected included — see
+              // processEvents() for why this must mirror on-chain batchHash order.
               lastHash = hashNext(lastHash, action)
+              if (wsRejectedSet.has(rejectedKey(a.senderId, a.cawonce))) {
+                wsSkippedCount++
+                wsSkippedKeys.push(rejectedKey(a.senderId, a.cawonce))
+                continue
+              }
               batch.push({
                 chainId:         config.chainId,
                 blockNumber:     ev.log.blockNumber,
@@ -533,6 +685,10 @@ export default async function listenForRawEvents(
                 topics:          [ ...ev.log.topics ],
                 contractAddress: ev.log.address
               })
+            }
+
+            if (wsSkippedCount > 0) {
+              console.log(`[RawEventsGatherer] Skipped ${wsSkippedCount} contract-rejected action(s) in tx ${ev.log.transactionHash} (senderId:cawonce = ${wsSkippedKeys.join(', ')})`)
             }
 
             if (config.rawEventsProvider.storeBatch) {
