@@ -163,4 +163,45 @@ describe('findContractDeployBlock', () => {
     const block = await findContractDeployBlock(provider, '0xManager', 100_000)
     expect(block).to.equal(0)
   })
+
+  it('re-checks a 0x-at-head response before concluding undeployed -- recovers from a single flaky reply', async () => {
+    // Live regression: a transient upstream blip returning '0x' for a
+    // contract that genuinely exists caused managerDeployBlock to resolve
+    // to 0, which then made InstanceRegistryService scan the entire chain
+    // history (1000+ windows) instead of the real ~7-window range. The
+    // fix re-checks getCode once before accepting '0x' as "never deployed".
+    let headCallCount = 0
+    const flaky = {
+      async getBlockNumber() { return 100_000 },
+      async getCode(_addr: string, block: number) {
+        if (block === 100_000) {
+          headCallCount++
+          // First call: simulate the transient blip (empty code).
+          // Second call: the real answer -- contract exists.
+          return headCallCount === 1 ? '0x' : '0xdeadbeef'
+        }
+        return block >= 42_000 ? '0xdeadbeef' : '0x'
+      },
+    } as any
+    const block = await findContractDeployBlock(flaky, '0xManager', 100_000)
+    expect(headCallCount).to.equal(2)
+    expect(block).to.equal(42_000)
+  })
+
+  it('still returns 0 when both head checks agree the contract is genuinely undeployed', async () => {
+    const provider = makeProvider({ head: 100_000, events: [], deployBlock: 200_000 })
+    let getCodeCalls = 0
+    const wrapped = {
+      ...provider,
+      async getCode(addr: string, block: number) {
+        getCodeCalls++
+        return provider.getCode(addr, block)
+      },
+    }
+    const block = await findContractDeployBlock(wrapped, '0xManager', 100_000)
+    expect(block).to.equal(0)
+    // Two calls at head (both '0x'), no binary search since the sanity
+    // check short-circuits before the loop.
+    expect(getCodeCalls).to.equal(2)
+  })
 })

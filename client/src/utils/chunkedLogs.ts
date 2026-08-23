@@ -221,7 +221,22 @@ export async function findContractDeployBlock(
   // Sanity check: contract must currently have code. If it doesn't, the
   // address was never deployed (or self-destructed) — return 0 so the
   // caller can decide what to do.
-  const headCode = await provider.getCode(address, head)
+  //
+  // Confirmed live: a single '0x' response here isn't reliable enough to
+  // conclude "never deployed" -- an RPC hiccup (stale/lagging node,
+  // momentary bad response) can return the same shape as a genuinely
+  // undeployed contract, and the only caller of this function
+  // (InstanceRegistryService) treats a 0 return as "deploy block is
+  // genesis" and scans the entire chain history as a result. Re-checking
+  // once before accepting '0x' costs one extra eth_getCode call in the
+  // common case (contract exists, first call already returns real code)
+  // and catches the transient-blip case without adding real latency to
+  // the genuinely-undeployed case (rare, and this function is only called
+  // once per process lifetime while managerDeployBlock is unresolved).
+  let headCode = await provider.getCode(address, head)
+  if (!headCode || headCode === '0x') {
+    headCode = await provider.getCode(address, head)
+  }
   if (!headCode || headCode === '0x') return 0
 
   // Standard binary search for the leftmost block where code !== '0x'.
