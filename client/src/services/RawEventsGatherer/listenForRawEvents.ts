@@ -1,6 +1,6 @@
 // src/services/RawEventsGatherer/listenForRawEvents.ts
 import { ContractEventPayload, WebSocketProvider, Contract, Interface, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
-import type { Log } from '@ethersproject/abstract-provider'
+import type { Log } from 'ethers'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { makeFallbackJsonRpcProvider, makeVerifiedFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsForward } from '../../utils/chunkedLogs'
@@ -265,7 +265,7 @@ export default async function listenForRawEvents(
           transactionHash: ev.transactionHash,
           parentHash:      lastHash,
           data:            action,
-          topics:          ev.topics,
+          topics:          [ ...ev.topics ],
           contractAddress: ev.address
         })
       }
