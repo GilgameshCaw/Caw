@@ -10,6 +10,31 @@ import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
 import { recordIndexerProgress } from '../../utils/indexerHealth'
 
+/**
+ * Decide the block range for one poll.
+ *
+ * `headMargin` keeps the request below the head that getBlockNumber
+ * reported: under a FallbackProvider (quorum 1) that call and the
+ * following getLogs can be served by different upstreams, and the one
+ * answering getLogs may be a block behind — which the provider rejects
+ * as -32602 "block range extends beyond current head block".
+ *
+ * Returns null when there is nothing to fetch. The margin has to apply
+ * to that decision as well as to `toBlock`: comparing lastSyncedBlock
+ * against the unadjusted head would let `from > to` through whenever the
+ * cursor sits inside the margin.
+ */
+export function computePollRange(
+  currentBlock: number,
+  lastSyncedBlock: number,
+  headMargin: number,
+  maxPollBlocks: number,
+): { head: number; toBlock: number } | null {
+  const head = currentBlock - headMargin
+  if (head <= lastSyncedBlock) return null
+  return { head, toBlock: Math.min(head, lastSyncedBlock + maxPollBlocks) }
+}
+
 // Calldata-decode interface. ActionsProcessed events now carry only
 // (networkId, validatorId, actionCount, batchHash) — the actual packedActions
 // bytes live in the originating tx's calldata. We fetch tx.input via
@@ -612,7 +637,11 @@ export default async function listenForRawEvents(
   // removes that class at the skew this codebase can currently observe; a
   // wider skew would still overshoot, and the underlying issue is mixing
   // heads from providers that don't agree.
-  const HEAD_MARGIN_BLOCKS = 1
+  // Default 1. Operators whose upstreams drift further apart can raise it;
+  // 0 restores the previous behaviour of polling to the head itself.
+  const envHeadMargin = Number(process.env.RAW_EVENTS_HEAD_MARGIN)
+  const HEAD_MARGIN_BLOCKS =
+    Number.isFinite(envHeadMargin) && envHeadMargin >= 0 ? envHeadMargin : 1
   // 30s default — actions are already shown in the feed optimistically as
   // soon as the user signs (PostForm's optimistic insert path), so the
   // indexer only sets the SUCCESS status flag a beat later. Stretching
@@ -635,9 +664,9 @@ export default async function listenForRawEvents(
     if (isStopped) return
     try {
       const currentBlock = await httpProvider.getBlockNumber()
-      const head = currentBlock - HEAD_MARGIN_BLOCKS
-      if (head > lastSyncedBlock) {
-        const toBlock = Math.min(head, lastSyncedBlock + MAX_POLL_BLOCKS)
+      const range = computePollRange(currentBlock, lastSyncedBlock, HEAD_MARGIN_BLOCKS, MAX_POLL_BLOCKS)
+      if (range) {
+        const { head, toBlock } = range
         if (toBlock < head) {
           console.log(`[RawEventsGatherer] Catching up: polling ${lastSyncedBlock + 1}..${toBlock} (behind by ${currentBlock - toBlock} blocks)`)
         } else {
