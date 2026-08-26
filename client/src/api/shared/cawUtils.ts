@@ -214,7 +214,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     hasReplied, // Only true if replied AND confirmed
     hasTipped,
     tipPending,
-    tipCount: raw.tipCount ?? 0,
+    tipCount: raw._count?.tips ?? raw.tipCount ?? 0,
     totalTipAmount: raw.totalTipAmount ?? 0,
     replyPending,
     isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
