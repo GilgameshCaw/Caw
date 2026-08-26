@@ -1568,12 +1568,11 @@ async function handleHideAction(
       return
     }
 
-    // Read imageData BEFORE flipping status so we know which URLs were
-    // attached to the post. These get queued for delayed deletion (7-day
-    // grace, see orphanedMedia.ts) so revertable hides don't lose data.
+    // Read target info (including id for pinned caw cleanup) BEFORE flipping
+    // status. ImageData gets queued for delayed deletion (7-day grace).
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { imageData: true },
+      select: { id: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1583,6 +1582,17 @@ async function handleHideAction(
 
     if (result.count > 0) {
       console.log(`[handleHideAction] Hidden caw: user=${senderId} cawonce=${cawonce}`)
+      // If the post was pinned to profile, remove the pin and recompute
+      // pinnedCawCount so the 3/3 slot isn't permanently deadlocked.
+      if (target?.id) {
+        const deletedPin = await tx.pinnedCaw.deleteMany({
+          where: { userId: senderId, cawId: target.id }
+        })
+        if (deletedPin.count > 0) {
+          await recomputePinnedCount(tx, senderId)
+          console.log(`[handleHideAction] Unpinned hidden caw: user=${senderId} cawId=${target.id}`)
+        }
+      }
       // Best-effort, fire-and-forget — Redis errors don't fail the hide.
       markOrphansInImageData(target?.imageData).catch(e =>
         console.warn('[handleHideAction] markOrphansInImageData failed:', e)
@@ -1657,10 +1667,10 @@ async function handlePinAction(
 
   const target = await tx.caw.findUnique({
     where: { id: cawId },
-    select: { userId: true },
+    select: { userId: true, status: true },
   })
-  if (!target) {
-    console.warn(`[handlePinAction] Caw not found: id=${cawId}`)
+  if (!target || target.status !== 'SUCCESS') {
+    console.warn(`[handlePinAction] Caw not found or not active: id=${cawId}`)
     return
   }
   if (target.userId !== senderId) {
