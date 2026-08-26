@@ -27,7 +27,12 @@ type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
  */
 export async function recomputePinnedCount(tx: Tx, userId: number): Promise<void> {
   const n = await tx.pinnedCaw.count({
-    where: { userId, pending: false, pendingUnpin: false },
+    where: {
+      userId,
+      pending: false,
+      pendingUnpin: false,
+      caw: { status: 'SUCCESS' },
+    },
   })
   await tx.user.update({
     where: { tokenId: userId },

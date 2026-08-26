@@ -248,18 +248,21 @@ router.get('/', async (req, res) => {
         // Suppress rows with a pending xpi: in flight so the optimistic
         // unpin is reflected on refresh, not just on the FE in-memory
         // state. The indexer deletes the row on confirm.
-        where: { userId: targetUserId, pendingUnpin: false },
+        // Also only fetch pins for active caws so ghost pins don't occlude visible ones.
+        where: {
+          userId: targetUserId,
+          pendingUnpin: false,
+          caw: { status: 'SUCCESS' },
+        },
         orderBy: { createdAt: 'desc' },
         take: 3,
         include: {
           caw: { include: getCawIncludeConfig({ currentUserId }) },
         },
       })
-      // Filter to caws still in SUCCESS status (a hidden / failed caw
-      // shouldn't show on the profile even if pinned).
       pinnedCaws = pins
         .map(p => p.caw)
-        .filter(c => c && c.status === 'SUCCESS')
+        .filter((c): c is NonNullable<typeof c> => c != null)
       if (pinnedCaws.length > 0) {
         const ids = pinnedCaws.map(c => c.id)
         if (where.AND) where.AND.push({ id: { notIn: ids } })
