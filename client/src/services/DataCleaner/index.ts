@@ -491,14 +491,45 @@ async function cleanupPendingCaws() {
               originalCawId: null,
             })
 
-            // If this was a recaw, decrement the parent's recawCount
-            if (pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+            // If this was a recaw or quote, decrement the parent's recawCount.
+            // CountManager.onCawCreated bumps recawCount for both RECAW and
+            // quote (CAW with originalCawId) -- the recompute here needs to
+            // match, or quotes swept by this stale-pending path never get
+            // their recawCount contribution restored on later confirm.
+            //
+            // action === 'CAW' && originalCawId is ambiguous between quote
+            // and reply -- actionHandlers.ts's upsert sets originalCawId
+            // unconditionally for both. A Reply row (cawId=parent,
+            // replyCawId=this row) is what actually distinguishes a reply;
+            // check that before treating a CAW row as a quote.
+            let isQuoteNotReply = pendingCaw.action === 'RECAW'
+            if (pendingCaw.action === 'CAW' && pendingCaw.originalCawId) {
+              const ownReplyRow = await prisma.reply.findFirst({
+                where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+                select: { id: true },
+              })
+              isQuoteNotReply = !ownReplyRow
+            }
+            if (isQuoteNotReply && pendingCaw.originalCawId) {
               try {
+                // When recomputing a quote parent's count, exclude any of
+                // its CAW-type children that are actually replies (same
+                // Reply-table distinction as above) so a reply never gets
+                // counted into recawCount alongside real quotes.
+                const replySiblingIds = pendingCaw.action === 'CAW'
+                  ? (await prisma.reply.findMany({
+                      where: { cawId: pendingCaw.originalCawId },
+                      select: { replyCawId: true },
+                    })).map(r => r.replyCawId)
+                  : []
                 const actualRecawCount = await prisma.caw.count({
                   where: {
                     originalCawId: pendingCaw.originalCawId,
-                    action: 'RECAW',
-                    status: 'SUCCESS'
+                    action: pendingCaw.action === 'RECAW' ? 'RECAW' : 'CAW',
+                    status: 'SUCCESS',
+                    ...(pendingCaw.action === 'CAW'
+                      ? { id: { notIn: replySiblingIds.length > 0 ? replySiblingIds : [-1] } }
+                      : {}),
                   }
                 })
                 await prisma.caw.update({
@@ -601,11 +632,35 @@ async function cleanupFailedTxQueue() {
             }
           })
 
-          // Decrement recawCount on parent if this was a pending recaw
-          if (pendingCaw && pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+          // Decrement recawCount on parent if this was a pending recaw or
+          // quote -- see the matching comment on the single-action path
+          // above for why quotes need the same treatment, and why the
+          // Reply-table check is required to tell a quote from a reply.
+          let isQuoteNotReplyBatch = pendingCaw ? pendingCaw.action === 'RECAW' : false
+          if (pendingCaw && pendingCaw.action === 'CAW' && pendingCaw.originalCawId) {
+            const ownReplyRow = await prisma.reply.findFirst({
+              where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+              select: { id: true },
+            })
+            isQuoteNotReplyBatch = !ownReplyRow
+          }
+          if (pendingCaw && isQuoteNotReplyBatch && pendingCaw.originalCawId) {
             try {
+              const replySiblingIdsBatch = pendingCaw.action === 'CAW'
+                ? (await prisma.reply.findMany({
+                    where: { cawId: pendingCaw.originalCawId },
+                    select: { replyCawId: true },
+                  })).map(r => r.replyCawId)
+                : []
               const actualRecawCount = await prisma.caw.count({
-                where: { originalCawId: pendingCaw.originalCawId, action: 'RECAW', status: 'SUCCESS' }
+                where: {
+                  originalCawId: pendingCaw.originalCawId,
+                  action: pendingCaw.action === 'RECAW' ? 'RECAW' : 'CAW',
+                  status: 'SUCCESS',
+                  ...(pendingCaw.action === 'CAW'
+                    ? { id: { notIn: replySiblingIdsBatch.length > 0 ? replySiblingIdsBatch : [-1] } }
+                    : {}),
+                }
               })
               await prisma.caw.update({
                 where: { id: pendingCaw.originalCawId },

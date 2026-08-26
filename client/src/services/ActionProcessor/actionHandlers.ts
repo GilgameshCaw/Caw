@@ -550,10 +550,15 @@ export async function handleRecawAction(
       await countManager.onStatusChanged(tx, 'caw', recawCaw.id, existingRecaw!.status, 'SUCCESS', {
         userId, action: isQuoteRecaw ? 'CAW' : 'RECAW', originalCawId,
       })
-      if (existingRecaw!.status === 'FAILED' && !isQuoteRecaw && originalCawId) {
+      // Restore parent recawCount on FAILED->SUCCESS. Quotes need this
+      // exactly as much as plain RECAWs -- CountManager.onCawCreated bumps
+      // recawCount for both (see above), so excluding quotes here left them
+      // permanently under-counted whenever they'd passed through a FAILED
+      // state (e.g. DataCleaner's stale-pending sweep).
+      if (existingRecaw!.status === 'FAILED' && originalCawId) {
         try {
           const actualRecawCount = await tx.caw.count({
-            where: { originalCawId, action: 'RECAW', status: 'SUCCESS' },
+            where: { originalCawId, action: isQuoteRecaw ? 'CAW' : 'RECAW', status: 'SUCCESS' },
           })
           await tx.caw.update({
             where: { id: originalCawId },

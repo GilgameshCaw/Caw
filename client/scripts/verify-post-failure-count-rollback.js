@@ -225,5 +225,86 @@ onCawCreated({ userId: 1, action: 'CAW', originalCawId: null })
 simulateConcurrentFailureFromTwo(true)
 check('9e: GUARDED pattern decrements cawCount 2 -> 1 on one failed post (correct)', getUser(1).cawCount, 1)
 
-console.log(`\n${13 - failures}/13 passed`)
+// --- DataCleaner's stale-pending recawCount recompute (mirrors the
+//     Reply-table quote-vs-reply distinction added to DataCleaner/index.ts:
+//     Caw.originalCawId is set for BOTH quotes and replies, so recomputing
+//     a parent's recawCount from action==='CAW' children must exclude any
+//     that are actually replies, via the Reply table. ---
+let replyRows = [] // { cawId, replyCawId }
+function addReply(cawId, replyCawId) {
+  replyRows.push({ cawId, replyCawId })
+}
+function isReplyRow(cawId, replyCawId) {
+  return replyRows.some(r => r.cawId === cawId && r.replyCawId === replyCawId)
+}
+
+// Simulates the recompute this PR adds to DataCleaner's stale-pending
+// sweep: given a pendingCaw (action + id + originalCawId), decide whether
+// it's a quote (not a reply) via the Reply table, then recompute the
+// parent's recawCount from actual SUCCESS children, excluding any CAW
+// children that are themselves replies.
+function recomputeParentRecawCount(pendingCaw, allCaws) {
+  const isQuoteNotReply = pendingCaw.action === 'RECAW'
+    ? true
+    : !isReplyRow(pendingCaw.originalCawId, pendingCaw.id)
+  if (!isQuoteNotReply || !pendingCaw.originalCawId) return null
+
+  const children = allCaws.filter(c =>
+    c.originalCawId === pendingCaw.originalCawId &&
+    c.status === 'SUCCESS' &&
+    c.action === pendingCaw.action
+  )
+  const countedChildren = pendingCaw.action === 'CAW'
+    ? children.filter(c => !isReplyRow(pendingCaw.originalCawId, c.id))
+    : children
+  return countedChildren.length
+}
+
+// 10) Reply swept by stale-pending: must NOT be treated as a quote, so the
+//     parent's recawCount recompute is skipped entirely for it (recawCount
+//     tracks quotes+recaws, not replies -- a reply's parent gets
+//     commentCount bumped elsewhere, untouched by this path).
+replyRows = []
+addReply(400, 500) // reply row: parent 400, reply-caw 500
+const allCawsReplyCase = [
+  { id: 500, action: 'CAW', originalCawId: 400, status: 'SUCCESS' }, // the reply itself
+]
+check(
+  '10: stale-pending reply is recognized via Reply table and skipped (not treated as a quote)',
+  recomputeParentRecawCount({ id: 500, action: 'CAW', originalCawId: 400 }, allCawsReplyCase),
+  null
+)
+
+// 11) Quote swept by stale-pending: recognized (no Reply row for it), and
+//     recawCount recomputed from actual SUCCESS quote children.
+replyRows = []
+const allCawsQuoteCase = [
+  { id: 501, action: 'CAW', originalCawId: 400, status: 'SUCCESS' }, // the quote itself
+  { id: 502, action: 'CAW', originalCawId: 400, status: 'SUCCESS' }, // a second, unrelated quote
+]
+check(
+  '11: stale-pending quote is recognized (no Reply row) and counted',
+  recomputeParentRecawCount({ id: 501, action: 'CAW', originalCawId: 400 }, allCawsQuoteCase),
+  2
+)
+
+// 12) Mixed case -- the actual bug this PR fixes: a parent has one real
+//     quote and one reply, both stored as action==='CAW' with the same
+//     originalCawId (per the audited actionHandlers.ts behavior). Without
+//     the Reply-table exclusion, recomputing from the quote's stale-pending
+//     sweep would count the reply too, inflating recawCount to 2 instead
+//     of the correct 1.
+replyRows = []
+addReply(600, 701) // caw 701 is a reply to parent 600, not a quote
+const allCawsMixed = [
+  { id: 700, action: 'CAW', originalCawId: 600, status: 'SUCCESS' }, // real quote
+  { id: 701, action: 'CAW', originalCawId: 600, status: 'SUCCESS' }, // reply, same action+originalCawId shape
+]
+check(
+  '12: mixed quote+reply under one parent -- recompute counts the quote only, excludes the reply',
+  recomputeParentRecawCount({ id: 700, action: 'CAW', originalCawId: 600 }, allCawsMixed),
+  1
+)
+
+console.log(`\n${16 - failures}/16 passed`)
 process.exit(failures > 0 ? 1 : 0)
