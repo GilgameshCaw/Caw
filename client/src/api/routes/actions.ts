@@ -1108,6 +1108,21 @@ router.post('/', async (req, res) => {
             })
           } catch (err) {
             console.error('Failed to optimistically increment counts via CountManager:', err)
+            // Don't leave this row silently PENDING with a count that never
+            // landed -- there's no field marking whether the optimistic
+            // increment above succeeded, so a later PENDING->SUCCESS
+            // transition (actionHandlers.ts) has no way to tell it needs to
+            // recompute rather than trust the count is already there.
+            // Falling back to FAILED here routes this caw through the
+            // existing FAILED->SUCCESS recovery path instead (which already
+            // recomputes parent.recawCount from a live COUNT(*) when the
+            // chain later confirms it), rather than inventing a second
+            // recovery mechanism for this one failure mode.
+            try {
+              await prisma.caw.update({ where: { id: caw.id }, data: { status: 'FAILED' } })
+            } catch (statusErr) {
+              console.error(`Failed to mark caw ${caw.id} FAILED after count increment failure:`, statusErr)
+            }
           }
         }
 
@@ -2317,6 +2332,15 @@ router.post('/batch', async (req, res) => {
               })
             } catch (err) {
               console.warn(`[Actions/batch] onCawCreated failed for ${d.senderId}:${d.cawonce}:`, (err as any)?.message)
+              // Same fallback as the single-action path (actions.ts, single
+              // submit handler): route this caw through the existing
+              // FAILED->SUCCESS recovery instead of leaving it PENDING with
+              // no record that its optimistic increment never landed.
+              try {
+                await tx.caw.update({ where: { id: caw.id }, data: { status: 'FAILED' } })
+              } catch (statusErr) {
+                console.error(`[Actions/batch] Failed to mark caw ${caw.id} FAILED after count increment failure:`, statusErr)
+              }
             }
           }
 
