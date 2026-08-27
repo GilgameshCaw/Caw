@@ -106,38 +106,43 @@ export const useActiveToken = () =>
     const named = allTokens.filter(t => !!t.username)
     if (named.length === 0) return undefined
 
-    // The active token MUST be one owned by the connected wallet (lastAddress).
-    // lastAddress only changes on wallet-connect, so it's the ownership anchor.
-    // If no wallet is connected, there is no "my profile" to surface — return
-    // undefined rather than defaulting to a token in the store, which could be
-    // some OTHER address's profile the user merely browsed to.
+    // Compute the connected wallet's own tokens up front so activeTokenId
+    // selection can be CONSTRAINED to them. lastAddress only changes on
+    // wallet-connect, so it's the ownership anchor.
     const address = state.lastAddress as Address | undefined
-    if (!address) return undefined
+    const normalizedAddress = address?.toLowerCase()
+    const tokensForAddress = normalizedAddress
+      ? (Object.entries(state.tokensByAddress)
+          .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || [])
+          .filter(t => !!t.username)
+      : []
 
-    const normalizedAddress = address.toLowerCase()
-    const tokensForAddress = (Object.entries(state.tokensByAddress)
-      .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || [])
-      .filter(t => !!t.username)
-
-    // Connected wallet's own tokens haven't hydrated yet → loading, NOT a
-    // stranger's profile. Returning `named[0]` here (the first token ANYWHERE
-    // in the store) was the bug: after browsing to another user's profile, a
-    // race where the wallet's own rows lagged would surface that stranger's
-    // token as "your" active profile until a reload won the race.
-    if (tokensForAddress.length === 0) return undefined
-
-    // Prefer the global activeTokenId, then the per-address active id, then the
-    // wallet's first named token — but ALWAYS constrained to tokensForAddress,
-    // so selection can never escape to a token this wallet doesn't own.
+    // If there's a global activeTokenId, use it — but ONLY if it resolves to a
+    // token the connected wallet actually owns. Matching against every named
+    // token (the old behavior) could surface a token from ANOTHER address the
+    // user had merely browsed to — e.g. a stale activeTokenId pointing at a
+    // stranger's profile would show that stranger as your active token.
     if (state.activeTokenId !== undefined) {
-      const globalMatch = tokensForAddress.find(t => t.tokenId === state.activeTokenId)
-      if (globalMatch) return globalMatch
-      // else fall through (points at another address's token, or a ghost)
+      const ownedMatch = tokensForAddress.find(t => t.tokenId === state.activeTokenId)
+      if (ownedMatch) return ownedMatch
+      // else fall through (global id missing, points at a stranger, or a ghost)
+    }
+
+    // No connected wallet at all — surface any named profile so a pre-connect /
+    // browsing user still sees content (unchanged from prior behavior).
+    if (!address) {
+      return named[0]
     }
 
     const activeTokenIdForAddress = Object.entries(state.activeTokenIdByAddress)
       .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1]
 
+    // The active token for this address, or the wallet's first NAMED token.
+    // Deliberately NO `|| named[0]` fallback: when a wallet IS connected but its
+    // own rows haven't loaded yet, we return undefined rather than the first
+    // token anywhere — that trailing fallback was the stranger-leak (it showed
+    // another address's profile as yours during a hydration race). undefined
+    // here is the correct "no owned profile" answer for AuthGate.
     return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0]
   }
 );
