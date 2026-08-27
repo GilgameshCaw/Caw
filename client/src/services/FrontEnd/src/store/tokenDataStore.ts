@@ -106,33 +106,39 @@ export const useActiveToken = () =>
     const named = allTokens.filter(t => !!t.username)
     if (named.length === 0) return undefined
 
-    // If there's a global activeTokenId, use it — but only if it resolves to a
-    // NAMED token. A usernameless match falls through to real-token selection.
-    if (state.activeTokenId !== undefined) {
-      const token = named.find(t => t.tokenId === state.activeTokenId)
-      if (token) return token
-      // else fall through (global id missing, or points at a usernameless ghost)
-    }
-
-    // Fallback: Try to use lastAddress to find a default token
+    // The active token MUST be one owned by the connected wallet (lastAddress).
+    // lastAddress only changes on wallet-connect, so it's the ownership anchor.
+    // If no wallet is connected, there is no "my profile" to surface — return
+    // undefined rather than defaulting to a token in the store, which could be
+    // some OTHER address's profile the user merely browsed to.
     const address = state.lastAddress as Address | undefined
-    if (!address) {
-      return named[0]
-    }
+    if (!address) return undefined
 
-    // Normalize address comparison (case-insensitive)
     const normalizedAddress = address.toLowerCase()
     const tokensForAddress = (Object.entries(state.tokensByAddress)
       .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || [])
       .filter(t => !!t.username)
 
+    // Connected wallet's own tokens haven't hydrated yet → loading, NOT a
+    // stranger's profile. Returning `named[0]` here (the first token ANYWHERE
+    // in the store) was the bug: after browsing to another user's profile, a
+    // race where the wallet's own rows lagged would surface that stranger's
+    // token as "your" active profile until a reload won the race.
+    if (tokensForAddress.length === 0) return undefined
+
+    // Prefer the global activeTokenId, then the per-address active id, then the
+    // wallet's first named token — but ALWAYS constrained to tokensForAddress,
+    // so selection can never escape to a token this wallet doesn't own.
+    if (state.activeTokenId !== undefined) {
+      const globalMatch = tokensForAddress.find(t => t.tokenId === state.activeTokenId)
+      if (globalMatch) return globalMatch
+      // else fall through (points at another address's token, or a ghost)
+    }
+
     const activeTokenIdForAddress = Object.entries(state.activeTokenIdByAddress)
       .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1]
 
-    // Find the active token for this address, or default to first NAMED token
-    // for this address, or the first NAMED token anywhere (so a wallet whose own
-    // rows haven't hydrated yet still resolves to a real profile).
-    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0] || named[0];
+    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0]
   }
 );
 
@@ -151,15 +157,19 @@ export const useActiveToken = () =>
 export const useActiveTokenOwnerAddress = (): string | undefined =>
   useTokenDataStore(state => {
     if (!state.hasHydrated) return undefined
+    // The active token's owner is the connected wallet (lastAddress). Only honor
+    // a global activeTokenId if that id is actually one of lastAddress's tokens —
+    // otherwise a stale/browsed activeTokenId pointing at another user's profile
+    // would report THAT user's address as the active owner (same cross-address
+    // leak fixed in useActiveToken).
+    const last = state.lastAddress?.toLowerCase()
     const activeId = state.activeTokenId
-    // Find which owner address holds the active token id.
-    if (activeId !== undefined) {
-      for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
-        if (tokens.some(t => t.tokenId === activeId)) return addr.toLowerCase()
-      }
+    if (activeId !== undefined && last) {
+      const lastTokens = Object.entries(state.tokensByAddress)
+        .find(([addr]) => addr.toLowerCase() === last)?.[1] || []
+      if (lastTokens.some(t => t.tokenId === activeId)) return last
     }
-    // No explicit active id: fall back to lastAddress (its default-token owner).
-    return state.lastAddress?.toLowerCase()
+    return last
   });
 
 export const useTokenDataStore = create<TokenDataStore>()(
