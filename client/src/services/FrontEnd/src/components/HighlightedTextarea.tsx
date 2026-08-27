@@ -83,12 +83,15 @@ interface HighlightedTextareaProps {
 // resets textarea.value back to the frozen prop after EVERY composition
 // keystroke on Blink — wiping the 変換中 text and killing the IME session,
 // which made Japanese input impossible on Chrome/Edge (measured on the live
-// bundle, 2026-07-30). Going uncontrolled on WebKit/Blink breaks their IME,
-// so the Gecko gate itself stays — exported because PostForm gates its
-// composition-freeze to Gecko with the same test.
+// bundle, 2026-07-30). Going uncontrolled was long believed to break the IME
+// on WebKit and Blink; measured on an iPhone 2026-08-26, it does not on iOS.
+// Exported because PostForm gates its composition-freeze with the same tests.
 // Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
 export const IS_GECKO =
   typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
+
+export const IS_IOS =
+  typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigator.userAgent)
 
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
@@ -571,10 +574,10 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         }}
         rows={rows}
         placeholder={placeholder}
-        // Uncontrolled during composition ONLY on Firefox (see IS_GECKO): there
-        // React's mid-composition value write aborts the IME. On WebKit/Blink we
-        // keep it controlled — going uncontrolled there breaks their IME.
-        value={isComposing && IS_GECKO ? undefined : value}
+        // Uncontrolled during composition on Firefox (IS_GECKO) and iOS WebKit
+        // (IS_IOS): there React's mid-composition value write aborts the IME.
+        // Both measured on device. On Blink we keep it controlled.
+        value={isComposing && (IS_GECKO || IS_IOS) ? undefined : value}
         onChange={onChange}
         onCompositionStart={handleCompositionStartInternal}
         onCompositionEnd={handleCompositionEndInternal}
@@ -590,7 +593,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       />
 
       {/* Placeholder overlay when empty */}
-      {!value && placeholder && (
+      {!value && !isComposing && placeholder && (
         <div
           className={`absolute pointer-events-none ${textSizeClass} ${
             isDark ? 'text-gray-500' : 'text-gray-600'
