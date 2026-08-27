@@ -332,6 +332,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
           ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
           : false,
         poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
+        _count: { select: { tips: { where: { pending: false } } } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }
