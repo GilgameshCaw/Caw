@@ -82,7 +82,7 @@ async function fetchParentCawInfo(
   const data = await resp.json() as { userId?: number; cawonce?: number }
   const receiverId = data.userId
   const receiverCawonce = data.cawonce
-  if (!receiverId || !receiverCawonce) {
+  if (receiverId == null || receiverCawonce == null) {
     throw new Error(`Parent caw ${parentCawId} missing userId or cawonce`)
   }
   return { receiverId, receiverCawonce }

@@ -2460,7 +2460,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         destructive
         onConfirm={async () => {
           const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
-          if (!effectiveTokenId || !useItem.cawonce) return
+          if (!effectiveTokenId || useItem.cawonce == null) return
           // Optimistically hide before submitting so the deleter sees the
           // post disappear immediately. The on-chain hide takes 5–60s to
           // index; without this, the post stays visible to them in that

@@ -377,7 +377,7 @@ const Notifications: React.FC = () => {
 
     switch (actionType) {
       case 0: // caw (post or reply)
-        if (payload.receiverId && payload.receiverCawonce) {
+        if (payload.receiverId != null && payload.receiverCawonce != null) {
           return {
             title: targetCaw ? `Reply to @${targetCaw.authorUsername} failed` : 'Reply failed',
             snippet: userSnippet || undefined,
@@ -882,10 +882,10 @@ const Notifications: React.FC = () => {
     if (notification.type === 'ACTION_FAILED') {
       const payload = notification.actionPayload
       if (!payload) return null
-      if (payload.receiverId && payload.receiverCawonce && payload.receiverUsername) {
+      if (payload.receiverId != null && payload.receiverCawonce != null && payload.receiverUsername) {
         return `/users/${payload.receiverUsername}`
       }
-      if (payload.receiverId && payload.receiverCawonce) {
+      if (payload.receiverId != null && payload.receiverCawonce != null) {
         return `/users/${payload.receiverId}`
       }
       return null
