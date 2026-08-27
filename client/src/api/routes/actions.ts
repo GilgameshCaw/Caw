@@ -918,13 +918,19 @@ router.post('/', async (req, res) => {
       try {
         const isUnpin = plaintext.startsWith('xpi:')
         const prefix = isUnpin ? 'xpi:' : 'pi:'
-        const cawId = parseInt(plaintext.replace(prefix, '').trim())
-        if (!isNaN(cawId) && cawId > 0) {
+        const cawonce = parseInt(plaintext.replace(prefix, '').trim())
+        if (!isNaN(cawonce) && cawonce >= 0) {
+          // Resolve the sender's own caw by the portable (userId, cawonce)
+          // key. The on-chain action text now carries cawonce (not a node-
+          // local DB id), matching like/recaw/tip. Ownership is implicit:
+          // we only ever look up a caw under data.senderId, so this can't
+          // pin someone else's post.
           const target = await prisma.caw.findUnique({
-            where: { id: cawId },
-            select: { userId: true },
+            where: { userId_cawonce: { userId: data.senderId, cawonce } },
+            select: { id: true },
           })
-          if (target && target.userId === data.senderId) {
+          if (target) {
+            const cawId = target.id
             if (isUnpin) {
               // Mark the existing row pendingUnpin so the read path
               // suppresses it; indexer deletes on confirm.
@@ -948,7 +954,7 @@ router.post('/', async (req, res) => {
               console.log(`[Actions] Optimistic pin: user=${data.senderId} caw=${cawId}`)
             }
           } else {
-            console.log(`[Actions] Pin/unpin skipped: target ${cawId} not owned by sender ${data.senderId}`)
+            console.log(`[Actions] Pin/unpin skipped: no caw for sender ${data.senderId} cawonce ${cawonce}`)
           }
         }
       } catch (pinErr) {

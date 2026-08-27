@@ -1549,24 +1549,26 @@ async function handlePinAction(
   senderId: number
 ): Promise<void> {
   const text: string = rawAction.text || ''
-  const cawId = parseInt(text.replace('pi:', '').trim())
-  if (isNaN(cawId) || cawId <= 0) {
-    console.warn('[handlePinAction] Invalid cawId:', text)
+  const cawonce = parseInt(text.replace('pi:', '').trim())
+  if (isNaN(cawonce) || cawonce < 0) {
+    console.warn('[handlePinAction] Invalid cawonce:', text)
     return
   }
 
-  const target = await tx.caw.findUnique({
-    where: { id: cawId },
-    select: { userId: true },
-  })
-  if (!target) {
-    console.warn(`[handlePinAction] Caw not found: id=${cawId}`)
-    return
-  }
-  if (target.userId !== senderId) {
-    console.warn(`[handlePinAction] User ${senderId} cannot pin caw ${cawId} owned by ${target.userId}`)
-    return
-  }
+  // Resolve the sender's own caw by the portable (userId, cawonce) key
+  // instead of a raw local DB id. pin/unpin used to broadcast the origin
+  // node's primary key (pi:{cawId}), which is meaningless on any mirror —
+  // like/recaw/tip already key by (receiverId, receiverCawonce). Using
+  // findCawId here:
+  //   - makes ownership implicit — it only ever resolves the sender's own
+  //     caw, so User A can't pin User B's post via a crafted action;
+  //   - makes cross-mirror case (b) work — the mirror resolves the same
+  //     on-chain caw to ITS OWN local id;
+  //   - routes a not-yet-indexed target through CawNotFoundError, which the
+  //     top-level handler treats as a quiet, retryable orphan that self-
+  //     heals once the caw lands — replacing the old warn+return that left
+  //     a permanent orphan for cleanupOrphanActions to re-dispatch forever.
+  const cawId = await findCawId(cawonce, senderId)
 
   // Two cases the indexer needs to handle:
   //   (a) /api/actions already wrote a pending row → flip pending=false.
@@ -1629,10 +1631,25 @@ async function handleUnpinAction(
   senderId: number
 ): Promise<void> {
   const text: string = rawAction.text || ''
-  const cawId = parseInt(text.replace('xpi:', '').trim())
-  if (isNaN(cawId) || cawId <= 0) {
-    console.warn('[handleUnpinAction] Invalid cawId:', text)
+  const cawonce = parseInt(text.replace('xpi:', '').trim())
+  if (isNaN(cawonce) || cawonce < 0) {
+    console.warn('[handleUnpinAction] Invalid cawonce:', text)
     return
+  }
+
+  // Portable resolution, mirroring handlePinAction. Unlike pin, a target
+  // this node hasn't indexed is a genuine no-op: there can be no pin row to
+  // delete, and nothing to converge to. So a missing caw resolves quietly
+  // rather than throwing a retryable orphan.
+  let cawId: number
+  try {
+    cawId = await findCawId(cawonce, senderId)
+  } catch (err) {
+    if (err instanceof CawNotFoundError) {
+      console.log(`[handleUnpinAction] No local caw for user=${senderId} cawonce=${cawonce}; nothing to unpin`)
+      return
+    }
+    throw err
   }
 
   const existing = await tx.pinnedCaw.findUnique({

@@ -817,13 +817,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     try {
       if (onChain) {
+        // On-chain pin/unpin must carry the portable cawonce (per-user
+        // action nonce), NOT the node-local DB id — a mirror node can't
+        // resolve another node's primary key. cawonce === 0 is a valid
+        // first post, so guard on null, not falsiness (#81 falsy-trap).
+        const pinCawonce = useItem.cawonce
+        if (pinCawonce == null) {
+          console.warn('[Pin] missing cawonce; skipping on-chain pin for', useItem.id)
+          onPinUpdate?.(useItem.id, !willBePinned)
+          return
+        }
         try {
           await signAndSubmit({
             actionType: 'other',
             senderId: effectiveTokenId,
             receiverId: 0,
             receiverCawonce: 0,
-            text: willBePinned ? `pi:${cawId}` : `xpi:${cawId}`,
+            text: willBePinned ? `pi:${pinCawonce}` : `xpi:${pinCawonce}`,
           })
         } catch (err) {
           console.error('[Pin] on-chain submit failed:', err)
