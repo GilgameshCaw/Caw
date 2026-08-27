@@ -2763,7 +2763,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3 w-full">
             {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              {true ? (
                 <div>
                   {chunkSlices.map((slice, i) => (
                     <React.Fragment key={i}>
@@ -2855,41 +2854,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
                   />
                 </div>
-              ) : (
-                <>
-                  <HighlightedTextarea
-                    value={text}
-                    composedValueRef={lastComposedRef}
-                    onChange={handleTextChange}
-                    onCompositionStart={handleCompositionStart}
-                    onCompositionEnd={handleCompositionEnd}
-                    onCompositionUpdate={handleCompositionUpdate}
-                    onClick={handleTextClick}
-                    onKeyUp={handleTextKeyUp}
-                    onDragOver={handleTextareaDragOver}
-                    onDragLeave={handleTextareaDragLeave}
-                    onDrop={handleTextareaDrop}
-                    rows={replyTo ? 3 : 1}
-                    placeholder={
-                      replyTo
-                        ? `Reply to @${replyTo.user.username}`
-                        : (
-                          placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                        )
-                    }
-                    textareaRef={textareaRef}
-                    fontSize="base"
-                    compact={!!replyTo || hasMedia}
-                    autoResize
-                  />
-                  <MentionAutocomplete
-                    text={text}
-                    cursorPosition={cursorPosition}
-                    onSelect={handleMentionSelect}
-                    textareaRef={textareaRef}
-                  />
-                </>
-              )}
               {/* Drag overlay */}
               {isDragOverTextarea && (
                 <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -3360,7 +3324,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           onMouseUp={() => { threadSelDragging.current = false }}
         >
         <div className="relative">
-          {true ? (
             <>
               {chunkSlices.map((slice, i) => (
                 <React.Fragment key={i}>
@@ -3482,41 +3445,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
               />
             </>
-          ) : (
-            <>
-              <HighlightedTextarea
-                value={text}
-                composedValueRef={lastComposedRef}
-                onChange={handleTextChange}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                onCompositionUpdate={handleCompositionUpdate}
-                onClick={handleTextClick}
-                onKeyUp={handleTextKeyUp}
-                onDragOver={handleTextareaDragOver}
-                onDragLeave={handleTextareaDragLeave}
-                onDrop={handleTextareaDrop}
-                rows={desktopRows}
-                placeholder={
-                  replyTo
-                    ? `Reply to @${replyTo.user.username}`
-                    : (
-                      placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                    )
-                }
-                textareaRef={textareaRef}
-                fontSize={replyTo ? 'base' : 'xl'}
-                compact={!!replyTo || hasMedia}
-                autoResize
-              />
-              <MentionAutocomplete
-                text={text}
-                cursorPosition={cursorPosition}
-                onSelect={handleMentionSelect}
-                textareaRef={textareaRef}
-              />
-            </>
-          )}
           {/* Drag overlay */}
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
