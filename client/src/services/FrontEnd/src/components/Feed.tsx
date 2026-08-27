@@ -255,7 +255,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       // If the pending post still has a temp ID, try to resolve it from
       // the feed items (matched by cawonce + userId — the DB row exists
       // immediately as PENDING, so the feed usually has it)
-      if (String(p.id).startsWith('pending-') && p.cawonce && p.user?.tokenId) {
+      if (String(p.id).startsWith('pending-') && p.cawonce != null && p.user?.tokenId) {
         const match = items.find(
           i => i.cawonce === p.cawonce && i.user?.tokenId === p.user?.tokenId
         )
