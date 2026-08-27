@@ -214,7 +214,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     hasReplied, // Only true if replied AND confirmed
     hasTipped,
     tipPending,
-    tipCount: raw._count?.tips ?? raw.tipCount ?? 0,
+    tipCount: raw.tipCount ?? raw._count?.tips ?? 0,
     totalTipAmount: raw.totalTipAmount ?? 0,
     replyPending,
     isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
@@ -294,7 +294,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     tips: currentUserId
       ? { where: { senderId: currentUserId }, select: { senderId: true, pending: true }, take: 1 }
       : false,
-    _count: { select: { tips: true } },
+    _count: { select: { tips: { where: { pending: false } } } },
     bookmarks: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
       : false,
