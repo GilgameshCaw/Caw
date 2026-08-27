@@ -43,6 +43,16 @@ interface ApiUserByToken {
   likeCount?: number
 }
 
+// FOLLOW-UP (if the stale-cross-address render ever recurs despite the
+// isFetching guards below): the bulletproof fix is to remount this component on
+// address change by wrapping the route element with a key, in routes.tsx:
+//   { path: "/address/:address", component: <AddressTokensKeyed /> }
+// where AddressTokensKeyed reads useParams().address and renders
+//   <AddressTokens key={address} />
+// A fresh key discards ALL of wagmi's kept-previous-data + React Query caches
+// for the prior address, so there's no window where the last address's tokens
+// can paint under the new one. Not done now because the isFetching guards cover
+// the observed case; this is the escalation if a residual race slips through.
 const AddressTokens: React.FC = () => {
   const { isDark } = useTheme()
   const t = useT()
