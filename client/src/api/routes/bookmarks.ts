@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { extractSession } from '../middleware/auth'
 import { shapeCaw, getCawIncludeConfig, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -48,8 +49,17 @@ router.get('/', async (req, res) => {
     const cursor = req.query.cursor ? Number(req.query.cursor) : undefined
     const limit = Math.min(Number(req.query.limit) || 20, 50)
 
+    // Exclude bookmarks whose target caw was deleted/hidden after bookmarking,
+    // or whose author the current user has since blocked -- mirrors the
+    // status/blockedIds filtering the main feed routes apply (caws.ts).
+    const blockedIds = await getBlockedUserIds(userId)
+    const cawWhere: any = { status: 'SUCCESS' }
+    if (blockedIds.length > 0) {
+      cawWhere.userId = { notIn: blockedIds }
+    }
+
     const bookmarks = await prisma.bookmark.findMany({
-      where: { userId },
+      where: { userId, caw: cawWhere },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
