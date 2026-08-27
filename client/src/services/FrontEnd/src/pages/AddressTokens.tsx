@@ -54,8 +54,16 @@ const AddressTokens: React.FC = () => {
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
-  // 1) Count of NFTs owned by this address on the configured L1
-  const { data: balanceRaw, isLoading: balanceLoading } = useReadContract({
+  // 1) Count of NFTs owned by this address on the configured L1.
+  // NOTE: use isFetching, NOT isLoading, for the render guard below. wagmi's
+  // isLoading is true only on the FIRST-ever fetch; when the :address param
+  // changes it keeps the PREVIOUS address's data (balanceRaw/indexResults)
+  // while refetching, with isLoading=false. Rendering during that window
+  // showed the previously-viewed address's profiles under the NEW address —
+  // e.g. navigating from another user's profile to your own wallet briefly
+  // listed their profile as yours until the refetch resolved. isFetching is
+  // true during that refetch, so gating on it shows the loader instead.
+  const { data: balanceRaw, isFetching: balanceFetching } = useReadContract({
     address: CAW_NAMES_ADDRESS,
     abi: cawProfileAbi,
     functionName: 'balanceOf',
@@ -77,7 +85,7 @@ const AddressTokens: React.FC = () => {
       })),
     [tokenCount, addrTyped]
   )
-  const { data: indexResults, isLoading: indicesLoading } = useReadContracts({
+  const { data: indexResults, isFetching: indicesFetching } = useReadContracts({
     contracts: indexCalls,
     query: { enabled: valid && tokenCount > 0 },
   })
@@ -247,7 +255,7 @@ const AddressTokens: React.FC = () => {
           <div className={`grid grid-cols-3 gap-3 mt-4 pt-4 border-t ${themeBorder(isDark)}`}>
             <div className="text-center">
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {balanceLoading ? '—' : tokenCount}
+                {balanceFetching ? '—' : tokenCount}
               </div>
               <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('address_tokens.profiles_owned')}</div>
             </div>
@@ -272,7 +280,7 @@ const AddressTokens: React.FC = () => {
         <h2 className={`text-lg font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {t('address_tokens.profiles_owned')}
         </h2>
-        {balanceLoading || indicesLoading ? (
+        {balanceFetching || indicesFetching ? (
           <LoadingSpinner className="py-8" />
         ) : tokenCount === 0 ? (
           <div className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-8 text-center ${themeTextMuted(isDark)}`}>
