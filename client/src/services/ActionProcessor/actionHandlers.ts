@@ -1570,9 +1570,9 @@ async function handlePinAction(
   //     a permanent orphan for cleanupOrphanActions to re-dispatch forever.
   const target = await tx.caw.findUnique({
     where: { userId_cawonce: { userId: senderId, cawonce } },
-    select: { id: true },
+    select: { id: true, status: true },
   })
-  if (!target) throw new CawNotFoundError(senderId, cawonce)
+  if (!target || target.status !== 'SUCCESS') throw new CawNotFoundError(senderId, cawonce)
   const cawId = target.id
 
   // Two cases the indexer needs to handle:
