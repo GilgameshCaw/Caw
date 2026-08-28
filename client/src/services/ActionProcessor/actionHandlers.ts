@@ -1568,7 +1568,12 @@ async function handlePinAction(
   //     top-level handler treats as a quiet, retryable orphan that self-
   //     heals once the caw lands — replacing the old warn+return that left
   //     a permanent orphan for cleanupOrphanActions to re-dispatch forever.
-  const cawId = await findCawId(cawonce, senderId)
+  const target = await tx.caw.findUnique({
+    where: { userId_cawonce: { userId: senderId, cawonce } },
+    select: { id: true },
+  })
+  if (!target) throw new CawNotFoundError(senderId, cawonce)
+  const cawId = target.id
 
   // Two cases the indexer needs to handle:
   //   (a) /api/actions already wrote a pending row → flip pending=false.
@@ -1641,16 +1646,15 @@ async function handleUnpinAction(
   // this node hasn't indexed is a genuine no-op: there can be no pin row to
   // delete, and nothing to converge to. So a missing caw resolves quietly
   // rather than throwing a retryable orphan.
-  let cawId: number
-  try {
-    cawId = await findCawId(cawonce, senderId)
-  } catch (err) {
-    if (err instanceof CawNotFoundError) {
-      console.log(`[handleUnpinAction] No local caw for user=${senderId} cawonce=${cawonce}; nothing to unpin`)
-      return
-    }
-    throw err
+  const target = await tx.caw.findUnique({
+    where: { userId_cawonce: { userId: senderId, cawonce } },
+    select: { id: true },
+  })
+  if (!target) {
+    console.log(`[handleUnpinAction] No local caw for user=${senderId} cawonce=${cawonce}; nothing to unpin`)
+    return
   }
+  const cawId = target.id
 
   const existing = await tx.pinnedCaw.findUnique({
     where: { userId_cawId: { userId: senderId, cawId } },
