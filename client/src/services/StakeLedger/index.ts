@@ -511,9 +511,9 @@ export async function recordDeposit(
     txHash: string
     logIndex: number
   },
-): Promise<void> {
+): Promise<{ tokenId: number; amountWei: bigint; afterOwnership: bigint } | null> {
   const s = await ensureBooted()
-  if (s.halted) return
+  if (s.halted) return null
   const { tokenId, amountWei, blockNumber, blockTimestamp, txHash, logIndex } = params
 
   // Dedup: a watcher restart catching up may replay the same Deposited
@@ -522,7 +522,7 @@ export async function recordDeposit(
     where: { txHash, logIndex, reason: 'DEPOSIT' },
     select: { id: true },
   })
-  if (existing) return
+  if (existing) return null
 
   // Compute the post-deposit state WITHOUT mutating the in-memory
   // singleton `s` yet. addToBalance/balanceOf are pure — they read `s`
@@ -578,21 +578,13 @@ export async function recordDeposit(
       onChainStakeUpdatedAt: new Date(),
     },
   })
-  // Apply the in-memory mutation ONLY NOW, after every DB write above has
-  // been issued without throwing. If any of the tx.* calls above throw,
-  // we return via the catch in the caller (DepositWatcher) with `s` left
-  // untouched — the checkpoint is held, the block range is retried, the
-  // dedup check at the top of this function (which reads confirmed DB
-  // state) is the sole source of truth for "was this deposit already
-  // applied", and it will correctly see nothing and let us try again
-  // exactly once. Do not move this earlier: this function runs inside the
-  // caller's `prisma.$transaction(...)` callback, and `s` is a
-  // module-level singleton shared across polls — an early mutation here
-  // combined with a mid-transaction failure elsewhere in the batch is
-  // exactly the drift bug this ordering fixes.
-  s.totalCaw += amountWei
-  s.ownership.set(tokenId, after.ownership)
-
+  // ⚠️ Do NOT mutate `s` here. This function runs inside the caller's
+  // `prisma.$transaction(...)` callback. If the subsequent upsert throws
+  // (or Prisma internally retries the callback), mutating `s` here would
+  // leave the in-memory ledger drifted from the rolled-back DB state,
+  // causing double-counting on the checkpoint retry.
+  // The caller (DepositWatcher) must apply these mutations to `s` ONLY
+  // after the transaction resolves successfully (Post-Commit Mutation).
   await tx.stakeLedgerState.upsert({
     where: { networkId: CAW_CLIENT_ID },
     create: {
@@ -610,6 +602,17 @@ export async function recordDeposit(
       updatedAt: new Date(),
     },
   })
+  return { tokenId, amountWei, afterOwnership: after.ownership }
+}
+
+/**
+ * Apply the deposit mutation to the in-memory singleton `s`.
+ * MUST ONLY be called AFTER the DB transaction has successfully committed.
+ */
+export async function applyDepositToMemory(tokenId: number, amountWei: bigint, afterOwnership: bigint) {
+  const s = await ensureBooted()
+  s.totalCaw += amountWei
+  s.ownership.set(tokenId, afterOwnership)
 }
 
 // Error message substrings that indicate the RPC endpoint does not retain

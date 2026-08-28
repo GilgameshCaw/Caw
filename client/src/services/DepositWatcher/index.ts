@@ -27,7 +27,7 @@ import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerif
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
-import { recordDeposit } from '../StakeLedger'
+import { recordDeposit, applyDepositToMemory } from '../StakeLedger'
 import { getNetworkId } from '../../utils/networkId'
 
 const Config = z.object({
@@ -191,8 +191,8 @@ export const depositWatcherService: Service = {
               const blockTimestamp = blockTsByNumber.get(ev.blockNumber) ?? new Date()
 
               try {
-                await prisma.$transaction(async (tx) => {
-                  await recordDeposit(tx, {
+                const result = await prisma.$transaction(async (tx) => {
+                  return await recordDeposit(tx, {
                     tokenId,
                     amountWei: amount,
                     blockNumber,
@@ -201,6 +201,13 @@ export const depositWatcherService: Service = {
                     logIndex,
                   })
                 }, { timeout: 15_000 })
+                // Post-Commit Mutation: Apply to in-memory ledger ONLY after
+                // the DB transaction has successfully committed. This guarantees
+                // atomicity between DB and memory, preventing double-counting
+                // on checkpoint retries.
+                if (result) {
+                  await applyDepositToMemory(result.tokenId, result.amountWei, result.afterOwnership)
+                }
               } catch (err: any) {
                 // Swallow-and-advance was the bug: a failed deposit used to be
                 // warned and then lastBlock advanced past it, so the block was
