@@ -594,6 +594,11 @@
     tslib "^2.8.1"
     undici "^6.21.1"
 
+"@esbuild/darwin-arm64@0.25.5":
+  version "0.25.5"
+  resolved "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.25.5.tgz"
+  integrity sha512-GtaBgammVvdF7aPIgH2jxMDdivezgFu6iKpmT+48+F8Hhg5J/sfnDieg0aeG/jfSvkYQU2/pceFPDKlqZzwnfQ==
+
 "@esbuild/darwin-x64@0.25.5":
   version "0.25.5"
   resolved "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.25.5.tgz"
@@ -703,12 +708,24 @@
   resolved "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz"
   integrity sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==
 
+"@img/sharp-darwin-arm64@0.34.5":
+  version "0.34.5"
+  resolved "https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.34.5.tgz"
+  integrity sha512-imtQ3WMJXbMY4fxb/Ndp6HBTNVtWCUI0WdobyheGf5+ad6xX8VIDO8u2xE4qc/fr08CKG/7dDseFtn6M6g/r3w==
+  optionalDependencies:
+    "@img/sharp-libvips-darwin-arm64" "1.2.4"
+
 "@img/sharp-darwin-x64@0.34.5":
   version "0.34.5"
   resolved "https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.34.5.tgz"
   integrity sha512-YNEFAF/4KQ/PeW0N+r+aVVsoIY0/qxxikF2SWdp+NRkmMB7y9LBZAVqQ4yhGCm/H3H270OSykqmQMKLBhBJDEw==
   optionalDependencies:
     "@img/sharp-libvips-darwin-x64" "1.2.4"
+
+"@img/sharp-libvips-darwin-arm64@1.2.4":
+  version "1.2.4"
+  resolved "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.2.4.tgz"
+  integrity sha512-zqjjo7RatFfFoP0MkQ51jfuFZBnVE2pRiaydKJ1G/rHZvnsrHAOcQALIi9sA5co5xenQdTugCvtb1cuf78Vf4g==
 
 "@img/sharp-libvips-darwin-x64@1.2.4":
   version "1.2.4"
@@ -1929,6 +1946,11 @@
   version "5.8.2"
   resolved "https://registry.npmjs.org/@redis/time-series/-/time-series-5.8.2.tgz"
   integrity sha512-g2NlHM07fK8H4k+613NBsk3y70R2JIM2dPMSkhIjl2Z17SYvaYKdusz85d7VYOrZBWtDrHV/WD2E3vGu+zni8A==
+
+"@resvg/resvg-js-darwin-arm64@2.6.2":
+  version "2.6.2"
+  resolved "https://registry.npmjs.org/@resvg/resvg-js-darwin-arm64/-/resvg-js-darwin-arm64-2.6.2.tgz"
+  integrity sha512-nmok2LnAd6nLUKI16aEB9ydMC6Lidiiq2m1nEBDR1LaaP7FGs4AJ90qDraxX+CWlVuRlvNjyYJTNv8qFjtL9+A==
 
 "@resvg/resvg-js-darwin-x64@2.6.2":
   version "2.6.2"
