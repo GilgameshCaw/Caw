@@ -1427,14 +1427,37 @@ async function handleVoteAction(
       } },
     })
     if (existing) {
-      await tx.vote.delete({ where: { id: existing.id } })
-      if (!existing.pending) {
+      if (existing.pending) {
+        // Confirming an optimistic toggle-ON: the row already exists
+        // (written pending:true by the API path) -- flip it to
+        // confirmed and count it, rather than deleting it as if the
+        // user had toggled it back OFF. Without this check, every
+        // optimistic toggle-ON got silently destroyed on confirm and
+        // never counted.
+        await tx.vote.update({
+          where: { id: existing.id },
+          data: { cawonce: action.cawonce, pending: false },
+        })
+        await tx.poll.update({
+          where: { id: poll.id },
+          data: { totalVotes: { increment: 1 } },
+        })
+        try {
+          await NotificationService.createVoteNotification(targetCaw.id, ownerUserId, voterId, tx)
+        } catch (err) {
+          console.error(`[handleVoteAction] Failed to create VOTE notification:`, err)
+        }
+        console.log(`[handleVoteAction] Confirmed toggle ON (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+      } else {
+        // Already-confirmed row + a fresh toggle action for the same
+        // option = the user toggled OFF. Remove it and decrement.
+        await tx.vote.delete({ where: { id: existing.id } })
         await tx.poll.update({
           where: { id: poll.id },
           data: { totalVotes: { decrement: 1 } },
         })
+        console.log(`[handleVoteAction] Toggled OFF (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
       }
-      console.log(`[handleVoteAction] Toggled OFF (poll=${poll.id} voter=${voterId} option=${parsed.optionIndex})`)
     } else {
       await tx.vote.create({
         data: {
