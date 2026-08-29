@@ -210,11 +210,21 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
   // pending state matches.
   useEffect(() => {
     if (!poll) return
-    // "Server confirmed at least one of our votes": any row that
-    // came back with pending=false. If the user has a still-pending
-    // optimistic pick we keep that until the indexer round-trips.
-    const serverConfirmed = (poll.userVotes ?? (poll.userVote ? [poll.userVote] : []))
-      .some(r => !r.pending)
+    // "Server confirmed the option(s) we currently have selected" --
+    // NOT just "any row came back with pending=false". During a vote
+    // CHANGE, the server can transiently report both the OLD confirmed
+    // row (e.g. option A, pending:false) and the NEW pending row (e.g.
+    // option B, pending:true) at once -- the old row isn't deleted
+    // until the new one confirms (see the totalVotes-double-count fix,
+    // which stopped the API layer from deleting the old row up front).
+    // Checking "any row confirmed" saw A's leftover confirmed row and
+    // treated the poll as settled BEFORE B actually confirmed,
+    // snapping the UI back to the stale A pick and orphaning the wait
+    // for B. Scope the check to rows whose option we currently have
+    // picked, so a stale unrelated confirmed row can't trigger a
+    // premature resync.
+    const rows = poll.userVotes ?? (poll.userVote ? [poll.userVote] : [])
+    const serverConfirmed = rows.some(r => !r.pending && local.picks.has(r.optionIndex))
     const ourLocalHasPending = Array.from(local.pending.values()).some(v => v)
     if (!userTouchedRef.current || (serverConfirmed && ourLocalHasPending)) {
       setLocal(buildInitialLocal())
@@ -230,11 +240,71 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
     // row is now confirmed (pending=false). After confirm we can't
     // cancel it anyway, and a stale entry would make a future "cancel
     // before resubmit" try to cancel an already-finalized action.
-    for (const r of poll.userVotes ?? (poll.userVote ? [poll.userVote] : [])) {
+    for (const r of rows) {
       if (!r.pending) pendingTxIdsRef.current.delete(r.optionIndex)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(poll?.userVotes ?? poll?.userVote), poll?.totalVotes, JSON.stringify(poll?.optionVoteCounts)])
+
+  // Self-contained reconciliation poller for in-flight votes. The
+  // effect above (re-sync from the `poll` prop) only fires when the
+  // PARENT re-fetches and passes fresh props down -- outside Feed.tsx
+  // (e.g. a single-post page, bookmarks, or a modal) nothing was
+  // re-fetching, so a vote could sit in "pending" indefinitely until
+  // a manual reload. This effect makes the widget independently poll
+  // /api/caws/:id every 3s WHILE any of our own votes are still
+  // pending, and stops the moment the server confirms -- works the
+  // same regardless of which screen renders this component.
+  // Read as a plain boolean, not the Map object itself: local.pending
+  // is a fresh Map on every setLocal call (submitVote copies via
+  // `new Map(curr.pending)`), so depending on the Map reference itself
+  // would be fine too -- but deriving a boolean here is clearer about
+  // what actually gates this effect and avoids relying on that
+  // implementation detail continuing to hold.
+  const hasLocalPending = Array.from(local.pending.values()).some(v => v)
+  useEffect(() => {
+    if (!hasLocalPending) return
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+        const freshPoll = data.caw?.poll
+        if (!freshPoll) return
+
+        const rows = freshPoll.userVotes ?? (freshPoll.userVote ? [freshPoll.userVote] : [])
+        // Same scoping fix as the sibling effect above: only treat this
+        // as settled once the option(s) we're CURRENTLY waiting on are
+        // confirmed, not just any row -- a stale pre-change confirmed
+        // row can coexist with our still-pending new pick during a
+        // vote change.
+        const serverConfirmed = rows.some(r => !r.pending && local.picks.has(r.optionIndex))
+        if (!serverConfirmed) return
+
+        const picks = new Set<number>()
+        const pending = new Map<number, boolean>()
+        for (const r of rows) {
+          picks.add(r.optionIndex)
+          pending.set(r.optionIndex, r.pending)
+        }
+        setLocal({
+          picks,
+          pending,
+          counts: freshPoll.optionVoteCounts ? freshPoll.optionVoteCounts.slice() : (freshPoll.options || []).map(() => 0),
+          total: freshPoll.totalVotes || 0,
+        })
+        userTouchedRef.current = false
+        for (const r of rows) {
+          if (!r.pending) pendingTxIdsRef.current.delete(r.optionIndex)
+        }
+      } catch {
+        // Transient network error -- retry on the next tick rather than
+        // surfacing anything to the user.
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caw.id, hasLocalPending])
 
   // Mount-once flag so bars get a "fill from 0" entry animation the first
   // time results render. Without this the bars would snap to width on
