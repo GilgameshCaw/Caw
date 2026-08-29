@@ -206,6 +206,8 @@ export const rawEventsGathererService: Service = {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish,
           storeBatch:            storeBatchAndPublish,
+          isFloorFilled:   async () => (await redis.get(`raw-events-gatherer:${chainId}:${networkId}:floor-filled`)) === '1',
+          markFloorFilled: async () => { await redis.set(`raw-events-gatherer:${chainId}:${networkId}:floor-filled`, '1') },
         },
         onTick: () => ctx.heartbeat('poll'),
       })
