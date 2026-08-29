@@ -1,6 +1,7 @@
 // src/services/ActionProcessor/domainObjectChecks.ts
 import { findOrCreateUser } from '../UserService'
 import { CawNotFoundError, findCawId } from './actionHandlers'
+import { parseVoteText } from '../../tools/pollMarker'
 import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
 
 /**
@@ -286,24 +287,83 @@ async function checkOtherExists(
   }
 
   if (rawAction.text?.startsWith('vote:')) {
-    // M-2: gate vote replay to prevent multi-select toggle-drift.
-    // Double-replay of a "vote:N" action on a multi-select poll:
-    //   pass 1 — row absent → create + increment totalVotes
-    //   pass 2 — row present → delete + decrement totalVotes  (drift: -1)
-    // Skipping on confirmed-row-present collapses the toggle to a no-op.
-    // Key: (pollId, voterId, optionIndex) = pollId_voterId_optionIndex unique.
-    // We derive the lookup from cawonce (identifies the action) rather than
-    // re-parsing receiverId/optionIndex from text to keep this check cheap
-    // and decoupled from the vote-text parser.
+    // M-2 (original): gate vote replay to prevent multi-select toggle-
+    // drift. That fix keyed the lookup on `cawonce: action.cawonce`
+    // alone, which works for multi-select (each option's toggle is a
+    // distinct on-chain action with its own cawonce that never gets
+    // reassigned) but breaks for single-select: changing a vote
+    // legitimately deletes the prior option's row, and the surviving
+    // row's cawonce becomes whatever this change's action.cawonce was
+    // -- there is only ever ONE row per (pollId, voterId) in
+    // single-select, and it always carries the MOST RECENT confirming
+    // action's cawonce (handleVoteAction sets cawonce: action.cawonce
+    // on both the sameIndex-update and the fresh-create paths). So once
+    // a voter changes their pick, the row's cawonce moves to the new
+    // action -- and the OLD action's cawonce no longer matches ANY row,
+    // even though its effect (superseded by the newer change) is fully
+    // accounted for. The old cawonce-keyed check then returned false
+    // ("not found" == "not yet processed") for an action that was
+    // already correctly applied and later legitimately superseded --
+    // DataCleaner's orphan sweep replayed it repeatedly for up to an
+    // hour, each replay swapping the poll's Vote row back to the STALE
+    // option and drifting totalVotes. Reported by Zin (poll_id showed
+    // 1 real Vote row but totalVotes=2, and the option flip-flopped
+    // roughly every minute in server logs).
+    const parsed = parseVoteText(rawAction.text)
+    if (!parsed) return false
+    if (!rawAction.receiverId || !Number.isFinite(Number(rawAction.receiverCawonce))) return false
+
     const voterId = await findOrCreateUser(action.senderId)
-    const existingVote = await tx.vote.findFirst({
-      where: {
-        voterId,
-        cawonce: action.cawonce,
-        pending: false
-      }
+    let cawId: number
+    try {
+      cawId = await findCawId(Number(rawAction.receiverCawonce), rawAction.receiverId)
+    } catch (err) {
+      if (err instanceof CawNotFoundError) return false
+      throw err
+    }
+    const targetCaw = await tx.caw.findUnique({
+      where: { id: cawId },
+      select: { poll: { select: { id: true, multiSelect: true } } },
     })
-    return existingVote !== null
+    if (!targetCaw?.poll) return false
+    const pollId = targetCaw.poll.id
+
+    if (targetCaw.poll.multiSelect) {
+      // Multi-select: each option toggles independently via its own
+      // on-chain action/cawonce, so the original cawonce-scoped check
+      // is correct here -- no cross-option supersession to worry about.
+      if (parsed.optionIndex === null) return false // unvote text isn't used in multi-select
+      const existing = await tx.vote.findUnique({
+        where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
+      })
+      return existing !== null && existing.cawonce === action.cawonce && !existing.pending
+    }
+
+    // Single-select (and unvote): there is at most one row for
+    // (pollId, voterId), and it always carries the cawonce of the
+    // most recently confirmed action for this voter on this poll.
+    // Compare cawonce, not row identity: if the current row's cawonce
+    // is >= this action's cawonce, a confirmation at least as new as
+    // this action has already landed -- this action's effect (whatever
+    // it was) is fully accounted for, whether it was the one that
+    // produced the current row or a since-superseded earlier one.
+    // If the row's cawonce is OLDER than this action's, this action
+    // genuinely hasn't been applied yet (e.g. crash between Tx1 and
+    // Tx2) and must run.
+    const existing = await tx.vote.findFirst({
+      where: { pollId, voterId },
+      select: { cawonce: true },
+    })
+    if (parsed.optionIndex === null) {
+      // Unvote: fully applied once no row remains -- but if a row DOES
+      // remain, only treat this unvote as done if that row is NEWER
+      // (a re-vote after this unvote superseded it); an older row means
+      // this unvote genuinely hasn't run yet.
+      if (!existing) return true
+      return existing.cawonce > action.cawonce
+    }
+    if (!existing) return false
+    return existing.cawonce >= action.cawonce
   }
 
   // For all other OTHER subtypes (profile updates, pin, unpin, hide, xpi, pi)
