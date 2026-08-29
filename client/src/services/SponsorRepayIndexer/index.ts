@@ -229,14 +229,18 @@ function makePollLoop(opts: {
         const allFilters = opts.contract.filters
         const eventNames = Object.keys(allFilters).filter(k => typeof allFilters[k] === 'function')
 
-        // Fetch all event types in parallel for this chunk
+        // Fetch all event types in parallel for this chunk. Deliberately NO
+        // per-name .catch(() => []) here: swallowing a queryFilter failure to
+        // an empty array lets the cursor advance (lastBlock = to /
+        // saveCheckpoint(to) below) past a window whose events were never
+        // fetched, silently and permanently dropping any events in it. Letting
+        // Promise.all reject instead routes to the outer catch, which leaves
+        // lastBlock untouched so the same from..to window is retried on the
+        // next tick. processEvents (idempotent per-tokenId upsert/update) runs
+        // only after a fully successful fetch, so a retry never double-processes.
         const resultArrays = await Promise.all(
           eventNames.map(name =>
-            (opts.contract.queryFilter(opts.contract.filters[name](), from, to) as Promise<ethers.EventLog[]>)
-              .catch((err: any) => {
-                console.warn(`[${opts.label}] queryFilter ${name} failed:`, err?.message?.slice(0, 120))
-                return [] as ethers.EventLog[]
-              })
+            opts.contract.queryFilter(opts.contract.filters[name](), from, to) as Promise<ethers.EventLog[]>
           )
         )
 
