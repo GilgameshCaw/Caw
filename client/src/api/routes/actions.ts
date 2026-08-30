@@ -912,11 +912,33 @@ router.post('/', async (req, res) => {
         if (plaintext.startsWith('hide:caw:')) {
           const cawonce = parseInt(plaintext.replace('hide:caw:', ''))
           if (!isNaN(cawonce)) {
-            await prisma.caw.updateMany({
+            // Look up the target BEFORE flipping status -- we need its id
+            // and action to resolve cawCount handling, and once status
+            // flips to HIDDEN this row no longer matches the
+            // status:'SUCCESS' filter the on-chain-confirmed handler
+            // (handleHideAction) uses to find it. Without this optimistic
+            // path calling onCawHidden itself, the on-chain path's
+            // updateMany always finds 0 matching rows (this optimistic
+            // write already changed the status) and silently skips the
+            // cawCount decrement entirely -- the exact bug #96 was meant
+            // to fix, still open on the client-initiated path. Mirrors how
+            // hide:recaw: already calls countManager.onRecawRemoved here.
+            const target = await prisma.caw.findFirst({
+              where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
+              select: { id: true, action: true },
+            })
+            const result = await prisma.caw.updateMany({
               where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
               data: { status: 'HIDDEN' }
             })
             console.log(`[Actions] Optimistic hide: user=${data.senderId} cawonce=${cawonce}`)
+            if (result.count > 0 && target?.id) {
+              const isReply = (await prisma.reply.findFirst({
+                where: { replyCawId: target.id },
+                select: { id: true },
+              })) !== null
+              await countManager.onCawHidden(prisma, { userId: data.senderId, action: target.action, isReply })
+            }
           }
         } else if (plaintext.startsWith('hide:recaw:')) {
           const parts = plaintext.replace('hide:recaw:', '').split(':')
