@@ -56,7 +56,7 @@ router.get('/:tag/caws', async (req, res) => {
             recaws: currentUserId
               ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
               : false,
-            poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
+            poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
             hashtags: {
               include: { hashtag: { select: { name: true } } }
             },
@@ -64,7 +64,7 @@ router.get('/:tag/caws', async (req, res) => {
             parent: {
               include: {
                 user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
-                poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
+                poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
                 hashtags: {
                   include: { hashtag: { select: { name: true } } }
                 },
