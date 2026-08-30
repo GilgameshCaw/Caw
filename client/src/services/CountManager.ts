@@ -192,6 +192,42 @@ const countManager = {
   },
 
   // =========================================================================
+  // onCawHidden
+  // Called when a top-level post or quote is hidden (author's own delete,
+  // hide:caw: on-chain action). Mirrors onCawCreated's cawCount bump in
+  // reverse: a plain RECAW never bumped cawCount to begin with (it bumps
+  // recawCount instead), and neither did a reply (see onCawCreated's isReply
+  // branch) -- so this must ONLY decrement for the same "top-level post or
+  // quote" case onCawCreated increments for, using the same isReply signal
+  // the caller determines via the Reply table (replyCawId match), not a
+  // Caw-table column (originalCawId alone can't distinguish a reply from a
+  // quote -- both set it).
+  // =========================================================================
+  async onCawHidden(
+    tx: TxClient,
+    caw: {
+      userId: number
+      action: string
+      isReply?: boolean
+    }
+  ): Promise<void> {
+    const isPlainRecaw = caw.action === 'RECAW'
+    if (isPlainRecaw) {
+      // Plain recaws never bumped user.cawCount (they bump recawCount
+      // instead) -- nothing to decrement here for cawCount. Recaw-undo's
+      // own recawCount rollback is handled separately (onRecawRemoved).
+      return
+    }
+    if (caw.isReply) {
+      // Replies never bumped user.cawCount either (see onCawCreated) --
+      // nothing to decrement.
+      return
+    }
+    await safeDecrement(tx, 'User', 'cawCount', 'tokenId', caw.userId)
+    log(`cawCount -1 on user ${caw.userId} (caw hidden)`)
+  },
+
+  // =========================================================================
   // onReplyCreated
   // Called when a pending Reply record is created, linking a reply caw to its
   // parent. Increments commentCount on the parent caw.

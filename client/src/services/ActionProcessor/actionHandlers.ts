@@ -1568,12 +1568,13 @@ async function handleHideAction(
       return
     }
 
-    // Read imageData BEFORE flipping status so we know which URLs were
-    // attached to the post. These get queued for delayed deletion (7-day
-    // grace, see orphanedMedia.ts) so revertable hides don't lose data.
+    // Read imageData + id BEFORE flipping status so we know which URLs were
+    // attached to the post (id is also needed to check the Reply table for
+    // the cawCount decrement below). These get queued for delayed deletion
+    // (7-day grace, see orphanedMedia.ts) so revertable hides don't lose data.
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { imageData: true },
+      select: { id: true, action: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1587,6 +1588,18 @@ async function handleHideAction(
       markOrphansInImageData(target?.imageData).catch(e =>
         console.warn('[handleHideAction] markOrphansInImageData failed:', e)
       )
+      // Mirror onCawCreated's cawCount bump in reverse. originalCawId alone
+      // can't distinguish a reply from a quote (both set it) -- the Reply
+      // table's replyCawId is the only reliable signal, same as the
+      // recawCount-exclusion fix (#68) established for the reply-vs-quote
+      // distinction elsewhere in this file.
+      if (target?.id) {
+        const isReply = (await tx.reply.findFirst({
+          where: { replyCawId: target.id },
+          select: { id: true },
+        })) !== null
+        await countManager.onCawHidden(tx, { userId: senderId, action: target.action, isReply })
+      }
     } else {
       console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)
     }
