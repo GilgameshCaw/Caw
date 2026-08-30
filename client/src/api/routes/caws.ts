@@ -769,14 +769,67 @@ router.delete('/:originalCawId/recaw', requireAuth({
         })
         await tx.caw.delete({ where: { id: recaw.id } })
         await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
-        await tx.notification.deleteMany({
+
+        // Find the notification(s) to delete FIRST so we can also clean up
+        // their NotificationGroup -- deleteMany alone leaves the group's
+        // count/latestNotificationId pointing at rows that no longer exist.
+        const staleNotifications = await tx.notification.findMany({
           where: {
             actorId: userId,
             userId: originalCaw.userId,
             type: 'REPOST',
             cawId: originalCawId,
           },
+          select: { id: true, groupId: true },
         })
+        if (staleNotifications.length > 0) {
+          await tx.notification.deleteMany({
+            where: { id: { in: staleNotifications.map(n => n.id) } },
+          })
+          // Roll back each affected group's count by however many of its
+          // rows we just deleted (normally 1, but be exact in case of a
+          // rare double-write), and drop the group entirely once its count
+          // hits zero so no empty rollup lingers in the feed.
+          const groupIds = [...new Set(staleNotifications.map(n => n.groupId).filter((id): id is number => id != null))]
+          for (const groupId of groupIds) {
+            const deletedInGroup = staleNotifications.filter(n => n.groupId === groupId).length
+            const group = await tx.notificationGroup.findUnique({
+              where: { id: groupId },
+              select: { count: true, latestNotificationId: true },
+            })
+            if (!group) continue
+            const newCount = Math.max(0, group.count - deletedInGroup)
+            if (newCount === 0) {
+              await tx.notificationGroup.delete({ where: { id: groupId } })
+            } else {
+              const deletedWasLatest = staleNotifications.some(
+                n => n.groupId === groupId && n.id === group.latestNotificationId,
+              )
+              if (deletedWasLatest) {
+                // The group's "lead" pointer was one of the rows we just
+                // removed -- repoint it at whatever member is now newest
+                // so the feed doesn't render a dangling reference.
+                const next = await tx.notification.findFirst({
+                  where: { groupId },
+                  orderBy: { createdAt: 'desc' },
+                  select: { id: true },
+                })
+                await tx.notificationGroup.update({
+                  where: { id: groupId },
+                  data: {
+                    count: newCount,
+                    ...(next ? { latestNotificationId: next.id } : {}),
+                  },
+                })
+              } else {
+                await tx.notificationGroup.update({
+                  where: { id: groupId },
+                  data: { count: newCount },
+                })
+              }
+            }
+          }
+        }
       })
     } else {
       // No confirmed recaw row yet — might be a pending txqueue that hasn't been processed.
