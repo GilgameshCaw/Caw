@@ -1594,11 +1594,14 @@ async function handleHideAction(
       return
     }
 
-    // Read target info (including id for pinned caw cleanup) BEFORE flipping
-    // status. ImageData gets queued for delayed deletion (7-day grace).
+    // Read target info (id, action, imageData) BEFORE flipping status. The id
+    // is needed for pinned-caw cleanup and to check the Reply table for the
+    // cawCount decrement below; imageData tells us which URLs were attached.
+    // ImageData gets queued for delayed deletion (7-day grace, see
+    // orphanedMedia.ts) so revertable hides don't lose data.
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { id: true, imageData: true },
+      select: { id: true, action: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1638,6 +1641,17 @@ async function handleHideAction(
           await recomputePinnedCount(tx, senderId)
           console.log(`[handleHideAction] Auto-unpinned hidden caw=${target.id} for user=${senderId}`)
         }
+
+        // Mirror onCawCreated's cawCount bump in reverse. originalCawId alone
+        // can't distinguish a reply from a quote (both set it) -- the Reply
+        // table's replyCawId is the only reliable signal, same as the
+        // recawCount-exclusion fix (#68) established for the reply-vs-quote
+        // distinction elsewhere in this file.
+        const isReply = (await tx.reply.findFirst({
+          where: { replyCawId: target.id },
+          select: { id: true },
+        })) !== null
+        await countManager.onCawHidden(tx, { userId: senderId, action: target.action, isReply })
       }
     } else {
       console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)
@@ -1782,18 +1796,6 @@ async function handlePinAction(
   })
   if (!target || target.status !== 'SUCCESS') throw new CawNotFoundError(senderId, cawonce)
   const cawId = target.id
-
-  // findCawId already enforces ownership (it only resolves the sender's own
-  // caw); still confirm the target is an active caw so a hidden/failed row
-  // can't be pinned (retained from #77).
-  const target = await tx.caw.findUnique({
-    where: { id: cawId },
-    select: { status: true },
-  })
-  if (!target || target.status !== 'SUCCESS') {
-    console.warn(`[handlePinAction] Caw not found or not active: id=${cawId}`)
-    return
-  }
 
   // Two cases the indexer needs to handle:
   //   (a) /api/actions already wrote a pending row → flip pending=false.
