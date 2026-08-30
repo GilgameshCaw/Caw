@@ -600,9 +600,28 @@ export class NotificationService {
       return
     }
 
-    // Dedup key. Post tips (cawId set) collapse into the existing
-    // cawId-based check -- multiple tips on the same caw from the same
-    // tipper should roll up under one notification, same as before.
+    // Dedup key, scoped by cawonce (unique per tip transaction) in both
+    // branches so that repeated tips -- to the same post OR the same
+    // profile -- each get their own notification, while a genuine replay
+    // of the SAME cawonce (DataCleaner and ActionProcessor both confirming
+    // the same tip) still correctly dedupes to one notification.
+    //
+    // Post tips (cawId set) previously deduped on
+    // { userId, actorId, type: TIP, cawId } alone, with no cawonce in the
+    // WHERE. Caw supports repeated tips from the same sender (unlike a
+    // like or follow, which are one-shot per actor), so that matched EVERY
+    // subsequent tip on the same post from the same sender once the first
+    // one existed -- createNotificationWithGroup was never called again
+    // for tip #2/#3/#4, so neither a new Notification row nor a bump to
+    // the NotificationGroup's count was ever recorded for them. That's not
+    // a rollup (the group's count staying frozen at 1 while 3 more tips
+    // land is data loss, not a intentional collapse) -- it's the same class
+    // of bug the profile-tip branch below was already fixed for. groupKey
+    // (tip_caw_${cawId}, set unconditionally below) is what actually
+    // provides the intended rollup behavior in the UI, by folding each of
+    // these now-correctly-created Notification rows into one
+    // NotificationGroup with an incrementing count -- exactly like
+    // like/follow/vote already do.
     //
     // Profile tips (cawId null) previously deduped on
     // { userId, actorId, type: TIP, cawId: undefined } -- with cawId
@@ -610,19 +629,18 @@ export class NotificationService {
     // that matched ANY prior profile-tip notification between the same
     // two users, so a second, third, etc. profile tip from the same
     // sender never got its own notification once the first one existed.
-    // Scoping to cawonce (unique per tip transaction) instead means each
-    // distinct tip gets checked independently, while a genuine replay of
-    // the SAME cawonce (DataCleaner and ActionProcessor both confirming
-    // the same tip) still correctly dedupes to one notification.
     const existing = cawId
-      ? await client.notification.findFirst({
-          where: {
-            userId: recipientId,
-            actorId: tipperId,
-            type: NotificationType.TIP,
-            cawId,
-          }
-        })
+      ? (cawonce != null
+          ? await client.notification.findFirst({
+              where: {
+                userId: recipientId,
+                actorId: tipperId,
+                type: NotificationType.TIP,
+                cawId,
+                actionPayload: { path: ['cawonce'], equals: cawonce },
+              }
+            })
+          : null) // No cawonce for a post tip: can't dedupe safely, so don't suppress -- see caller note.
       : cawonce != null
         ? await client.notification.findFirst({
             where: {
