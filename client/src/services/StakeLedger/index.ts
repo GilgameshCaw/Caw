@@ -118,8 +118,8 @@ export async function ensureBooted(): Promise<RuntimeState> {
  * must have called ensureBooted() first.
  */
 /**
- * Like ownershipOf (removed -- superseded by this function everywhere
- * it was called), but for an unseen token (not yet in the in-memory
+ * Like ownershipOf (removed -- fully superseded by resolveOwnership
+ * and resolveOwnershipBeforeEvent below), but for an unseen token (not yet in the in-memory
  * cache -- e.g. a user who deposited via another mirror, or whose L1
  * deposit hasn't been picked up by DepositWatcher locally yet), lazily
  * fetches the real on-chain balance instead of silently defaulting to
@@ -140,6 +140,49 @@ async function resolveOwnership(s: RuntimeState, tokenId: number): Promise<bigin
     return chainOwn
   } catch (err) {
     console.warn(`[StakeLedger] Failed to fetch on-chain ownership for unseen tokenId=${tokenId}, defaulting to 0n:`, err)
+    return 0n
+  }
+}
+
+/**
+ * Like resolveOwnership, but for sites REPLAYING an event that has
+ * already moved the on-chain balance (deposit, withdraw) -- deposit
+ * and WITHDRAW must not seed from cawOwnership(tokenId) directly (see
+ * ownershipOf's doc comment: that would double-apply the very event
+ * being processed). For an unseen (cache-miss) tokenId, this instead
+ * reads the CURRENT on-chain balance and subtracts back out the
+ * amount this specific event moved, reconstructing the balance as it
+ * stood immediately BEFORE this event -- so the caller's own
+ * apply-the-delta logic (addToBalance for deposit, the subtract path
+ * for withdraw) still runs exactly once. `sign` is +1 for a deposit
+ * (the event ADDED amountWei on-chain, so we subtract it back out to
+ * find the pre-event balance) and -1 for a withdraw (the event
+ * SUBTRACTED amountWei on-chain, so we add it back to find the
+ * pre-event balance). Falls back to the old ownershipOf (0n) behavior
+ * on any RPC failure or if the reconstructed pre-event balance would
+ * be negative (signals our assumption about what moved is wrong;
+ * safer to under-credit and let dailyReconciler's 24h sweep correct
+ * it than to guess). (Found in review by @nyaromesama on #97.)
+ */
+async function resolveOwnershipBeforeEvent(
+  s: RuntimeState,
+  tokenId: number,
+  amountWei: bigint,
+  sign: 1 | -1,
+): Promise<bigint> {
+  const cached = s.ownership.get(tokenId)
+  if (cached !== undefined) return cached
+  try {
+    const currentOwn = BigInt(await getCawProfileLedger().cawOwnership(tokenId))
+    const currentBal = balanceOf(currentOwn, s.multiplier)
+    const preEventBal = sign === 1 ? currentBal - amountWei : currentBal + amountWei
+    if (preEventBal < 0n) {
+      console.warn(`[StakeLedger] resolveOwnershipBeforeEvent: reconstructed pre-event balance negative for tokenId=${tokenId} (current=${currentBal}, amount=${amountWei}, sign=${sign}) -- falling back to 0n`)
+      return 0n
+    }
+    return ownershipFromBalance(preEventBal, s.multiplier)
+  } catch (err) {
+    console.warn(`[StakeLedger] Failed to fetch on-chain ownership for unseen tokenId=${tokenId} (pre-event reconstruction), defaulting to 0n:`, err)
     return 0n
   }
 }
@@ -252,7 +295,7 @@ export async function recordAction(
         // skip just this action; every other user's snapshot writes
         // continue unaffected.
         console.warn(
-          `[StakeLedger] Insufficient balance for senderId=${senderId} action=${rawTypeName} ` +
+          `[StakeLedger] INSUFFICIENT_BALANCE_SKIP senderId=${senderId} action=${rawTypeName} ` +
           `block=${blockNumber} logIndex=${logIndex} (bal=${senderBalBefore}). Refreshing from chain and skipping this action.`,
         )
         try {
@@ -302,21 +345,26 @@ export async function recordAction(
     // CawProfileLedger.withdraw(): debits sender, decrements totalCaw.
     // Modelled as ACTION_SPEND_BASE so the chart's outgoing stack
     // surfaces it the same way as other type-specific costs.
+    //
+    // Uses resolveOwnershipBeforeEvent, NOT resolveOwnership: this is
+    // replaying a withdraw that has ALREADY moved the on-chain balance.
+    // cawOwnership(senderId) would return the post-withdraw balance --
+    // seeding from it directly (and then subtracting `amount` again)
+    // would double-subtract. resolveOwnershipBeforeEvent reconstructs
+    // the pre-withdraw balance for an unseen sender instead, so this
+    // still correctly self-heals a genuinely-unseen (not genuinely
+    // insufficient) sender rather than always defaulting to 0n and
+    // risking a false insufficient-balance skip. (Found in review by
+    // @nyaromesama on #97.)
     const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
-    const senderOwn = await resolveOwnership(s, senderId)
+    const senderOwn = await resolveOwnershipBeforeEvent(s, senderId, amount, -1)
     const senderBal = balanceOf(senderOwn, s.multiplier)
     if (senderBal < amount) {
-      // Same reasoning as recordAction's step1 handler: resolveOwnership
-      // already lazy-loads unseen tokens, so a genuine shortfall here is
-      // this ONE sender's, not a ledger-wide drift. Refresh from chain
-      // and skip this action rather than halting every other user.
-      console.warn(`[StakeLedger] WITHDRAW: insufficient balance for sender=${senderId} bal=${senderBal} amt=${amount}. Refreshing from chain and skipping.`)
-      try {
-        const freshOwn = BigInt(await getCawProfileLedger().cawOwnership(senderId))
-        s.ownership.set(senderId, freshOwn)
-      } catch (refreshErr) {
-        console.warn(`[StakeLedger] Failed to refresh ownership for senderId=${senderId} after WITHDRAW insufficient-balance skip:`, refreshErr)
-      }
+      // resolveOwnershipBeforeEvent already resolves the unseen-token
+      // case, so a genuine shortfall here means this ONE sender is
+      // actually short, not that the ledger has drifted. Skip just
+      // this action rather than halting every other user.
+      console.warn(`[StakeLedger] INSUFFICIENT_BALANCE_SKIP WITHDRAW sender=${senderId} bal=${senderBal} amt=${amount}.`)
       return
     }
     const newBal = senderBal - amount
@@ -382,7 +430,7 @@ export async function recordAction(
         if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
           // Same reasoning as recordAction's step1 handler.
           console.warn(
-            `[StakeLedger] Insufficient balance for senderId=${senderId} action=${rawTypeName} (step2, tip send) ` +
+            `[StakeLedger] INSUFFICIENT_BALANCE_SKIP senderId=${senderId} action=${rawTypeName} (step2, tip send) ` +
             `block=${blockNumber} logIndex=${logIndex} (bal=${senderBalBefore}). Refreshing from chain and skipping this action.`,
           )
           try {
@@ -588,7 +636,15 @@ export async function recordDeposit(
   // written to the DB once — silently inflating totalCaw/ownership in
   // memory while the DB stays correct. Computing `after` here and only
   // applying it post-commit closes that window.
-  const own = await resolveOwnership(s, tokenId)
+  // Uses resolveOwnershipBeforeEvent, NOT resolveOwnership: this is
+  // replaying a deposit that has ALREADY moved the on-chain balance.
+  // cawOwnership(tokenId) would return the post-deposit balance --
+  // seeding from it directly (and then adding `amountWei` again) would
+  // double-count the deposit. resolveOwnershipBeforeEvent reconstructs
+  // the pre-deposit balance for an unseen tokenId instead, so a truly
+  // unseen depositor's balance still converges correctly rather than
+  // starting from a hard 0n. (Found in review by @nyaromesama on #97.)
+  const own = await resolveOwnershipBeforeEvent(s, tokenId, amountWei, 1)
   const startingBalance = balanceOf(own, s.multiplier)
   const after = addToBalance(own, s.multiplier, amountWei)
 
