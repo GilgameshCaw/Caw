@@ -28,6 +28,7 @@ import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
 import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { CAW_NAMES_MINTER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 
@@ -301,15 +302,16 @@ export const sponsorRepayIndexerService: Service = {
 
       // ── L1: CawProfileMinter — SponsorRepaySet ──────────────────────────
       const l1RpcUrl = getL1HttpRpcUrl(cfg.l1RpcUrl)
-      if (l1RpcUrl && cfg.minterAddress) {
+      const minterAddress = cfg.minterAddress || CAW_NAMES_MINTER_ADDRESS
+      if (l1RpcUrl && minterAddress) {
         const l1Provider = makeJsonRpcProvider(l1RpcUrl, cfg.l1ChainId)
-        const minterContract = new ethers.Contract(cfg.minterAddress, MINTER_ABI as any, l1Provider)
+        const minterContract = new ethers.Contract(minterAddress, MINTER_ABI as any, l1Provider)
 
-        const l1CpKey = cpKey(String(cfg.l1ChainId), cfg.minterAddress)
+        const l1CpKey = cpKey(String(cfg.l1ChainId), minterAddress)
         const currentL1 = await l1Provider.getBlockNumber().catch(() => 0)
         const l1Start = await loadCheckpoint(redis, l1CpKey, cfg.l1StartBlock ?? currentL1)
 
-        console.log(`[SponsorRepayIndexer:L1] Starting — minter=${cfg.minterAddress} chainId=${cfg.l1ChainId} fromBlock=${l1Start}`)
+        console.log(`[SponsorRepayIndexer:L1] Starting — minter=${minterAddress} chainId=${cfg.l1ChainId} fromBlock=${l1Start}`)
 
         l1Loop = makePollLoop({
           label:    'SponsorRepayIndexer:L1',
@@ -338,15 +340,16 @@ export const sponsorRepayIndexerService: Service = {
 
       // ── L2: CawProfileLedger — Registered / Swept / Forgiven ───────────
       const l2RpcUrl = getL2HttpRpcUrl(cfg.l2RpcUrl)
-      if (l2RpcUrl && cfg.ledgerAddress) {
+      const ledgerAddress = cfg.ledgerAddress || CAW_NAMES_L2_ADDRESS
+      if (l2RpcUrl && ledgerAddress) {
         const l2Provider = makeJsonRpcProvider(l2RpcUrl, cfg.l2ChainId)
-        const ledgerContract = new ethers.Contract(cfg.ledgerAddress, LEDGER_ABI as any, l2Provider)
+        const ledgerContract = new ethers.Contract(ledgerAddress, LEDGER_ABI as any, l2Provider)
 
-        const l2CpKey = cpKey(String(cfg.l2ChainId), cfg.ledgerAddress)
+        const l2CpKey = cpKey(String(cfg.l2ChainId), ledgerAddress)
         const currentL2 = await l2Provider.getBlockNumber().catch(() => 0)
         const l2Start = await loadCheckpoint(redis, l2CpKey, cfg.l2StartBlock ?? currentL2)
 
-        console.log(`[SponsorRepayIndexer:L2] Starting — ledger=${cfg.ledgerAddress} chainId=${cfg.l2ChainId} fromBlock=${l2Start}`)
+        console.log(`[SponsorRepayIndexer:L2] Starting — ledger=${ledgerAddress} chainId=${cfg.l2ChainId} fromBlock=${l2Start}`)
 
         l2Loop = makePollLoop({
           label:    'SponsorRepayIndexer:L2',
