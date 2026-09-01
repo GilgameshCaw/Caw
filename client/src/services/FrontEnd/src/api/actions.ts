@@ -2054,23 +2054,67 @@ export function useSignAndSubmitAction() {
         const ownerMismatch = !!(rawSession?.ownerAddress && tokenOwner &&
           rawSession.ownerAddress.toLowerCase() !== tokenOwner.toLowerCase())
         if (!ownerMismatch && tokenOwner) {
-          // Same owner, but the local session key isn't registered on-chain. This
-          // key is a GHOST: it was persisted to localStorage by an earlier enable
-          // attempt whose on-chain registration never actually landed (a failed /
-          // abandoned register-tx from the old persist-before-confirm path). It was
-          // never alive — nothing "died" — but every action re-signs with it and
-          // 403s forever. EVICT it, then open the Quick Sign enable prompt with THIS
-          // action as the retry: the user taps "Enable Quick Sign" (one Face ID /
-          // signature), a fresh REAL key registers, and the action auto-retries.
-          // No jargon, no "dead key", works on every page (feed, invite, etc.).
-          try { useSessionKeyStore.getState().clearSessionForAddress(tokenOwner) } catch { /* best-effort */ }
-          const { useQuickSignPromptStore: promptStoreForGhost } = await import('~/components/modals/QuickSignModal')
-          return new Promise((resolve, reject) => {
-            promptStoreForGhost.getState().show(
-              async () => { try { resolve(await requestAndSubmit(params)) } catch (e) { reject(e) } },
-              () => reject(new Error('Quick Sign renewal cancelled')),
-            )
-          })
+          // Same owner, and the local key MAY be a GHOST: persisted to localStorage
+          // by an earlier enable attempt whose on-chain registration never landed,
+          // so `sessions()` reads expiry 0 and every retry 403s forever. Evicting a
+          // real ghost is correct.
+          //
+          // BUT a 'not registered' 403 is NOT proof of a ghost. The validator can
+          // return it transiently for a session that IS registered — e.g. during
+          // the L2 sync window right after registration or a cascade redeploy, when
+          // the ledger the validator reads lags the server's session record. The
+          // old code evicted UNCONDITIONALLY here, which permanently destroyed live
+          // session keys on a transient hiccup (confirmed: a session valid+unrevoked
+          // on the server/chain vanished from localStorage after one such 403, and a
+          // wallet key is unrecoverable — the user is silently logged out of Quick
+          // Sign for days). So VERIFY against the chain first: only evict when
+          // validSession() confirms the on-chain session is actually dead (expiry in
+          // the past / 0). If it's still live, this is a sync/transient issue — keep
+          // the key and surface a retry.
+          let confirmedGhost = true
+          const sessionAddr = rawSession?.address
+          if (sessionAddr) {
+            try {
+              const live = await readContract(wagmiConfig, {
+                address: CAW_NAMES_L2_ADDRESS,
+                abi: cawProfileLedgerAbi,
+                chainId: baseSepolia.id,
+                functionName: 'validSession',
+                args: [tokenOwner as `0x${string}`, sessionAddr],
+              }) as any
+              const onChainExpiry = Number(BigInt((live?.expiry ?? live?.[0]) ?? 0))
+              if (onChainExpiry > Math.floor(Date.now() / 1000)) {
+                // Registered and NOT expired on-chain — the 403 is transient (sync
+                // lag), not a dead key. Do NOT evict. Fail this action truthfully so
+                // it can be retried once the ledger catches up.
+                confirmedGhost = false
+                console.warn('[QuickSign] "not registered" 403 but session is LIVE on-chain — keeping key (L2 sync lag), not evicting')
+                throw new Error('Quick Sign is syncing on-chain — please try again in a moment.')
+              }
+            } catch (e: any) {
+              // If the message is our own "syncing" throw, propagate it (don't evict).
+              if (e?.message?.includes('syncing on-chain')) throw e
+              // A read failure (RPC blip) is inconclusive — don't destroy the key on
+              // an unverified assumption; treat as transient and surface a retry.
+              confirmedGhost = false
+              console.warn('[QuickSign] could not verify session liveness on-chain — keeping key (will re-check next attempt):', e?.message)
+              throw new Error('Quick Sign could not verify your session — please try again in a moment.')
+            }
+          }
+          if (confirmedGhost) {
+            // Chain confirms the key was never really registered (expiry 0/past) —
+            // a true ghost. EVICT it, then open the Quick Sign enable prompt with
+            // THIS action as the retry: one signature registers a fresh REAL key and
+            // the action auto-retries.
+            try { useSessionKeyStore.getState().clearSessionForAddress(tokenOwner) } catch { /* best-effort */ }
+            const { useQuickSignPromptStore: promptStoreForGhost } = await import('~/components/modals/QuickSignModal')
+            return new Promise((resolve, reject) => {
+              promptStoreForGhost.getState().show(
+                async () => { try { resolve(await requestAndSubmit(params)) } catch (e) { reject(e) } },
+                () => reject(new Error('Quick Sign renewal cancelled')),
+              )
+            })
+          }
         }
         throw new Error(
           'This action was signed by a different profile\'s Quick Sign key. ' +
