@@ -431,6 +431,17 @@ export function buildServiceList(nodeType, config) {
         chainId: net.l1ChainId,
       }
     })
+    services.push({
+      service: 'DepositWatcher',
+      config: {
+        l1RpcUrl: '${L1_RPC_URL}',
+        chainId: net.l1ChainId,
+      }
+    })
+    services.push({
+      service: 'StakeLedgerReconciler',
+      config: {}
+    })
   }
 
   return services
