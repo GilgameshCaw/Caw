@@ -11,6 +11,34 @@ const redis = process.env.REDIS_URL
 const router = Router()
 
 /**
+ * Numerically compares two Wei-denominated amounts stored as strings.
+ * startPrice/amount columns are String in schema.prisma specifically
+ * to hold 18+ digit Wei values without integer overflow -- but that
+ * means a plain Prisma `orderBy` on these columns sorts them as
+ * PostgreSQL text (lexicographic/ASCII order), not numerically.
+ * "1000000000000000000" (1.0 ETH) sorts BEFORE "90000000000000000"
+ * (0.09 ETH) as a string (leading '1' < '9'), so price_asc/price_desc
+ * and "highest bid/offer" selection were both silently wrong whenever
+ * two values had a different number of digits -- live-confirmed on
+ * cawnest.com: a 355,660,137.41 CAW listing sorted as "cheapest"
+ * ahead of a 5.29 CAW listing under price_asc.
+ * Falls back to string comparison only if a value fails to parse as
+ * a BigInt (defensive; shouldn't happen for well-formed Wei strings).
+ */
+function compareWei(a: string | null | undefined, b: string | null | undefined): number {
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  try {
+    const bigA = BigInt(a)
+    const bigB = BigInt(b)
+    return bigA > bigB ? 1 : bigA < bigB ? -1 : 0
+  } catch {
+    return (a || '').localeCompare(b || '')
+  }
+}
+
+/**
  * GET /api/marketplace/listings
  * Filtered, sorted, paginated active listings.
  * Query params: type, minLength, maxLength, paymentToken, sort, limit, offset, status
@@ -52,28 +80,65 @@ router.get('/listings', async (req, res) => {
       ]
     }
 
+    // startPrice is a String column (see compareWei's doc comment) --
+    // price_asc/price_desc can't be expressed as a Prisma `orderBy`
+    // without sorting lexicographically. Fetch all matching rows
+    // (still respecting `where`), sort numerically in-process, then
+    // apply the same take/skip window the DB-sorted paths use, so
+    // pagination behaves identically regardless of sort mode.
+    const isPriceSort = sort === 'price_asc' || sort === 'price_desc'
+
     let orderBy: any = { createdAt: 'desc' }
     switch (sort) {
-      case 'price_asc':  orderBy = { startPrice: 'asc' }; break
-      case 'price_desc': orderBy = { startPrice: 'desc' }; break
       case 'newest':     orderBy = { createdAt: 'desc' }; break
       case 'length_asc': orderBy = { usernameLength: 'asc' }; break
       case 'length_desc': orderBy = { usernameLength: 'desc' }; break
     }
 
-    const [listings, total] = await Promise.all([
-      prisma.marketplaceListing.findMany({
-        where,
-        orderBy,
-        take: limit,
-        skip: offset,
-        include: {
-          bids: { where: { status: 'ACTIVE' }, orderBy: { amount: 'desc' }, take: 1 },
-          _count: { select: { bids: true } },
-        },
-      }),
-      prisma.marketplaceListing.count({ where }),
-    ])
+    let listings: any[]
+    let total: number
+
+    if (isPriceSort) {
+      const [allMatching, count] = await Promise.all([
+        prisma.marketplaceListing.findMany({
+          where,
+          include: {
+            bids: { where: { status: 'ACTIVE' }, orderBy: { amount: 'desc' } },
+            _count: { select: { bids: true } },
+          },
+        }),
+        prisma.marketplaceListing.count({ where }),
+      ])
+      allMatching.sort((a, b) =>
+        sort === 'price_asc' ? compareWei(a.startPrice, b.startPrice) : compareWei(b.startPrice, a.startPrice)
+      )
+      for (const listing of allMatching) {
+        listing.bids.sort((x: any, y: any) => compareWei(y.amount, x.amount))
+        listing.bids = listing.bids.slice(0, 1)
+      }
+      listings = allMatching.slice(offset, offset + limit)
+      total = count
+    } else {
+      const [dbListings, count] = await Promise.all([
+        prisma.marketplaceListing.findMany({
+          where,
+          orderBy,
+          take: limit,
+          skip: offset,
+          include: {
+            bids: { where: { status: 'ACTIVE' }, orderBy: { amount: 'desc' } },
+            _count: { select: { bids: true } },
+          },
+        }),
+        prisma.marketplaceListing.count({ where }),
+      ])
+      for (const listing of dbListings) {
+        listing.bids.sort((x: any, y: any) => compareWei(y.amount, x.amount))
+        listing.bids = listing.bids.slice(0, 1)
+      }
+      listings = dbListings
+      total = count
+    }
 
     res.json({ listings, total })
   } catch (err: any) {
@@ -114,8 +179,14 @@ router.get('/listings/token/:tokenId', async (req, res) => {
     const tokenId = parseInt(req.params.tokenId)
     const listing = await prisma.marketplaceListing.findFirst({
       where: { tokenId, status: 'ACTIVE' },
-      include: { bids: { where: { status: 'ACTIVE' }, orderBy: { amount: 'desc' } } },
+      include: { bids: { where: { status: 'ACTIVE' } } },
     })
+
+    // amount is a String column -- sort numerically, not lexicographically
+    // (see compareWei's doc comment).
+    if (listing) {
+      listing.bids.sort((a, b) => compareWei(b.amount, a.amount))
+    }
 
     res.json(listing || null)
   } catch (err: any) {
@@ -348,15 +419,17 @@ router.get('/offers/token/:tokenId', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
     const offset = parseInt(req.query.offset as string) || 0
 
-    const [offers, total] = await Promise.all([
+    // amount is a String column -- sort numerically, not lexicographically
+    // (see compareWei's doc comment). Fetch all active offers, sort
+    // in-process, then apply the same take/skip pagination window.
+    const [allOffers, total] = await Promise.all([
       prisma.marketplaceOffer.findMany({
         where: { tokenId, status: 'ACTIVE' },
-        orderBy: { amount: 'desc' },
-        take: limit,
-        skip: offset,
       }),
       prisma.marketplaceOffer.count({ where: { tokenId, status: 'ACTIVE' } }),
     ])
+    allOffers.sort((a, b) => compareWei(b.amount, a.amount))
+    const offers = allOffers.slice(offset, offset + limit)
 
     res.json({ offers, total })
   } catch (err: any) {
