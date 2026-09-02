@@ -93,6 +93,7 @@ export const actionProcessorService: Service = {
             } else {
               console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
               // Don't advance lastId — the next restart will retry this event.
+              break
             }
           }
           ctx.heartbeat('listen')
