@@ -98,6 +98,15 @@ export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?:
 export async function getTrendingByViews(limit: number = 10): Promise<number[]> {
   const trending = await prisma.caw.findMany({
     where: {
+      // Without this, a deleted (HIDDEN) or on-chain-confirmation-failed
+      // (FAILED) post that accrued enough views before that happened
+      // still qualifies -- its id then leaks into the trending list,
+      // and GET /api/views/trending's callers hit a 404 fetching its
+      // details. Matches the status filter tools/hashtags.ts already
+      // uses for hashtag trending, and lets the Caw model's existing
+      // @@index([status, createdAt]) composite index actually be used
+      // (leading column now constrained) instead of scanning past it.
+      status: 'SUCCESS',
       createdAt: {
         gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
       },
