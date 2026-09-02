@@ -18,7 +18,7 @@ router.get('/post/:cawId', async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 20, 100)
     const offset = Number(req.query.offset) || 0
 
-    const [tips, totalCount] = await Promise.all([
+    const [tips, totalCount, amountAgg] = await Promise.all([
       prisma.tip.findMany({
         where: { cawId },
         take: limit,
@@ -35,10 +35,19 @@ router.get('/post/:cawId', async (req, res) => {
           }
         }
       }),
-      prisma.tip.count({ where: { cawId } })
+      prisma.tip.count({ where: { cawId } }),
+      // Sum over ALL tips on this post, not just the current page --
+      // reducing over `tips` (the paginated page) silently understated
+      // the total once a post had more tips than one page's `limit`.
+      // Also excludes still-pending tips, matching what the rest of the
+      // app treats as "real" (confirmed) tip totals.
+      prisma.tip.aggregate({
+        where: { cawId, pending: false },
+        _sum: { amount: true }
+      })
     ])
 
-    const totalAmount = tips.reduce((sum, tip) => sum + tip.amount, 0)
+    const totalAmount = amountAgg._sum.amount ?? 0
 
     return res.json({ tips, totalAmount, count: totalCount, hasMore: offset + tips.length < totalCount })
   } catch (error) {
@@ -103,24 +112,32 @@ router.get('/received', requireAuth({ lookup: async (req) => Number(req.query.us
 
     const userTokenId = parseInt(userId as string)
 
-    const tips = await prisma.tip.findMany({
-      where: { recipientId: userTokenId },
-      take: Math.min(Number(limit), 100),
-      skip: Number(offset),
-      orderBy: { createdAt: 'desc' },
-      include: {
-        sender: {
-          select: {
-            tokenId: true,
-            username: true,
-            displayName: true,
-            avatarUrl: true, defaultAvatarId: true
+    const [tips, amountAgg] = await Promise.all([
+      prisma.tip.findMany({
+        where: { recipientId: userTokenId },
+        take: Math.min(Number(limit), 100),
+        skip: Number(offset),
+        orderBy: { createdAt: 'desc' },
+        include: {
+          sender: {
+            select: {
+              tokenId: true,
+              username: true,
+              displayName: true,
+              avatarUrl: true, defaultAvatarId: true
+            }
           }
         }
-      }
-    })
+      }),
+      // Sum over ALL tips this user has received, not just the current
+      // page -- see the matching fix in GET /post/:cawId above for why.
+      prisma.tip.aggregate({
+        where: { recipientId: userTokenId, pending: false },
+        _sum: { amount: true }
+      })
+    ])
 
-    const totalAmount = tips.reduce((sum, tip) => sum + tip.amount, 0)
+    const totalAmount = amountAgg._sum.amount ?? 0
 
     return res.json({ tips, totalAmount })
   } catch (error) {
