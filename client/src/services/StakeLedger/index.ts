@@ -142,13 +142,23 @@ interface RecordParams {
  * Run inside the same Prisma $transaction the caller is using for
  * domain effects. The math is pure bigint; the only DB I/O is the
  * row inserts and a final state-update.
+ *
+ * IMPORTANT (Post-Commit Mutation invariant): this function NEVER mutates
+ * the in-memory singleton `s`. All state transitions are staged locally
+ * (localMultiplier / localTotalCaw / stagedOwnership) and written to the DB
+ * from those locals; the singleton is updated only by the callback returned
+ * at the end, which the caller must execute strictly AFTER the transaction
+ * commits. Mutating `s` inside this callback would reintroduce the orphan
+ * mutation / double-count bug (DB rollback or Prisma deadlock-retry leaves
+ * memory diverged from the chain). Returns null when no memory update is
+ * due (halted, or action already processed).
  */
 export async function recordAction(
   tx: PrismaTransactionClient,
   params: RecordParams,
-): Promise<void> {
+): Promise<(() => void) | null> {
   const s = await ensureBooted()
-  if (s.halted) return // Operator must reseed before we resume.
+  if (s.halted) return null // Operator must reseed before we resume.
 
   // Skip already-processed actions on warm restart. ActionProcessor
   // resumes from lastId; we resume from (lastBlock, lastLogIndex).
@@ -156,11 +166,23 @@ export async function recordAction(
     params.blockNumber < s.lastBlock ||
     (params.blockNumber === s.lastBlock && params.logIndex <= s.lastLogIndex)
   ) {
-    return
+    return null
   }
 
   const { rawAction, validatorId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
   const senderId = Number(rawAction.senderId)
+
+  // Local state staging for Post-Commit Mutation pattern.
+  // DO NOT touch `s` below this line: every read goes through getOwn /
+  // localMultiplier / localTotalCaw so a rolled-back or retried transaction
+  // can never leak a partial state into the singleton.
+  let localMultiplier = s.multiplier
+  let localTotalCaw = s.totalCaw
+  const stagedOwnership = new Map<number, bigint>()
+  const getOwn = (tokenId: number): bigint => stagedOwnership.get(tokenId) ?? ownershipOf(s, tokenId)
+  const setOwn = (tokenId: number, own: bigint) => { stagedOwnership.set(tokenId, own) }
+  const localState = { ...s, multiplier: localMultiplier, totalCaw: localTotalCaw } as typeof s
+
   const receiverId = rawAction.receiverId ? Number(rawAction.receiverId) : 0
   const rawTypeName = ACTION_TYPE_NUM_TO_NAME[Number(rawAction.actionType) as keyof typeof ACTION_TYPE_NUM_TO_NAME]
   // Resolve OTHER:tip into a TIP actionType so the chart can stack tips
@@ -213,11 +235,11 @@ export async function recordAction(
     rawTypeName === 'FOLLOW'
   ) {
     const cost = ACTION_COST[rawTypeName as FixedCostActionType]
-    const senderOwn = ownershipOf(s, senderId)
-    const senderBalBefore = balanceOf(senderOwn, s.multiplier)
+    const senderOwn = getOwn(senderId)
+    const senderBalBefore = balanceOf(senderOwn, localMultiplier)
     let r: ReturnType<typeof spendAndDistribute>
     try {
-      r = spendAndDistribute(senderOwn, s, cost.spend * PRECISION, cost.communal * PRECISION)
+      r = spendAndDistribute(senderOwn, localState, cost.spend * PRECISION, cost.communal * PRECISION)
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
         console.error(
@@ -225,20 +247,21 @@ export async function recordAction(
           `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
         )
         s.halted = true
-        return
+        return null
       }
       throw err
     }
     if (r.communalDistributed > 0n) {
       multiplierEvents.push({
-        before: s.multiplier,
+        before: localMultiplier,
         after: r.multiplier,
         communal: r.communalDistributed,
         subActionIndex: subActionIndex++,
       })
     }
-    s.multiplier = r.multiplier
-    s.ownership.set(senderId, r.senderOwnership)
+    localMultiplier = r.multiplier
+    localState.multiplier = r.multiplier
+    setOwn(senderId, r.senderOwnership)
     pushTouch(
       senderId,
       r.senderBalance - senderBalBefore, // negative
@@ -249,10 +272,10 @@ export async function recordAction(
     )
 
     if (cost.receive > 0n && receiverId !== 0) {
-      const recvOwn = ownershipOf(s, receiverId)
-      const recvBalBefore = balanceOf(recvOwn, s.multiplier)
-      const recv = addToBalance(recvOwn, s.multiplier, cost.receive * PRECISION)
-      s.ownership.set(receiverId, recv.ownership)
+      const recvOwn = getOwn(receiverId)
+      const recvBalBefore = balanceOf(recvOwn, localMultiplier)
+      const recv = addToBalance(recvOwn, localMultiplier, cost.receive * PRECISION)
+      setOwn(receiverId, recv.ownership)
       pushTouch(
         receiverId,
         recv.balance - recvBalBefore,
@@ -267,17 +290,18 @@ export async function recordAction(
     // Modelled as ACTION_SPEND_BASE so the chart's outgoing stack
     // surfaces it the same way as other type-specific costs.
     const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
-    const senderOwn = ownershipOf(s, senderId)
-    const senderBal = balanceOf(senderOwn, s.multiplier)
+    const senderOwn = getOwn(senderId)
+    const senderBal = balanceOf(senderOwn, localMultiplier)
     if (senderBal < amount) {
       console.error(`[StakeLedger] WITHDRAW: insufficient balance — ledger drift? sender=${senderId} bal=${senderBal} amt=${amount}`)
       s.halted = true
-      return
+      return null
     }
     const newBal = senderBal - amount
-    const newOwn = ownershipFromBalance(newBal, s.multiplier)
-    s.ownership.set(senderId, newOwn)
-    s.totalCaw -= amount
+    const newOwn = ownershipFromBalance(newBal, localMultiplier)
+    setOwn(senderId, newOwn)
+    localTotalCaw -= amount
+    localState.totalCaw = localTotalCaw
     pushTouch(senderId, -amount, newOwn, newBal, 'ACTION_SPEND_BASE', null)
   }
   // UNLIKE / UNFOLLOW / OTHER (excluding tip side effects via amounts):
@@ -304,10 +328,10 @@ export async function recordAction(
     for (let i = startIndex; i < numRecipients; i++) {
       const recipientTokenId = Number(recipients[i])
       const amountWei = BigInt(amounts[i] ?? 0) * PRECISION
-      const recvOwn = ownershipOf(s, recipientTokenId)
-      const recvBalBefore = balanceOf(recvOwn, s.multiplier)
-      const recv = addToBalance(recvOwn, s.multiplier, amountWei)
-      s.ownership.set(recipientTokenId, recv.ownership)
+      const recvOwn = getOwn(recipientTokenId)
+      const recvBalBefore = balanceOf(recvOwn, localMultiplier)
+      const recv = addToBalance(recvOwn, localMultiplier, amountWei)
+      setOwn(recipientTokenId, recv.ownership)
       pushTouch(
         recipientTokenId,
         recv.balance - recvBalBefore,
@@ -328,11 +352,11 @@ export async function recordAction(
     // portion. This is what makes the outgoing chart legend usable.
     const recipientPortion = amountTotal - validatorTipWei
     if (amountTotal > 0n) {
-      const senderOwn = ownershipOf(s, senderId)
-      const senderBalBefore = balanceOf(senderOwn, s.multiplier)
+      const senderOwn = getOwn(senderId)
+      const senderBalBefore = balanceOf(senderOwn, localMultiplier)
       let r: ReturnType<typeof spendAndDistribute>
       try {
-        r = spendAndDistribute(senderOwn, s, amountTotal, 0n)
+        r = spendAndDistribute(senderOwn, localState, amountTotal, 0n)
       } catch (err: any) {
         if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
           console.error(
@@ -340,12 +364,13 @@ export async function recordAction(
             `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
           )
           s.halted = true
-          return
+          return null
         }
         throw err
       }
-      s.multiplier = r.multiplier // unchanged but assign for clarity
-      s.ownership.set(senderId, r.senderOwnership)
+      localMultiplier = r.multiplier
+      localState.multiplier = r.multiplier // unchanged but assign for clarity
+      setOwn(senderId, r.senderOwnership)
       // recipientPortion: tagged ACTION_SPEND_TIP (the user's outgoing
       // tip spend). For non-tip actions this segment is normally 0;
       // it shows up only when amounts has a payee beyond the validator.
@@ -385,10 +410,10 @@ export async function recordAction(
 
     // Validator receives the tip via addToBalance.
     if (validatorTipWei > 0n) {
-      const valOwn = ownershipOf(s, validatorId)
-      const valBalBefore = balanceOf(valOwn, s.multiplier)
-      const val = addToBalance(valOwn, s.multiplier, validatorTipWei)
-      s.ownership.set(validatorId, val.ownership)
+      const valOwn = getOwn(validatorId)
+      const valBalBefore = balanceOf(valOwn, localMultiplier)
+      const val = addToBalance(valOwn, localMultiplier, validatorTipWei)
+      setOwn(validatorId, val.ownership)
       pushTouch(
         validatorId,
         val.balance - valBalBefore,
@@ -430,7 +455,7 @@ export async function recordAction(
         logIndex,
         actionIndex,
         ownership: t.finalOwnership.toString(),
-        multiplier: s.multiplier.toString(),
+        multiplier: localMultiplier.toString(),
         balance: t.finalBalance.toString(),
         delta: t.delta.toString(),
         reason: t.reason,
@@ -474,25 +499,40 @@ export async function recordAction(
     }
   }
 
-  s.lastBlock = blockNumber
-  s.lastLogIndex = logIndex
   await tx.stakeLedgerState.upsert({
     where: { networkId: CAW_CLIENT_ID },
     create: {
       networkId: CAW_CLIENT_ID,
-      totalCaw: s.totalCaw.toString(),
-      multiplier: s.multiplier.toString(),
+      totalCaw: localTotalCaw.toString(),
+      multiplier: localMultiplier.toString(),
       lastBlock: blockNumber,
       lastLogIndex: logIndex,
     },
     update: {
-      totalCaw: s.totalCaw.toString(),
-      multiplier: s.multiplier.toString(),
+      totalCaw: localTotalCaw.toString(),
+      multiplier: localMultiplier.toString(),
       lastBlock: blockNumber,
       lastLogIndex: logIndex,
       updatedAt: new Date(),
     },
   })
+  // Post-commit mutation callback: apply the staged state to the singleton.
+  // The caller must invoke this exactly once, strictly AFTER
+  // `await prisma.$transaction(...)` resolves. Invoking it earlier
+  // reintroduces the orphan-mutation bug.
+  // Return the in-memory mutation callback to be executed strictly AFTER
+  // the DB transaction commits successfully. If the transaction rolls back
+  // (e.g. timeout on commit), this callback is not invoked and `s` remains
+  // completely untouched, preventing in-memory corruption on retry.
+  return () => {
+    s.multiplier = localMultiplier
+    s.totalCaw = localTotalCaw
+    s.lastBlock = blockNumber
+    s.lastLogIndex = logIndex
+    for (const [tokenId, own] of stagedOwnership) {
+      s.ownership.set(tokenId, own)
+    }
+  }
 }
 
 /**
