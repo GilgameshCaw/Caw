@@ -375,8 +375,8 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // checksum in handleRawEvent will halt the writer if state has
     // drifted.
     try {
-      await prisma.$transaction(async (tx) => {
-        await recordAction(tx, {
+      const postCommit = await prisma.$transaction(async (tx) => {
+        return await recordAction(tx, {
           rawAction,
           validatorId,
           blockNumber: raw.blockNumber,
@@ -386,6 +386,11 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
           actionIndex,
         })
       }, { timeout: 30_000 })
+      // Apply in-memory mutation strictly AFTER the DB transaction commits
+      // successfully. NEVER move this inside the $transaction callback: memory
+      // must never lead the DB (orphan mutation on rollback / double count on
+      // Prisma deadlock retry).
+      postCommit?.()
     } catch (err: any) {
       console.error('[ActionProcessor] StakeLedger snapshot failed (domain rows committed):', err?.message ?? err)
     }
