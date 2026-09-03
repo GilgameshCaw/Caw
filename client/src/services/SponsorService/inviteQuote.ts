@@ -17,7 +17,10 @@
 // redemption path is fee-free for authorized flows, so the only real cost is
 // gas + the LZ relay leg.
 
-import { getCawPriceCache, getEthPriceCache, getGasPriceCache, ensureFreshGasPriceCache } from '../ChainSyncService'
+import {
+  getCawPriceCache, getEthPriceCache, getGasPriceCache, ensureFreshGasPriceCache,
+  getLzDepositFeeCache, ensureFreshLzDepositFeeCache,
+} from '../ChainSyncService'
 
 // Gas budget for the eventual sponsored mint (mirrors GAS_LIMIT_BOOTSTRAP_BUDGET
 // in api/routes/sponsor.ts). The buyer pre-pays this so the validator is
@@ -39,9 +42,64 @@ const GAS_PRICE_SAFETY_NUM = 11n
 const GAS_PRICE_SAFETY_DEN = 10n
 // Treat a mainnet-gas cache older than this as unusable → fall back to the ceiling.
 const MAX_GAS_AGE_MS = 15 * 60 * 1000 // 15 minutes
-// LZ relay leg the validator fronts for the cross-chain deposit. Best-effort
-// flat estimate (same order as the budget calc's lzFee assumption).
-const LZ_RELAY_WEI = 1_000_000_000_000_000n // 0.001 ETH
+// LAST-RESORT fallback LZ relay fee, used ONLY when there's no L1 RPC AND the
+// on-demand fetch couldn't populate the lzDepositFeeCache (RPC down / not
+// configured). The hot path now quotes the LIVE LayerZero fee via
+// CawProfile.lzQuote (see ChainSyncService's lzDepositFeeCache) rather than
+// reaching for a constant, so this is a true degraded-mode floor. Measured real
+// fee is ~0.0001 ETH; kept at 0.00015 ETH (50% above measured) rather than the
+// old flat 0.001 ETH, which over-reserved by ~10x even in the degraded path.
+const LZ_RELAY_FALLBACK_WEI = 150_000_000_000_000n // 0.00015 ETH
+// Treat a live LZ-fee cache older than this as unusable → fall back to the floor.
+const MAX_LZ_FEE_AGE_MS = 15 * 60 * 1000 // 15 minutes
+// Safety pad on the live LZ quote: mirrors SponsorService's own 20% buffer on
+// the SAME lzQuote call (absorbs fee drift between quote-time and the eventual
+// real relay send). Applied whether the cache is fresh or merely stale — a
+// recently-real quote is still a far better basis than the constant floor.
+const LZ_FEE_SAFETY_NUM = 12n
+const LZ_FEE_SAFETY_DEN = 10n
+
+/**
+ * Turn a (possibly null/stale) LZ deposit-fee cache into an effective wei fee:
+ * the cached live quote × safety margin when present, else the degraded-mode
+ * floor. Mirrors applyGasMargin() below. NEVER returns 0 — a manipulated or
+ * degenerate 0-fee quote must still floor to something so the sponsor doesn't
+ * under-reserve LZ overhead (adversarial-safety: a returned 0 nativeFee from a
+ * misbehaving/misconfigured RPC must not zero out gasMarginCaw).
+ */
+function applyLzMargin(cache: { nativeFeeWei: bigint; updatedAt: number } | null): bigint {
+  if (cache && cache.nativeFeeWei > 0n) {
+    const padded = (cache.nativeFeeWei * LZ_FEE_SAFETY_NUM) / LZ_FEE_SAFETY_DEN
+    return padded > 0n ? padded : LZ_RELAY_FALLBACK_WEI
+  }
+  // No live quote at all (no L1 RPC + refresh failed, or a 0/negative quote):
+  // degraded floor so a price outage / bad quote doesn't zero out the reserve.
+  return LZ_RELAY_FALLBACK_WEI
+}
+
+/**
+ * The LZ relay fee to quote against (SYNC, cache-read only): the LIVE quoted
+ * native fee (× safety margin) when cached, else the degraded floor. Never
+ * returns 0. Prefer effectiveLzFeeWeiLive() on hot paths so a cold cache
+ * triggers a real fetch instead of the floor.
+ */
+function effectiveLzFeeWei(): bigint {
+  return applyLzMargin(getLzDepositFeeCache())
+}
+
+/**
+ * Async variant of effectiveLzFeeWei() that REFRESHES the LZ deposit-fee cache
+ * on demand when it's missing or stale, rather than falling back to the
+ * degraded constant. Mirrors ensureFreshGasPriceCache's usage pattern — the
+ * hot invite-quote ROUTE should call this (via quoteSponsorInviteCostCawLive
+ * below) so a cold cache (e.g. right after a server restart) triggers one real
+ * RPC quote instead of silently using the floor. Never throws; a failed
+ * refresh degrades to the constant floor via applyLzMargin.
+ */
+async function effectiveLzFeeWeiLive(): Promise<bigint> {
+  const cache = await ensureFreshLzDepositFeeCache(MAX_LZ_FEE_AGE_MS)
+  return applyLzMargin(cache)
+}
 
 /**
  * Turn a (possibly null/stale) gas cache into an effective wei price: the cached
@@ -270,9 +328,47 @@ export function quoteSponsorInviteCostCaw(): InviteQuote {
   // exists when the code is actually used, not when it was bought.
   const gasFloorCaw = ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
   // Purchase-time overhead the buyer pre-pays is now LZ-relay ONLY (no gas).
-  const gasMarginCaw = ethWeiToWholeCaw(LZ_RELAY_WEI, cawPrice.cawPerEth)
+  // Uses the LIVE LayerZero quote (cached, refreshed on the price loop) rather
+  // than a flat guess — the old flat 0.001 ETH constant was ~10x the real
+  // ~0.0001 ETH fee, over-reserving the buyer's tip for no reason.
+  const gasMarginCaw = ethWeiToWholeCaw(effectiveLzFeeWei(), cawPrice.cawPerEth)
 
   // USD per CAW: ethPerCaw (wei per 1 CAW) -> ETH -> USD via usdPerEth (scaled 1e6).
+  const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
+  const usdPerEthFloat = Number(ethPrice.usdPerEth) / 1e6
+  const cawUsdRate = ethPerCawFloat * usdPerEthFloat
+
+  const perActionCaw = perActionCostCaw(cawPrice.cawPerEth)
+
+  return { gasFloorCaw, gasMarginCaw, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate, perActionCaw, priceAvailable: true }
+}
+
+/**
+ * Async variant of quoteSponsorInviteCostCaw() that REFRESHES the LZ
+ * deposit-fee cache on demand (via effectiveLzFeeWeiLive) before computing the
+ * quote, rather than reading whatever's cached. Mirrors redeemGasCostCawLive's
+ * relationship to redeemGasCostCaw(). Use this from the GET /invite-quote
+ * ROUTE (which is already async) for the freshest possible number; the
+ * sync quoteSponsorInviteCostCaw() stays the version used by the indexer-side
+ * handler (handleSponsorInvite.ts), which must stay a pure cache-read.
+ */
+export async function quoteSponsorInviteCostCawLive(): Promise<InviteQuote> {
+  const cawPrice = getCawPriceCache()
+  const ethPrice = getEthPriceCache()
+
+  if (!cawPrice || !ethPrice || cawPrice.cawPerEth <= 0n) {
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, perActionCaw: 0n, priceAvailable: false }
+  }
+
+  const now = Date.now()
+  if (now - cawPrice.updatedAt > MAX_PRICE_AGE_MS || now - ethPrice.updatedAt > MAX_PRICE_AGE_MS) {
+    return { gasFloorCaw: 0n, gasMarginCaw: 0n, maxGiftCaw: MAX_INVITE_GIFT_CAW, cawUsdRate: 0, perActionCaw: 0n, priceAvailable: false }
+  }
+
+  const gasWei = effectiveGasPriceWei() * GAS_LIMIT_BOOTSTRAP
+  const gasFloorCaw = ethWeiToWholeCaw(gasWei, cawPrice.cawPerEth)
+  const gasMarginCaw = ethWeiToWholeCaw(await effectiveLzFeeWeiLive(), cawPrice.cawPerEth)
+
   const ethPerCawFloat = Number(cawPrice.ethPerCaw) / 1e18
   const usdPerEthFloat = Number(ethPrice.usdPerEth) / 1e6
   const cawUsdRate = ethPerCawFloat * usdPerEthFloat

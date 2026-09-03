@@ -2,10 +2,10 @@
 // Generic service for syncing on-chain data to the database
 
 import { prisma } from '../../prismaClient'
-import { JsonRpcProvider, Contract, verifyTypedData } from 'ethers'
+import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder, dataSlice, id as ethersId } from 'ethers'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
-import { cawNetworkManagerAbi } from '../../abi/generated'
-import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS } from '../../abi/addresses'
+import { cawNetworkManagerAbi, cawProfileAbi } from '../../abi/generated'
+import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
 const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
@@ -71,6 +71,13 @@ interface CachedGasPrice {
   updatedAt: number      // Timestamp
 }
 
+interface CachedLzDepositFee {
+  nativeFeeWei: bigint   // CawProfile.lzQuote() native fee for a deposit-relay
+                         // bundle (lzDepositMintSession selector), keyed off the
+                         // SAME call shape SponsorService.sponsorBootstrap sends.
+  updatedAt: number      // Timestamp
+}
+
 // ============================================================================
 // State
 // ============================================================================
@@ -93,6 +100,10 @@ let ethPriceCache: CachedEthPrice | null = null
 // Mainnet L1 gas price — refreshed on the same price loop. Drives the invite
 // quote (and any other "what will redemption cost on mainnet" estimate).
 let gasPriceCache: CachedGasPrice | null = null
+// Live LayerZero deposit-relay native fee (Sepolia CawProfile.lzQuote), refreshed
+// on the same price loop. Replaces the old flat LZ_RELAY_WEI guess in the invite
+// quote, which was ~10x the real fee.
+let lzDepositFeeCache: CachedLzDepositFee | null = null
 // Sepolia CAW/WETH pool spot — the actual price the testnet zap charges.
 // On mainnet deploys this stays null (CAW_PAIR_ADDRESS != mainnet pair) and
 // consumers fall back to the mainnet cawPriceCache for everything.
@@ -453,10 +464,65 @@ async function syncMainnetGasPrice(): Promise<void> {
   }
 }
 
+// Reference deposit amount used ONLY for the fee-estimate quote below (not a
+// real deposit). LayerZero's native fee is priced off the OUTBOUND MESSAGE
+// BYTE LENGTH, not its content — every field in the ABI-encoded bundle payload
+// is a fixed-width slot (uint32/uint256/address/etc. are always 32 bytes; the
+// three trailing arrays are empty, same as SponsorService's own placeholder
+// call), so the encoded length — and therefore the quoted fee — does NOT vary
+// with the numeric value placed in the amount slot. 1 CAW (1e18 wei) is used
+// purely as a nonzero placeholder to match SponsorService's real call shape.
+const LZ_QUOTE_REFERENCE_DEPOSIT_WEI = 10n ** 18n // 1 CAW
+
+// Default L2 destination for the LZ fee-estimate quote. This deployment only
+// ever relays to one L2 (Base Sepolia, LZ eid 40245 — see
+// CreateAccountStep.tsx DEFAULT_LZ_DEST_ID), so a single cached quote covers
+// the real path; LZ_QUOTE_NETWORK_ID/LZ_QUOTE_DEST_ID let an operator override
+// if a future deployment relays elsewhere.
+const LZ_QUOTE_NETWORK_ID = Number(process.env.LZ_QUOTE_NETWORK_ID || 1)
+const LZ_QUOTE_DEST_ID = Number(process.env.LZ_QUOTE_DEST_ID || 40245)
+
+// Selector for CawProfile's internal `_bundleNoSession` / lzDepositMintSession
+// call shape — MUST match SponsorService/index.ts's LZ_BUNDLE_SELECTOR exactly,
+// since lzQuote's fee is a function of this selector + payload shape. Any drift
+// here would quote the fee for a DIFFERENT message than the one actually sent.
+const LZ_BUNDLE_SELECTOR = dataSlice(
+  ethersId('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])'),
+  0, 4,
+) as `0x${string}`
+
+async function syncLzDepositFee(): Promise<void> {
+  if (!l1Provider || !CAW_NAMES_ADDRESS) return  // no L1 RPC / no CawProfile address
+  try {
+    const cawProfile = new Contract(CAW_NAMES_ADDRESS, cawProfileAbi as any, l1Provider)
+    const bundlePayload = AbiCoder.defaultAbiCoder().encode(
+      ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint64[]'],
+      [LZ_QUOTE_NETWORK_ID, 0, LZ_QUOTE_REFERENCE_DEPOSIT_WEI, '', '0x0000000000000000000000000000000000000000', 0, 0, 0, [], [], []],
+    )
+    const bundlePayloadWithSelector = LZ_BUNDLE_SELECTOR + bundlePayload.slice(2)
+    const quote = await cawProfile.lzQuote(
+      LZ_QUOTE_NETWORK_ID,
+      LZ_BUNDLE_SELECTOR,
+      0n,
+      bundlePayloadWithSelector,
+      LZ_QUOTE_DEST_ID,
+      false, // pay in native ETH
+    )
+    const nativeFee: bigint = quote.nativeFee ?? quote[0]
+    if (nativeFee == null || nativeFee < 0n) return
+    lzDepositFeeCache = { nativeFeeWei: nativeFee, updatedAt: Date.now() }
+    console.log(`[ChainSync:Prices] LZ deposit fee = ${(Number(nativeFee) / 1e18).toFixed(6)} ETH`)
+  } catch (err: any) {
+    console.error('[ChainSync:Prices] Failed to fetch LZ deposit fee:', err.message)
+    maybeRebuildProviders(err)
+  }
+}
+
 // Dedup concurrent on-demand refreshes: many redeems can land in the same tick,
 // and we don't want each one firing its own RPC. The first awaits the fetch; the
 // rest piggyback on the same in-flight promise.
 let gasPriceRefreshInFlight: Promise<CachedGasPrice | null> | null = null
+let lzDepositFeeRefreshInFlight: Promise<CachedLzDepositFee | null> | null = null
 
 /**
  * Return a FRESH mainnet gas-price cache, fetching on demand when the in-memory
@@ -479,6 +545,28 @@ export async function ensureFreshGasPriceCache(
       .finally(() => { gasPriceRefreshInFlight = null })
   }
   return gasPriceRefreshInFlight
+}
+
+/**
+ * Return a FRESH LZ deposit-fee cache, fetching on demand when the in-memory
+ * cache is missing or older than maxAgeMs. Mirrors ensureFreshGasPriceCache()
+ * exactly — see that doc for the dedup rationale. Returns null only when
+ * there's no L1 provider configured OR the RPC/quote call fails; callers apply
+ * their own constant fallback for that genuinely-degraded case.
+ */
+export async function ensureFreshLzDepositFeeCache(
+  maxAgeMs: number = 60 * 1000,
+): Promise<CachedLzDepositFee | null> {
+  if (lzDepositFeeCache && Date.now() - lzDepositFeeCache.updatedAt <= maxAgeMs) {
+    return lzDepositFeeCache
+  }
+  if (!l1Provider) return lzDepositFeeCache  // no RPC to refresh from
+  if (!lzDepositFeeRefreshInFlight) {
+    lzDepositFeeRefreshInFlight = syncLzDepositFee()
+      .then(() => lzDepositFeeCache)
+      .finally(() => { lzDepositFeeRefreshInFlight = null })
+  }
+  return lzDepositFeeRefreshInFlight
 }
 
 async function syncPrices(): Promise<void> {
@@ -593,6 +681,14 @@ export function getEthPriceCache(): CachedEthPrice | null {
  *  staleness policy and fall back to a conservative constant when null. */
 export function getGasPriceCache(): CachedGasPrice | null {
   return gasPriceCache
+}
+
+/** Live LayerZero deposit-relay fee cache (native wei + updatedAt), or null when
+ *  no L1 RPC is configured / no successful quote yet. Consumers should apply
+ *  their own staleness policy and fall back to a conservative constant when
+ *  null (see LZ_RELAY_FALLBACK_WEI in inviteQuote.ts). */
+export function getLzDepositFeeCache(): CachedLzDepositFee | null {
+  return lzDepositFeeCache
 }
 
 /**
@@ -1278,6 +1374,17 @@ export const chainSyncService = {
         sync: syncL1FeeEvents,
       })
       ctx.declareLoop('ChainSync:L1FeeEvents', 15 * 60_000) // 3× interval
+
+      // Live LayerZero deposit-relay fee (CawProfile.lzQuote), on the SAME
+      // interval/loop shape as the mainnet gas price it pairs with in the
+      // invite quote. Uses l1Provider (Sepolia), not mainnetProvider, so it's
+      // gated on l1RpcUrl rather than the mainnet-price-only gate below.
+      registerTask({
+        name: 'LzDepositFee',
+        interval: 5 * 60 * 1000, // 5 minutes
+        sync: syncLzDepositFee,
+      })
+      ctx.declareLoop('ChainSync:LzDepositFee', 15 * 60_000) // 3× interval
     }
 
     // Only register price sync if we have mainnet RPC

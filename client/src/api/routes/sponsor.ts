@@ -36,7 +36,7 @@ import {
 } from '../middleware/validateSponsorCode'
 import { getCawPriceCache, getEthPriceCache, ensureFreshGasPriceCache } from '../../services/ChainSyncService'
 import { hashCode } from '../../services/SponsorService/codes'
-import { quoteSponsorInviteCostCaw, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
+import { quoteSponsorInviteCostCawLive, quoteExecuteGasFeeCaw, quoteExecuteGasFeeEth, redeemGasCostCawLive } from '../../services/SponsorService/inviteQuote'
 import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, WETH_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
@@ -2039,7 +2039,11 @@ router.get('/code/:code', async (req, res) => {
 // recipients[0] so this mirror is the one that mints. Resolved lazily; omitted
 // (null) until the validator identity is known.
 router.get('/invite-quote', async (_req, res) => {
-  const quote = quoteSponsorInviteCostCaw()
+  // *Live variant: refreshes the LZ deposit-fee cache on demand (cold cache /
+  // stale > MAX_LZ_FEE_AGE_MS) so this route never quotes the degraded
+  // constant floor when a real RPC fetch is available. Same pattern as
+  // redeemGasCostCawLive() below.
+  const quote = await quoteSponsorInviteCostCawLive()
   const validatorTokenId = await getOwnValidatorTokenId().catch(() => null)
   return res.status(200).json({
     gasFloorCaw: quote.gasFloorCaw.toString(),
