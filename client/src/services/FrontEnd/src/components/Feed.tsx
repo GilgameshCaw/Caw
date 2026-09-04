@@ -2,7 +2,7 @@
 import React, { useEffect, useLayoutEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
-import { apiFetch } from '../api/client'
+import { apiFetch, IndexingError, RemovedCawError } from '../api/client'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
@@ -703,8 +703,19 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               }
             })
           )
-        } catch {
-          // Ignore errors
+        } catch (err) {
+          // deleted/rolled-back (404) or author-hidden (410 RemovedCawError)
+          // caws never return -> stop polling by dropping from the feed.
+          // IndexingError (202) = not in DB yet -> keep polling; anything
+          // else = transient/network -> keep polling (previous behaviour).
+          const gone =
+            err instanceof RemovedCawError ||
+            (err instanceof Error &&
+              !(err instanceof IndexingError) &&
+              /^API 4(?:04|10)\b/.test(err.message))
+          if (gone) {
+            setItems(current => current.filter(item => item.id !== caw.id))
+          }
         }
       }
     }, 3000)
