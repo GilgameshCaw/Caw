@@ -99,9 +99,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [likeCountAdj, setLikeCountAdj] = useState(0)
   const [recawCountAdj, setRecawCountAdj] = useState(0)
   const [replyCountAdj, setReplyCountAdj] = useState(0)
+  const [tipCountAdj, setTipCountAdj] = useState(0)
   const [likeCountBase, setLikeCountBase] = useState<number | null>(null)
   const [recawCountBase, setRecawCountBase] = useState<number | null>(null)
   const [replyCountBase, setReplyCountBase] = useState<number | null>(null)
+  const [tipCountBase, setTipCountBase] = useState<number | null>(null)
 
   // Polling for pending items is handled centrally by Feed.tsx (unified polling interval).
   // No per-item polling hooks needed here — avoids 5 timers × N items = cascading jank.
@@ -289,6 +291,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const effectiveReplyAdj = settled(replyCountAdj, useItem.commentCount, replyCountBase) ? 0 : replyCountAdj
   const effectiveRecawAdj = settled(recawCountAdj, useItem.recawCount, recawCountBase) ? 0 : recawCountAdj
   const effectiveLikeAdj  = settled(likeCountAdj,  useItem.likeCount,    likeCountBase)  ? 0 : likeCountAdj
+  const effectiveTipAdj   = settled(tipCountAdj, useItem.tipCount ?? 0, tipCountBase)    ? 0 : tipCountAdj
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
@@ -2007,8 +2010,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineCurrencyDollar className={`${uiDensity === 'compact' ? 'w-4 h-4 mb-[4px]' : 'w-5 h-5 mb-[5px]'}`} />
-                {(useItem.tipCount ?? 0) > 0 && (
-                  <span className={`${uiDensity === 'compact' ? 'text-[11px] -translate-y-[2px]' : 'text-xs -translate-y-[3px]'}`}>{useItem.tipCount}</span>
+                {((useItem.tipCount ?? 0) + effectiveTipAdj) > 0 && (
+                  <span className={`${uiDensity === 'compact' ? 'text-[11px] -translate-y-[2px]' : 'text-xs -translate-y-[3px]'}`}>{(useItem.tipCount ?? 0) + effectiveTipAdj}</span>
                 )}
               </button></Tooltip>
               )}
@@ -2342,6 +2345,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         onTipSubmitted={() => {
           setTipPending(true)
           onTipStateChange?.(item.id, true)
+          // Optimistic count bump, same pattern as like/recaw/reply above --
+          // TipModal confirms the tx client-side but the server's tipCount
+          // (SUCCESS-only aggregate) won't reflect it until the on-chain tip
+          // confirms, which otherwise required a hard refresh to see.
+          setTipCountBase(useItem.tipCount ?? 0)
+          setTipCountAdj(prev => prev + 1)
         }}
       />
 
