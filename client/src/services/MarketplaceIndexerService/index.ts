@@ -636,6 +636,14 @@ export const marketplaceIndexerService: Service = {
               data: { status: 'ACCEPTED' },
             })
 
+            // Ownership just transferred to the buyer. Any prior active listing
+            // for this token is now stale (the seller no longer owns it, and
+            // acceptOffer cancelled it on-chain). Cancel it so it stops appearing as live.
+            await prisma.marketplaceListing.updateMany({
+              where: { tokenId, status: 'ACTIVE' },
+              data: { status: 'CANCELLED' },
+            })
+
             // Notify seller and buyer. Mirrors the Sale-event SALE_SOLD/
             // SALE_BOUGHT pair above (L289-347) — an accepted offer is a
             // completed sale too, it just has no MarketplaceListing/Sale
