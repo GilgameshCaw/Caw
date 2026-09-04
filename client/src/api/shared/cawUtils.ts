@@ -307,7 +307,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     // viewer's own vote come from a follow-up enrichWithPollVotes() call —
     // groupBy + targeted findMany is cheaper than fanning aggregates out
     // through Prisma's nested includes for every list endpoint.
-    poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
+    poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
     ...(includeHashtags && {
       hashtags: {
         include: { hashtag: { select: { name: true } } }
@@ -331,7 +331,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
         bookmarks: currentUserId
           ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
           : false,
-        poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
+        poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }
