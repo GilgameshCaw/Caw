@@ -1596,11 +1596,18 @@ router.post('/', async (req, res) => {
             const voterId = data.senderId
 
             if (parsed.optionIndex === null) {
-              // Optimistic unvote: drop ALL rows for this voter on this
-              // poll (covers both single-select and multi-select).
-              await prisma.vote.deleteMany({
-                where: { pollId, voterId },
-              })
+              // Optimistic unvote: same class of bug as the change-vote
+              // and toggle-ON cases below -- deleting the confirmed
+              // row(s) here, before on-chain confirmation, means
+              // handleVoteAction's `existing` query comes up empty by
+              // the time the on-chain unvote lands, so it takes the
+              // "no existing vote, no-op" branch and totalVotes never
+              // gets decremented. The frontend's own optimistic state
+              // (PollDisplay.tsx) already reflects the unvote locally
+              // without needing this row gone from the DB, so there's
+              // nothing to write here -- leave the confirmed row(s)
+              // intact and let the indexer delete + decrement at
+              // confirm time.
             } else if (targetCaw.poll.multiSelect) {
               // Multi-select toggle. Find the existing row for this
               // specific (pollId, voterId, optionIndex) — if present,
@@ -1623,16 +1630,19 @@ router.post('/', async (req, res) => {
                 })
               }
             } else {
-              // Single-select optimistic vote / change-vote. Drop any
-              // prior rows on a DIFFERENT optionIndex first (the new
-              // pick replaces the old), then upsert the row on the new
-              // option as pending. If the user already had this exact
-              // option marked, the upsert just re-stamps pending=true
-              // (a no-op for the UI but resets the failure-cleanup
-              // window — accept it).
-              await prisma.vote.deleteMany({
-                where: { pollId, voterId, NOT: { optionIndex: parsed.optionIndex } },
-              })
+              // Single-select optimistic vote / change-vote. Do NOT
+              // delete any prior confirmed row here -- the indexer
+              // (handleVoteAction) needs that row to still exist when
+              // the on-chain action lands so it can tell "this is a
+              // change from option X" apart from "this is a fresh
+              // vote", and decrement totalVotes for the old option
+              // accordingly. Deleting it here early made that
+              // distinction unrecoverable and caused totalVotes to
+              // only ever increment, never decrement, on every vote
+              // change (see PR body for the live-DB reproduction).
+              // Just upsert the new pick as pending; the indexer
+              // reconciles the prior row (delete + decrement) and this
+              // row (confirm + increment) atomically at confirm time.
               await prisma.vote.upsert({
                 where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
                 update: { cawonce: data.cawonce, pending: true },

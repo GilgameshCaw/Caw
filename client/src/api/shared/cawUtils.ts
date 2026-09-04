@@ -412,10 +412,29 @@ export async function enrichWithPollVotes(
     for (let i = 0; i < optionsLen; i++) optionVoteCounts.push(inner.get(i) || 0)
     caw.poll.optionVoteCounts = optionVoteCounts
     const myVotes = myVotesByPoll.get(pid) ?? []
-    caw.poll.userVotes = myVotes
+    // Single-select polls can briefly hold two rows for the same voter
+    // during a vote change now that the API path no longer deletes the
+    // prior confirmed row up front (see actions.ts) -- the old
+    // confirmed row and the new pending pick coexist until the
+    // indexer reconciles them at on-chain confirm time. Prefer the
+    // pending row so the UI reflects the voter's latest optimistic
+    // choice instead of flickering back to the stale confirmed one.
+    // Multi-select polls can legitimately have several confirmed rows
+    // at once (one per picked option), so this narrowing only applies
+    // to single-select.
+    let effectiveUserVotes = myVotes
+    let effectiveUserVote = myVotes[0] ?? null
+    if (!caw.poll.multiSelect && myVotes.length > 1) {
+      const pendingVote = myVotes.find(v => v.pending)
+      if (pendingVote) {
+        effectiveUserVote = pendingVote
+        effectiveUserVotes = [pendingVote]
+      }
+    }
+    caw.poll.userVotes = effectiveUserVotes
     // Back-compat: keep userVote populated with the first row so the
     // single-select renderer path still works without changes.
-    caw.poll.userVote = myVotes[0] ?? null
+    caw.poll.userVote = effectiveUserVote
     // Strip the internal id so it doesn't leak into responses.
     delete (caw.poll as any)._pollId
   }
