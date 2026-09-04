@@ -22,9 +22,9 @@
 import { prisma } from '../../prismaClient'
 import type { PrismaTransactionClient, RawAction } from '../ActionProcessor/types'
 import {
-  ACTION_COST,
   ACTION_TYPE_NUM_TO_NAME,
   type FixedCostActionType,
+  getActionCost,
 } from '../../utils/cawActionCosts'
 import {
   PRECISION,
@@ -34,6 +34,7 @@ import {
   addToBalance,
 } from './contractMath'
 import { getCawProfileLedger as _getCawProfileLedgerReal } from './cawProfileLedger'
+import { getCawActions as _getCawActionsReal } from './cawActionsContract'
 import { getNetworkId } from '../../utils/networkId'
 
 // Tests can override this to avoid real RPC calls.
@@ -42,6 +43,13 @@ let _cawProfileLedgerOverride: { rewardMultiplier: (...args: any[]) => Promise<a
 
 function getCawProfileLedger(): { rewardMultiplier: (...args: any[]) => Promise<any> } {
   return (_cawProfileLedgerOverride ?? _getCawProfileLedgerReal()) as any
+}
+
+// Tests can override this to avoid real RPC calls.
+let _cawActionsOverride: { capState: (...args: any[]) => Promise<any> } | null = null
+
+function getCawActions(): { capState: (...args: any[]) => Promise<any> } {
+  return (_cawActionsOverride ?? _getCawActionsReal()) as any
 }
 
 // One client per process — the snapshotter reads CLIENT_ID from env at
@@ -58,6 +66,11 @@ const CAW_CLIENT_ID = (() => {
 export interface RuntimeState {
   multiplier: bigint
   totalCaw: bigint
+  // Dynamic action-cost cap (CawActions.capState), refreshed in
+  // verifyMultiplier(). 0n ratio means the oracle is dormant — costs fall
+  // back to the manifesto baseline. See cawActionCosts.getActionCost().
+  capRatio: bigint
+  capLastUpdatedAt: bigint
   // Cached cawOwnership[tokenId]. Loaded lazily — on first touch we read
   // from CawOwnershipCurrent (or assume 0n for never-seen tokens).
   ownership: Map<number, bigint>
@@ -89,10 +102,25 @@ export async function ensureBooted(): Promise<RuntimeState> {
     const ownership = new Map<number, bigint>()
     const currentRows = await prisma.cawOwnershipCurrent.findMany()
     for (const row of currentRows) ownership.set(row.tokenId, BigInt(row.ownership))
+
+    let initialCapRatio = 0n
+    let initialCapLastUpdatedAt = 0n
+    try {
+      const cs = await getCawActions().capState()
+      if (cs && cs[0] !== undefined && cs[1] !== undefined) {
+        initialCapLastUpdatedAt = BigInt(cs[0])
+        initialCapRatio = BigInt(cs[1])
+      }
+    } catch (err: any) {
+      console.warn('[StakeLedger] Failed to fetch initial capState from CawActions; defaulting to 0n (baseline costs):', err?.message ?? err)
+    }
+
     const next: RuntimeState = persisted
       ? {
           multiplier: BigInt(persisted.multiplier),
           totalCaw: BigInt(persisted.totalCaw),
+          capRatio: initialCapRatio,
+          capLastUpdatedAt: initialCapLastUpdatedAt,
           ownership,
           lastBlock: BigInt(persisted.lastBlock),
           lastLogIndex: persisted.lastLogIndex,
@@ -101,6 +129,8 @@ export async function ensureBooted(): Promise<RuntimeState> {
       : {
           multiplier: PRECISION,
           totalCaw: 0n,
+          capRatio: initialCapRatio,
+          capLastUpdatedAt: initialCapLastUpdatedAt,
           ownership,
           lastBlock: 0n,
           lastLogIndex: -1,
@@ -212,7 +242,8 @@ export async function recordAction(
     rawTypeName === 'RECAW' ||
     rawTypeName === 'FOLLOW'
   ) {
-    const cost = ACTION_COST[rawTypeName as FixedCostActionType]
+    const blockSec = BigInt(Math.floor(blockTimestamp.getTime() / 1000))
+    const cost = getActionCost(rawTypeName as FixedCostActionType, s.capRatio, s.capLastUpdatedAt, blockSec)
     const senderOwn = ownershipOf(s, senderId)
     const senderBalBefore = balanceOf(senderOwn, s.multiplier)
     let r: ReturnType<typeof spendAndDistribute>
@@ -690,6 +721,17 @@ export async function verifyMultiplier(): Promise<void> {
     }
   }
 
+  // Keep capRatio and capLastUpdatedAt fresh in case the oracle pushed a new ratio
+  try {
+    const cs = await getCawActions().capState()
+    if (cs && cs[0] !== undefined && cs[1] !== undefined) {
+      s.capLastUpdatedAt = BigInt(cs[0])
+      s.capRatio = BigInt(cs[1])
+    }
+  } catch {
+    // non-critical: transient RPC failure should not break verification
+  }
+
   if (onChain !== s.multiplier) {
     console.error(
       `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier} ` +
@@ -716,6 +758,11 @@ export function _resetForTests(): void {
 /** For tests: inject a mock contract so verifyMultiplier never hits a real RPC. */
 export function _setContractForTests(mock: { rewardMultiplier: (...args: any[]) => Promise<any> } | null): void {
   _cawProfileLedgerOverride = mock
+}
+
+/** For tests: inject a mock CawActions contract to control capState. */
+export function _setActionsContractForTests(mock: { capState: (...args: any[]) => Promise<any> } | null): void {
+  _cawActionsOverride = mock
 }
 
 /** For tests: directly inject RuntimeState, bypassing Prisma boot. */
