@@ -1573,7 +1573,7 @@ async function handleHideAction(
     // grace, see orphanedMedia.ts) so revertable hides don't lose data.
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { imageData: true },
+      select: { id: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1587,6 +1587,22 @@ async function handleHideAction(
       markOrphansInImageData(target?.imageData).catch(e =>
         console.warn('[handleHideAction] markOrphansInImageData failed:', e)
       )
+      // #77: hiding a pinned caw must release its pin slot. The pin row is
+      // self-only (only the author can pin their own post), so at most the
+      // sender's own row references this caw. Left in place it keeps counting
+      // toward pinnedCawCount and occupies a top-3 read slot while the caw is
+      // invisible on the profile — a 3/3 cap deadlock with no reachable Unpin.
+      // HIDDEN is terminal for status (no on-chain un-hide), so the row is dead
+      // weight: delete it and recompute the derived counter.
+      if (target) {
+        const removed = await tx.pinnedCaw.deleteMany({
+          where: { userId: senderId, cawId: target.id },
+        })
+        if (removed.count > 0) {
+          await recomputePinnedCount(tx, senderId)
+          console.log(`[handleHideAction] Auto-unpinned hidden caw=${target.id} for user=${senderId}`)
+        }
+      }
     } else {
       console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)
     }
