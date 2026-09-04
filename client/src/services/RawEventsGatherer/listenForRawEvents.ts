@@ -220,6 +220,24 @@ export default async function listenForRawEvents(
        * one INSERT instead of N. Falls back to storeEvent when absent.
        */
       storeBatch?(events: RawEventInput[]): Promise<void>
+      /**
+       * Counts how many of the given logs already have a matching RawEvent
+       * row (by the blockNumber/logIndex/transactionHash unique key). Used
+       * before the historical rescan's processEvents() call: if every log in
+       * `past` is already stored, there's nothing to derive and the rescan
+       * skips re-fetching tx calldata for it entirely. This matters because
+       * a restart re-walks the whole configured floor range by design (see
+       * startBlock comment above) -- on a long-running node most or all of
+       * that range is already ingested, and re-deriving packedActions for
+       * settled history means re-fetching every one of those tx bodies, which
+       * non-archive RPC providers (e.g. sepolia.base.org) stop serving after
+       * a few days. Without this check, a node on a free/non-archive RPC
+       * would hit the fetch_failed throw below on every restart for events
+       * it already has -- and unlike the poll() path, the historical-sync
+       * call site has no catch around it, so that throw takes the whole
+       * service down rather than just logging a warning.
+       */
+      countExisting?(events: Log[]): Promise<number>
     }
     /** Optional callback to signal liveness — called at the end of each successful poll */
     onTick?: () => void
@@ -502,7 +520,35 @@ export default async function listenForRawEvents(
     }
   }
 
-  await processEvents(past, httpContract)
+  // Skip re-deriving events the DB already has. A restart re-walks the
+  // whole configured floor range by design; on a long-running node most of
+  // `past` is typically already ingested. processEvents() re-fetches each
+  // event's tx calldata to recover packedActions -- fine for genuinely new
+  // events, but non-archive RPC providers stop serving old tx bodies after a
+  // few days, which would otherwise turn this rescan into a fetch_failed
+  // throw for settled history it doesn't need to touch. All-or-nothing
+  // check (not per-event filtering) so the sequential parentHash chaining in
+  // processEvents stays untouched when any part of `past` is genuinely new.
+  //
+  // Branches on a flag rather than clearing `past` itself: `past` is read
+  // again below (lastSyncedBlock = past.length > 0 ? past[...].blockNumber
+  // : startBlock) to seed the poll cursor's starting point. Emptying `past`
+  // here would fall that ternary through to startBlock -- the configured
+  // floor -- instead of the block the historical scan actually reached,
+  // sending every subsequent poll tick re-walking the whole floor-to-tip
+  // range on every restart where the skip fires. Keeping `past` intact
+  // preserves the real high-water mark for that read while still avoiding
+  // the processEvents() call itself.
+  const skipDerive =
+    past.length > 0 &&
+    !!config.rawEventsProvider.countExisting &&
+    (await config.rawEventsProvider.countExisting(past)) === past.length
+
+  if (skipDerive) {
+    console.log(`[RawEventsGatherer] Historical rescan: all ${past.length} events already stored, skipping re-derive`)
+  } else {
+    await processEvents(past, httpContract)
+  }
 
   // Setup WebSocket for real-time events
   async function setupWebSocket() {
