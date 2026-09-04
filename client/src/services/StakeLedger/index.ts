@@ -540,6 +540,7 @@ export async function recordDeposit(
   const own = ownershipOf(s, tokenId)
   const startingBalance = balanceOf(own, s.multiplier)
   const after = addToBalance(own, s.multiplier, amountWei)
+  const nextTotalCaw = s.totalCaw + amountWei
 
   await tx.cawOwnershipSnapshot.create({
     data: {
@@ -589,13 +590,13 @@ export async function recordDeposit(
     where: { networkId: CAW_CLIENT_ID },
     create: {
       networkId: CAW_CLIENT_ID,
-      totalCaw: s.totalCaw.toString(),
+      totalCaw: nextTotalCaw.toString(),
       multiplier: s.multiplier.toString(),
       lastBlock: blockNumber,
       lastLogIndex: logIndex,
     },
     update: {
-      totalCaw: s.totalCaw.toString(),
+      totalCaw: nextTotalCaw.toString(),
       multiplier: s.multiplier.toString(),
       lastBlock: blockNumber,
       lastLogIndex: logIndex,
