@@ -143,6 +143,18 @@ export function useFollowButton({
     const actionType = pendingActionRef.current
     const effectiveTokenId = activeToken.tokenId
 
+    // Same receiver guard as handleFollowClick, but for the wallet-connect
+    // resubmit path: this effect reads targetUserId from its closure and never
+    // re-checks it. If it was valid at click time but went stale/0 during the
+    // awaiting-connection window, an invalid FOLLOW would still be signed here.
+    if (!targetUserId || targetUserId <= 0) {
+      console.log('[FollowButton] Skipping wallet-connect resubmit — invalid targetUserId', { targetUserId })
+      isSubmittingRef.current = false
+      setAwaitingConnection(false)
+      pendingActionRef.current = null
+      return
+    }
+
     // Clear awaiting state immediately to prevent re-runs
     setAwaitingConnection(false)
     pendingActionRef.current = null
@@ -307,6 +319,16 @@ export function useFollowButton({
   const handleFollowClick = async () => {
     console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
+
+    // Guard against an unresolved receiver: if targetUserId is 0/undefined
+    // (tokenId not yet resolved, or a stale prop), bail before signing.
+    // Without this, receiverId:0 is baked into the payload and an invalid
+    // FOLLOW is signed + enqueued. All call sites pass user.tokenId with no
+    // >0 check, so this hook-level guard is the shared backstop.
+    if (!targetUserId || targetUserId <= 0) {
+      console.log('[FollowButton] Early return — invalid targetUserId', { targetUserId })
+      return
+    }
     // Don't do anything if wrong wallet
     if (wrongWallet) {
       console.log('[FollowButton] Early return — wrongWallet')
