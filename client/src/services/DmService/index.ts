@@ -87,6 +87,36 @@ export class DmService {
     // (dm-relay.ts), so any drift here breaks federation.
     const id = deterministicConversationId(userIdA, userIdB)
 
+    // Determine userIdB's (the "recipient" for this creation call)
+    // inbox status, matching dm-relay.ts's first-contact routing rule
+    // exactly: first contact + neither side follows the other -> the
+    // recipient's participant row starts as REQUEST (Requests tab);
+    // otherwise ACCEPTED (Main tab). This is a get-OR-create -- since
+    // `existing` above already returned early for any prior
+    // conversation, reaching here always means first contact, so we
+    // don't need dm-relay.ts's separate isFirstContact check.
+    //
+    // Deliberately mirrors dm-relay.ts's own Follow lookup as-is
+    // (matched on followerId/followingId/action only, not status) so
+    // the two routing paths agree with each other bit-for-bit. Note
+    // for a future pass: neither this nor dm-relay.ts checks
+    // Follow.status, so a not-yet-confirmed (PENDING) follow is
+    // treated the same as a confirmed one here -- a narrow, largely
+    // harmless window (the common case is the follower themselves
+    // messaging right after following, which is expected to land in
+    // Main either way) rather than something this PR changes.
+    const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
+      prisma.follow.findFirst({
+        where: { followerId: userIdA, followingId: userIdB, action: 'FOLLOW' }
+      }),
+      prisma.follow.findFirst({
+        where: { followerId: userIdB, followingId: userIdA, action: 'FOLLOW' }
+      }),
+    ])
+    const recipientStatus: 'ACCEPTED' | 'REQUEST' = (!senderFollowsRecipient && !recipientFollowsSender)
+      ? 'REQUEST'
+      : 'ACCEPTED'
+
     return prisma.conversation.create({
       data: {
         id,
@@ -94,8 +124,8 @@ export class DmService {
         creatorId: userIdA,
         participants: {
           create: [
-            { userId: userIdA },
-            { userId: userIdB }
+            { userId: userIdA, status: 'ACCEPTED' },
+            { userId: userIdB, status: recipientStatus }
           ]
         }
       },
@@ -394,6 +424,10 @@ export class DmService {
     return prisma.conversationParticipant.count({
       where: {
         userId,
+        // Match the same leftAt: null filter the requests-tab list
+        // query uses, so the badge count and the list it's counting
+        // never disagree.
+        leftAt: null,
         status: 'REQUEST',
         conversation: { messages: { some: {} } },
       },
