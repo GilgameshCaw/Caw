@@ -220,6 +220,16 @@ export default async function listenForRawEvents(
        * one INSERT instead of N. Falls back to storeEvent when absent.
        */
       storeBatch?(events: RawEventInput[]): Promise<void>
+      /**
+       * Floor-fill guard (idempotent, Redis-backed). isFloorFilled() reports
+       * whether the historical scan down to the configured startBlock has
+       * completed on a prior run; markFloorFilled() records completion. Once
+       * filled, restarts resume from the last processed block instead of
+       * re-flooring to startBlock and re-scanning the whole
+       * config.startBlock..last range on every restart.
+       */
+      isFloorFilled(): Promise<boolean>
+      markFloorFilled(): Promise<void>
     }
     /** Optional callback to signal liveness — called at the end of each successful poll */
     onTick?: () => void
@@ -254,6 +264,7 @@ export default async function listenForRawEvents(
     : null
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
+  const floorAlreadyFilled = await config.rawEventsProvider.isFloorFilled()
   // Resolve the historical-scan start block.
   //
   // A configured startBlock (config.json override or Network.creationBlock) is a
@@ -270,7 +281,15 @@ export default async function listenForRawEvents(
   // double-processing, just gap-filling. So we never MISS history, and never
   // re-process what's already there.
   let startBlock: number
-  if (config.startBlock !== undefined) {
+  let resumingFromLast = false
+  if (config.startBlock !== undefined && last && floorAlreadyFilled) {
+    // Floor already filled on a prior run — the config.startBlock..last range
+    // is fully in the DB, so resume from `last` instead of re-flooring to the
+    // configured startBlock and re-scanning that whole range on every restart.
+    startBlock = last.blockNumber
+    resumingFromLast = true
+    console.log(`[RawEventsGatherer] Floor already filled — resuming from last processed block ${startBlock}`)
+  } else if (config.startBlock !== undefined) {
     startBlock = last ? Math.min(last.blockNumber, config.startBlock) : config.startBlock
     if (last && config.startBlock < last.blockNumber) {
       console.log(`[RawEventsGatherer] Flooring scan at configured startBlock ${config.startBlock} (last event at ${last.blockNumber} — filling history below it)`)
@@ -279,6 +298,7 @@ export default async function listenForRawEvents(
     }
   } else if (last) {
     startBlock = last.blockNumber
+    resumingFromLast = true
   } else {
     startBlock = await httpProvider.getBlockNumber()
     console.log(`[RawEventsGatherer] Fresh DB, no startBlock configured — starting from current block ${startBlock}`)
@@ -286,7 +306,7 @@ export default async function listenForRawEvents(
   // parentHash chain seed: only trust `last`'s hash when we're actually
   // resuming from it (no configured floor pulling us earlier); otherwise the
   // historical walk re-derives the chain from the floor.
-  let lastHash = (config.startBlock === undefined && last) ? last.parentHash : 'genesis'
+  let lastHash = (resumingFromLast && last) ? last.parentHash : 'genesis'
 
   function hashNext(prev: string, action: any): string {
     // JSON stringify with bigint→string replacer
@@ -503,6 +523,17 @@ export default async function listenForRawEvents(
   }
 
   await processEvents(past, httpContract)
+
+  // Historical fill down to the configured floor is now complete and durably
+  // in the DB. Record it so subsequent restarts resume from `last` (see the
+  // floor-already-filled branch above) rather than re-scanning the whole
+  // config.startBlock..latest range each time. Setting this without a real
+  // fill is harmless: the resume branch also requires `last`, so the flag
+  // only changes behaviour once there is a last-processed block to resume from.
+  if (config.startBlock !== undefined && !floorAlreadyFilled) {
+    await config.rawEventsProvider.markFloorFilled()
+    console.log(`[RawEventsGatherer] Marked floor-fill complete — future restarts resume from last processed block`)
+  }
 
   // Setup WebSocket for real-time events
   async function setupWebSocket() {

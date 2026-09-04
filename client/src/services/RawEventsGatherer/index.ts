@@ -206,6 +206,22 @@ export const rawEventsGathererService: Service = {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish,
           storeBatch:            storeBatchAndPublish,
+          // Floor-fill completion is persisted in ChainData (DB) rather than
+          // Redis: the flag is a write-once, never-touched-again key, so under
+          // an LRU/LFU maxmemory-policy it is the prime eviction candidate among
+          // the hot per-poll cursors — and losing it forces a full historical
+          // re-floor. ChainData is as durable as the events themselves and is
+          // never evicted. Written only after processEvents() returns
+          // successfully (see markFloorFilled call site), so a crash mid-scan
+          // still fails safe toward re-floor, never toward a false "filled".
+          isFloorFilled:   async () => {
+            const row = await prisma.chainData.findUnique({ where: { key: `raw-events-gatherer:${chainId}:${networkId}:floor-filled` } })
+            return (row?.value as any)?.filled === true
+          },
+          markFloorFilled: async () => {
+            const key = `raw-events-gatherer:${chainId}:${networkId}:floor-filled`
+            await prisma.chainData.upsert({ where: { key }, update: { value: { filled: true } }, create: { key, value: { filled: true } } })
+          },
         },
         onTick: () => ctx.heartbeat('poll'),
       })
