@@ -13,6 +13,7 @@ import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
+import { NotificationService } from '../NotificationService'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -225,6 +226,26 @@ async function cleanupPendingTips() {
             where: { id: pendingTip.id },
             data: { pending: false }
           })
+          // Notification was never sent for this tip -- it only reaches
+          // this fallback path because ActionProcessor already missed the
+          // original on-chain event (that's what "event missed" means for
+          // the completedTx branch below; here an Action row exists but
+          // this sweep is what's confirming it, so the normal
+          // handleTipAction notification call never ran either). Fire it
+          // here so the recipient still finds out, same call shape as the
+          // two live-indexing call sites in actionHandlers.ts.
+          try {
+            await NotificationService.createTipNotification(
+              pendingTip.recipientId,
+              pendingTip.senderId,
+              pendingTip.cawId || undefined,
+              pendingTip.amount,
+              prisma,
+              pendingTip.cawonce,
+            )
+          } catch (notifErr) {
+            logger.error(` Failed to create tip notification for confirmed tip ${pendingTip.id}:`, notifErr)
+          }
         } else {
           // No Action record — check if txQueue completed (ActionProcessor may have missed the event)
           const completedTx = await prisma.txQueue.findFirst({
@@ -241,6 +262,22 @@ async function cleanupPendingTips() {
               where: { id: pendingTip.id },
               data: { pending: false }
             })
+            // Same rationale as the action-confirmed branch above: this
+            // path only runs because the indexer missed the on-chain
+            // event entirely, so no notification was ever sent for this
+            // tip through the normal live path.
+            try {
+              await NotificationService.createTipNotification(
+                pendingTip.recipientId,
+                pendingTip.senderId,
+                pendingTip.cawId || undefined,
+                pendingTip.amount,
+                prisma,
+                pendingTip.cawonce,
+              )
+            } catch (notifErr) {
+              logger.error(` Failed to create tip notification for confirmed tip ${pendingTip.id}:`, notifErr)
+            }
           } else if (pendingTip.createdAt < thirtyMinutesAgo) {
             // No action and no completed tx after 30 minutes, delete the optimistic tip
             logger.log(` Removing failed tip from user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
