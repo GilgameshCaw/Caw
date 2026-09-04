@@ -83,12 +83,15 @@ interface HighlightedTextareaProps {
 // resets textarea.value back to the frozen prop after EVERY composition
 // keystroke on Blink — wiping the 変換中 text and killing the IME session,
 // which made Japanese input impossible on Chrome/Edge (measured on the live
-// bundle, 2026-07-30). Going uncontrolled on WebKit/Blink breaks their IME,
-// so the Gecko gate itself stays — exported because PostForm gates its
-// composition-freeze to Gecko with the same test.
+// bundle, 2026-07-30). Going uncontrolled was long believed to break the IME
+// on WebKit and Blink; measured on an iPhone 2026-08-26, it does not on iOS.
+// Exported because PostForm gates its composition-freeze with the same tests.
 // Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
 export const IS_GECKO =
   typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
+
+export const IS_IOS =
+  typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigator.userAgent)
 
 const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   value,
@@ -160,6 +163,14 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // changes on viewport-rotate / browser-resize / virtual-keyboard-show
   // leave the textarea at its old height.
   const [resizeTick, setResizeTick] = useState(0)
+  // While uncontrolled during composition (IS_GECKO/IS_IOS below) the `value`
+  // prop is frozen at its pre-composition text, so the autoResize effect and
+  // the measurement mirror would size the box for the OLD content and the
+  // composing lines fall outside the visible box. Read the live DOM value
+  // instead; compositionupdate bumps resizeTick so this re-evaluates.
+  const measuredValue = isComposing && (IS_GECKO || IS_IOS)
+    ? (internalRef.current?.value ?? value)
+    : value
   useEffect(() => {
     if (!autoResize) return
     const onResize = () => setResizeTick(t => t + 1)
@@ -257,7 +268,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       setOverlayHeight(next)
     })
     return () => cancelAnimationFrame(rafId)
-  }, [autoResize, value, compact, lineHeight, fontSize, resizeTick])
+  }, [autoResize, measuredValue, compact, lineHeight, fontSize, resizeTick])
 
   // Apply mention/hashtag/URL highlighting to a single text slice. Used both
   // for the whole `value` (no chunk boundaries) and for each between-boundary
@@ -373,6 +384,13 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   // aborts composition on Firefox. The declarative styles stay static
   // (transparent / opacity:1); React won't overwrite our imperative values on
   // an unrelated re-render because it only writes style props that changed.
+  // Bump resizeTick on every composition keystroke. While uncontrolled the
+  // `value` prop never changes, so nothing else would re-render and the
+  // autoResize effect (which now reads measuredValue) would never re-run.
+  const handleCompositionUpdateInternal = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    if (autoResize) setResizeTick(t => t + 1)
+    onCompositionUpdate?.(e)
+  }
   const handleCompositionStartInternal = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     composingRef.current = true
     setIsComposing(true)
@@ -571,14 +589,14 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         }}
         rows={rows}
         placeholder={placeholder}
-        // Uncontrolled during composition ONLY on Firefox (see IS_GECKO): there
-        // React's mid-composition value write aborts the IME. On WebKit/Blink we
-        // keep it controlled — going uncontrolled there breaks their IME.
-        value={isComposing && IS_GECKO ? undefined : value}
+        // Uncontrolled during composition on Firefox (IS_GECKO) and iOS WebKit
+        // (IS_IOS): there React's mid-composition value write aborts the IME.
+        // Both measured on device. On Blink we keep it controlled.
+        value={isComposing && (IS_GECKO || IS_IOS) ? undefined : value}
         onChange={onChange}
         onCompositionStart={handleCompositionStartInternal}
         onCompositionEnd={handleCompositionEndInternal}
-        onCompositionUpdate={onCompositionUpdate}
+        onCompositionUpdate={handleCompositionUpdateInternal}
         onClick={onClick}
         onKeyUp={onKeyUp}
         onKeyDown={onKeyDown}
@@ -590,7 +608,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       />
 
       {/* Placeholder overlay when empty */}
-      {!value && placeholder && (
+      {!value && !isComposing && placeholder && (
         <div
           className={`absolute pointer-events-none ${textSizeClass} ${
             isDark ? 'text-gray-500' : 'text-gray-600'
@@ -630,8 +648,8 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         >
           {/* Trailing space + zero-width joiner so a value ending in
               \n still counts the trailing empty line in offsetHeight. */}
-          {value || '.'}
-          {value.endsWith('\n') ? '​' : ''}
+          {measuredValue || '.'}
+          {measuredValue.endsWith('\n') ? '​' : ''}
         </div>
       )}
     </div>

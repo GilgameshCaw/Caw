@@ -89,7 +89,7 @@ function gifSearchQuery(text: string): string {
     .filter(w => w.length > 1 && !stopWords.has(w))
   return words.slice(-5).join(' ')
 }
-import HighlightedTextarea, { IS_GECKO } from './HighlightedTextarea'
+import HighlightedTextarea, { IS_GECKO, IS_IOS } from './HighlightedTextarea'
 import { useT } from '~/i18n/I18nProvider'
 import { acquireScrollLock, releaseScrollLock } from '~/utils/scrollLock'
 
@@ -519,6 +519,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  const frozenChunksRef = useRef<{ chunkCount: number; chunkBoundaries: number[] } | null>(null)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -964,13 +965,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // there), so committing interim text here would re-render the controlled
     // textarea mid-composition and abort the IME — the exact failure this
     // handler's Firefox-lag guard below also protects against. Bail early
-    // and let compositionend do the single commit. On Blink handleTextChange
-    // now commits every interim value anyway; on iOS WebKit (the engine this
-    // live commit exists for, since compositionend can be dropped there) the
-    // path below still runs.
-    if (IS_GECKO) return
+    // and let compositionend do the single commit. iOS WebKit (IS_IOS) is now
+    // uncontrolled during composition too, so it takes the same early exit.
+    // On Blink handleTextChange commits every interim value anyway; the path
+    // below still runs there and on desktop Safari.
+    if (IS_GECKO || IS_IOS) return
     const ta = e.currentTarget
-    // The live commit here exists only for iOS WebKit, which may not fire
+    // The live commit here exists for WebKit, which may not fire
     // compositionend, and which DOES reflect the composing text in ta.value at
     // this point. Firefox does NOT: ta.value still holds the pre-composition
     // value (the composing char lands only on the `input` event). Detect that
@@ -1996,12 +1997,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
-  const { chunkCount, chunkBoundaries } = getChunkInfo(
+  // While an IME composition is open we do NOT recompute the chunk layout.
+  // Recomputing changes how many textareas are mounted (and the value each
+  // one holds), which ends the composition. Freezing the layout — not just
+  // the single/thread flag — covers every boundary, not only the first.
+  const rawChunkInfo = getChunkInfo(
     text,
     includePageIndicators,
     firstChunkMediaCost + firstChunkPollCost,
     lastChunkMediaCost + lastChunkPollCost,
   )
+  if (!isComposingRef.current) frozenChunksRef.current = rawChunkInfo
+  const { chunkCount, chunkBoundaries } =
+    (isComposingRef.current && frozenChunksRef.current) ? frozenChunksRef.current : rawChunkInfo
 
   // ---------------------------------------------------------------------------
   // Per-chunk slices (marker-stripped) for the N-textarea thread UI.
@@ -2217,6 +2225,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // observed as "second time entering thread mode, focus is lost."
     const skipThisRender = cursorRestoreSkipRef.current
     cursorRestoreSkipRef.current = false
+    // While an IME composition is open the browser owns the composing
+    // range. focus() + a collapsed setSelectionRange() destroys it, so the
+    // next conversion INSERTS instead of replacing the reading (observed as
+    // duplicated text). Leave pendingMasterCursorRef intact — the render
+    // after compositionend restores the caret correctly.
+    if (isComposingRef.current) return
     if (!isThreadMode) {
       // Also drop any pending master cursor on the way out — it was set
       // for a chunk layout that no longer exists.
@@ -2752,7 +2766,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3 w-full">
             {/* Input — single textarea (single-post) or N textareas (thread mode) */}
             <div className="flex-1 min-w-0 relative">
-              {isThreadMode ? (
                 <div>
                   {chunkSlices.map((slice, i) => (
                     <React.Fragment key={i}>
@@ -2779,10 +2792,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         value={slice}
                         composedValueRef={lastComposedRef}
                         onChange={(e) => {
-                          // Gecko-only freeze — same reasoning as
+                          // Gecko/iOS freeze — same reasoning as
                           // handleTextChange (Blink wipes the composing
                           // text via controlled-state restore if skipped).
-                          if (isComposingRef.current && IS_GECKO) {
+                          if (isComposingRef.current && (IS_GECKO || IS_IOS)) {
                             lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
                             return
                           }
@@ -2844,41 +2857,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
                   />
                 </div>
-              ) : (
-                <>
-                  <HighlightedTextarea
-                    value={text}
-                    composedValueRef={lastComposedRef}
-                    onChange={handleTextChange}
-                    onCompositionStart={handleCompositionStart}
-                    onCompositionEnd={handleCompositionEnd}
-                    onCompositionUpdate={handleCompositionUpdate}
-                    onClick={handleTextClick}
-                    onKeyUp={handleTextKeyUp}
-                    onDragOver={handleTextareaDragOver}
-                    onDragLeave={handleTextareaDragLeave}
-                    onDrop={handleTextareaDrop}
-                    rows={replyTo ? 3 : 1}
-                    placeholder={
-                      replyTo
-                        ? `Reply to @${replyTo.user.username}`
-                        : (
-                          placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                        )
-                    }
-                    textareaRef={textareaRef}
-                    fontSize="base"
-                    compact={!!replyTo || hasMedia}
-                    autoResize
-                  />
-                  <MentionAutocomplete
-                    text={text}
-                    cursorPosition={cursorPosition}
-                    onSelect={handleMentionSelect}
-                    textareaRef={textareaRef}
-                  />
-                </>
-              )}
               {/* Drag overlay */}
               {isDragOverTextarea && (
                 <div className="absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
@@ -3349,7 +3327,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           onMouseUp={() => { threadSelDragging.current = false }}
         >
         <div className="relative">
-          {isThreadMode ? (
             <>
               {chunkSlices.map((slice, i) => (
                 <React.Fragment key={i}>
@@ -3394,10 +3371,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     value={slice}
                     composedValueRef={lastComposedRef}
                     onChange={(e) => {
-                      // Gecko-only freeze — same reasoning as
+                      // Gecko/iOS freeze — same reasoning as
                       // handleTextChange (Blink wipes the composing
                       // text via controlled-state restore if skipped).
-                      if (isComposingRef.current && IS_GECKO) {
+                      if (isComposingRef.current && (IS_GECKO || IS_IOS)) {
                         lastComposedRef.current = { value: e.target.value, caret: e.target.selectionStart ?? e.target.value.length }
                         return
                       }
@@ -3471,41 +3448,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 textareaRef={{ current: chunkRefs.current[activeChunkIndex] ?? null }}
               />
             </>
-          ) : (
-            <>
-              <HighlightedTextarea
-                value={text}
-                composedValueRef={lastComposedRef}
-                onChange={handleTextChange}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                onCompositionUpdate={handleCompositionUpdate}
-                onClick={handleTextClick}
-                onKeyUp={handleTextKeyUp}
-                onDragOver={handleTextareaDragOver}
-                onDragLeave={handleTextareaDragLeave}
-                onDrop={handleTextareaDrop}
-                rows={desktopRows}
-                placeholder={
-                  replyTo
-                    ? `Reply to @${replyTo.user.username}`
-                    : (
-                      placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
-                    )
-                }
-                textareaRef={textareaRef}
-                fontSize={replyTo ? 'base' : 'xl'}
-                compact={!!replyTo || hasMedia}
-                autoResize
-              />
-              <MentionAutocomplete
-                text={text}
-                cursorPosition={cursorPosition}
-                onSelect={handleMentionSelect}
-                textareaRef={textareaRef}
-              />
-            </>
-          )}
           {/* Drag overlay */}
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
