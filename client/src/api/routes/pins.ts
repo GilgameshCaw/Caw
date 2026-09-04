@@ -64,9 +64,9 @@ router.post('/:cawId', async (req, res) => {
 
     const target = await prisma.caw.findUnique({
       where: { id: cawId },
-      select: { userId: true },
+      select: { userId: true, status: true },
     })
-    if (!target) return res.status(404).json({ error: 'Post not found' })
+    if (!target || target.status !== 'SUCCESS') return res.status(404).json({ error: 'Post not found' })
     if (target.userId !== userId) {
       return res.status(403).json({ error: 'You can only pin your own posts' })
     }
