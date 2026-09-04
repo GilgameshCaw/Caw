@@ -4,6 +4,7 @@ import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
+import { cleanStaleOgCache } from '../../api/routes/og'
 import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
@@ -1324,7 +1325,38 @@ async function runDataCleanup() {
   // there's nothing to do (single ZRANGEBYSCORE).
   await sweepOrphanedMediaTask()
 
+  // Clean stale OG card image cache from disk (>7 days old or >2000
+  // files). Nothing else in the codebase ever prunes this directory --
+  // see cleanStaleOgCache's doc comment in og.ts. Throttled to run at
+  // most once per hour (below) so DataCleaner's normal per-minute tick
+  // doesn't churn a readdir+stat over every cached PNG that often.
+  await sweepOgCacheTask()
+
   logger.log('All cleanup tasks completed')
+}
+
+// Throttle: DataCleaner's main loop ticks every minute, but scanning
+// the OG cache directory (readdir + stat per file) doesn't need to
+// run nearly that often -- once an hour keeps disk I/O negligible
+// while still reclaiming space well within the 7-day TTL window.
+let lastOgCacheSweep = 0
+const OG_CACHE_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
+
+async function sweepOgCacheTask() {
+  const now = Date.now()
+  if (now - lastOgCacheSweep < OG_CACHE_SWEEP_INTERVAL) return
+  lastOgCacheSweep = now
+  try {
+    const res = await cleanStaleOgCache()
+    if (res.deleted > 0) {
+      const freedMb = (res.freedBytes / (1024 * 1024)).toFixed(2)
+      logger.log(
+        `OG cache sweep: deleted ${res.deleted} stale images, freed ${freedMb} MB (scanned ${res.scanned})`
+      )
+    }
+  } catch (err: any) {
+    logger.error(`OG cache sweep error: ${err?.message || err}`)
+  }
 }
 
 async function sweepOrphanedMediaTask() {

@@ -2531,6 +2531,72 @@ async function serveCachedOrRender(
   }
 }
 
+/**
+ * Clean up stale OG card PNGs from the disk cache. Nothing in this file
+ * (or anywhere else -- grepped the repo) ever deletes from CACHE_DIR,
+ * so it grows without bound: crawlers/social-bots hit every locale
+ * variant of every profile/caw/hashtag card, and any profile stat
+ * change (follower count, avatar, etc.) mints a new cacheKey, leaving
+ * the old one to sit forever. Live-confirmed on cawnest.com: 3,147
+ * files / 1.2GB accumulated with no cleanup mechanism at all.
+ *
+ * Safe to prune freely -- serveCachedOrRender's fs.existsSync check
+ * means a missing file just falls through to build() and regenerates
+ * on the next request (~20-50ms), never a 404 or broken image.
+ *
+ * Removes files older than maxAgeMs (default: 7 days), and if the
+ * surviving count still exceeds maxFiles (default: 2000, ~800MB at
+ * ~400KB/file), evicts the oldest-by-mtime until back under the cap --
+ * an LRU-style safety ceiling independent of the TTL, so a sudden
+ * traffic spike within the 7-day window can't blow past a bounded
+ * disk footprint.
+ */
+export async function cleanStaleOgCache(
+  maxAgeMs: number = 7 * 24 * 60 * 60 * 1000,
+  maxFiles: number = 2000
+): Promise<{ scanned: number; deleted: number; freedBytes: number }> {
+  if (!fs.existsSync(CACHE_DIR)) return { scanned: 0, deleted: 0, freedBytes: 0 }
+  try {
+    const files = await fs.promises.readdir(CACHE_DIR)
+    const pngFiles = files.filter(f => f.endsWith('.png'))
+    const now = Date.now()
+    let deleted = 0
+    let freedBytes = 0
+    const surviving: { file: string; mtimeMs: number; size: number }[] = []
+
+    for (const file of pngFiles) {
+      const fullPath = path.join(CACHE_DIR, file)
+      try {
+        const stat = await fs.promises.stat(fullPath)
+        if (now - stat.mtimeMs > maxAgeMs) {
+          await fs.promises.unlink(fullPath)
+          deleted++
+          freedBytes += stat.size
+        } else {
+          surviving.push({ file: fullPath, mtimeMs: stat.mtimeMs, size: stat.size })
+        }
+      } catch { /* best-effort — ignore race with concurrent delete */ }
+    }
+
+    if (surviving.length > maxFiles) {
+      surviving.sort((a, b) => a.mtimeMs - b.mtimeMs)
+      const excess = surviving.slice(0, surviving.length - maxFiles)
+      for (const item of excess) {
+        try {
+          await fs.promises.unlink(item.file)
+          deleted++
+          freedBytes += item.size
+        } catch { /* best-effort */ }
+      }
+    }
+
+    return { scanned: pngFiles.length, deleted, freedBytes }
+  } catch (err: any) {
+    console.error('[og] cleanStaleOgCache failed:', err?.message || err)
+    return { scanned: 0, deleted: 0, freedBytes: 0 }
+  }
+}
+
 router.get('/image/profile/:username', async (req, res) => {
   const username = String(req.params.username).toLowerCase()
   // ?locale=<code> selects the chrome language; validated against the
