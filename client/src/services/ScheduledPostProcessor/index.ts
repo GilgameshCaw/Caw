@@ -242,6 +242,17 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
       const txQueueEntry = await prisma.txQueue.create({
         data: {
           senderId: data.senderId,
+          // Without this, the row lands with cawonce: NULL, which the
+          // partial unique index TxQueue_senderId_cawonce_active_unique
+          // (see migration 20260429100000) explicitly excludes via its
+          // own `AND "cawonce" IS NOT NULL` clause -- so a NULL-cawonce
+          // row is silently invisible to the duplicate-submission guard
+          // that every other action path (e.g. api/routes/actions.ts's
+          // insert) relies on. A processor restart or polling race
+          // while a scheduled post is in flight could then insert a
+          // second TxQueue row for the same underlying signed action,
+          // with no DB-level protection to catch it.
+          cawonce: data.cawonce,
           payload: { data, domain, types },
           signedTx: signature
         }
