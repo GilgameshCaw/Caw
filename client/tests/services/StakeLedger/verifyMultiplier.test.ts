@@ -24,6 +24,8 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   return {
     multiplier: PRECISION,
     totalCaw: 0n,
+    capRatio: 0n,
+    capLastUpdatedAt: 0n,
     ownership: new Map(),
     lastBlock: 100n,
     lastLogIndex: 0,
