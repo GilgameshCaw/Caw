@@ -21,7 +21,7 @@ import { z } from 'zod'
 import 'dotenv/config'
 import { Service } from '../../Service'
 import { Contract, AbstractProvider, Interface } from 'ethers'
-import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeVerifiedFallbackJsonRpcProvider, getL1HttpRpcUrls } from '../../utils/rpcProvider'
 import { getValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 import { scanLogsBackward, findContractDeployBlock } from '../../utils/chunkedLogs'
 import { cawNetworkManagerAbi } from '../../abi/generated'
@@ -357,7 +357,8 @@ export const instanceRegistryService: Service = {
 
   start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
-    const l1RpcUrl = getL1HttpRpcUrl() || cfg.l1RpcUrl
+    const configuredL1RpcUrls = getL1HttpRpcUrls()
+    const l1RpcUrls = configuredL1RpcUrls.length > 0 ? configuredL1RpcUrls : [cfg.l1RpcUrl]
     const networkId = Number(getNetworkId() || cfg.networkId || cfg.clientId)
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
     const pollIntervalMs = cfg.pollIntervalMs ?? 60_000
@@ -471,7 +472,7 @@ export const instanceRegistryService: Service = {
     const started = (async () => {
       // Chain-ID-verified provider construction (async probe). Falls through
       // with a warning on transient RPC failure — service stays up.
-      _provider = await makeVerifiedJsonRpcProvider(l1RpcUrl, expectedL1ChainId)
+      _provider = await makeVerifiedFallbackJsonRpcProvider(l1RpcUrls, expectedL1ChainId)
       _signer = getValidatorSigner({ provider: _provider as any })
       _canRegister = !!(_signer && apiUrl)
       if (!_signer) {
