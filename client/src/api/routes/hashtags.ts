@@ -60,13 +60,15 @@ router.get('/:tag/caws', async (req, res) => {
             hashtags: {
               include: { hashtag: { select: { name: true } } }
             },
+            _count: { select: { tips: { where: { pending: false } } } },
             parent: {
               include: {
                 user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
                 poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
                 hashtags: {
                   include: { hashtag: { select: { name: true } } }
-                }
+                },
+                _count: { select: { tips: { where: { pending: false } } } }
               }
             }
           }
