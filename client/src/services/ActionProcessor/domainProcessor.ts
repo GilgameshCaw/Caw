@@ -86,7 +86,8 @@ export async function processDomainEffects(
   tx: PrismaTransactionClient,
   action: any,
   rawAction: RawAction,
-  resolved: ResolvedUsers
+  resolved: ResolvedUsers,
+  fromReconciliation = false
 ): Promise<void> {
   const { authorId } = resolved
 
@@ -144,7 +145,7 @@ export async function processDomainEffects(
       break
 
     case 'UNFOLLOW':
-      await handleUnfollowAction(tx, action, rawAction)
+      await handleUnfollowAction(tx, action, rawAction, fromReconciliation)
       break
 
     case 'OTHER':
