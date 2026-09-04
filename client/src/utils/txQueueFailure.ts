@@ -247,20 +247,37 @@ async function cleanupOptimisticRows(
       //   xpi: optimistic write only set pendingUnpin=true on an EXISTING
       //        confirmed row → flip it back to false. The original pin
       //        survives the failed unpin attempt.
+      // The pin/unpin action text carries the portable per-user cawonce
+      // (not a node-local id), so resolve it to this node's local caw id
+      // before touching PinnedCaw. On the origin node the target caw is
+      // always local, so this resolves; if it somehow doesn't, there's no
+      // optimistic row to roll back anyway.
       if (text.startsWith('pi:')) {
-        const cawId = parseInt(text.replace('pi:', '').trim())
-        if (!isNaN(cawId) && cawId > 0) {
-          await prisma.pinnedCaw.deleteMany({
-            where: { userId: senderId, cawId, pending: true }
+        const targetCawonce = parseInt(text.replace('pi:', '').trim())
+        if (!isNaN(targetCawonce) && targetCawonce >= 0) {
+          const targetCaw = await prisma.caw.findUnique({
+            where: { userId_cawonce: { userId: senderId, cawonce: targetCawonce } },
+            select: { id: true },
           })
+          if (targetCaw) {
+            await prisma.pinnedCaw.deleteMany({
+              where: { userId: senderId, cawId: targetCaw.id, pending: true }
+            })
+          }
         }
       } else if (text.startsWith('xpi:')) {
-        const cawId = parseInt(text.replace('xpi:', '').trim())
-        if (!isNaN(cawId) && cawId > 0) {
-          await prisma.pinnedCaw.updateMany({
-            where: { userId: senderId, cawId, pendingUnpin: true },
-            data: { pendingUnpin: false }
+        const targetCawonce = parseInt(text.replace('xpi:', '').trim())
+        if (!isNaN(targetCawonce) && targetCawonce >= 0) {
+          const targetCaw = await prisma.caw.findUnique({
+            where: { userId_cawonce: { userId: senderId, cawonce: targetCawonce } },
+            select: { id: true },
           })
+          if (targetCaw) {
+            await prisma.pinnedCaw.updateMany({
+              where: { userId: senderId, cawId: targetCaw.id, pendingUnpin: true },
+              data: { pendingUnpin: false }
+            })
+          }
         }
       }
     }

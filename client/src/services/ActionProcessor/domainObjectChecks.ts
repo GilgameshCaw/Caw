@@ -247,11 +247,21 @@ async function checkOtherExists(
   // Caw arrives. Treating it as "already processed" here would silently
   // discard a legitimate action. Same safe-retry pattern as checkLikeExists.
   if (rawAction.text?.startsWith('pi:')) {
-    const cawId = parseInt(rawAction.text.replace('pi:', '').trim(), 10)
-    if (Number.isNaN(cawId) || cawId <= 0) return false
+    const cawonce = parseInt(rawAction.text.replace('pi:', '').trim(), 10)
+    if (Number.isNaN(cawonce) || cawonce < 0) return false
     const senderId = await findOrCreateUser(action.senderId)
+    // Portable (userId, cawonce) resolution — the action text carries the
+    // per-user cawonce, not a node-local DB id. If the target Caw isn't
+    // indexed locally yet there's no local id (and no pin row), so return
+    // false: the action retries next poll once the Caw arrives. Preserves
+    // the safe-retry contract described above.
+    const targetCaw = await tx.caw.findUnique({
+      where: { userId_cawonce: { userId: senderId, cawonce } },
+      select: { id: true },
+    })
+    if (!targetCaw) return false
     const existing = await tx.pinnedCaw.findUnique({
-      where: { userId_cawId: { userId: senderId, cawId } },
+      where: { userId_cawId: { userId: senderId, cawId: targetCaw.id } },
       select: { pending: true },
     })
     return existing?.pending === false
@@ -263,11 +273,18 @@ async function checkOtherExists(
   // to delete it. "No row" also covers the legitimate "user never pinned
   // this caw to begin with" case — handleUnpinAction is idempotent there.
   if (rawAction.text?.startsWith('xpi:')) {
-    const cawId = parseInt(rawAction.text.replace('xpi:', '').trim(), 10)
-    if (Number.isNaN(cawId) || cawId <= 0) return false
+    const cawonce = parseInt(rawAction.text.replace('xpi:', '').trim(), 10)
+    if (Number.isNaN(cawonce) || cawonce < 0) return false
     const senderId = await findOrCreateUser(action.senderId)
+    // Portable resolution, mirroring the pi: branch. No local Caw → no pin
+    // row could exist → the unpin is already a no-op, so it's "done" (true).
+    const targetCaw = await tx.caw.findUnique({
+      where: { userId_cawonce: { userId: senderId, cawonce } },
+      select: { id: true },
+    })
+    if (!targetCaw) return true
     const existing = await tx.pinnedCaw.findUnique({
-      where: { userId_cawId: { userId: senderId, cawId } },
+      where: { userId_cawId: { userId: senderId, cawId: targetCaw.id } },
       select: { id: true },
     })
     return existing === null
