@@ -56,6 +56,16 @@ export interface BackwardScanOptions extends ChunkedScanOptions {
    *  "genuinely zero events" — scanLogsBackward otherwise swallows the
    *  failure and returns whatever it has (possibly []). */
   onError?: (fromBlock: number, toBlock: number, err: unknown) => void
+  /** Backward scan only. Milliseconds to wait between windows. Default 0
+   *  (unchanged for existing callers). A cold-start walk over hundreds of
+   *  windows (e.g. the instance registry's deploy-block-to-head scan) can
+   *  otherwise fire eth_getLogs calls back-to-back as fast as the RPC
+   *  responds (~150ms apart on a fast provider), which is itself enough
+   *  request pressure to trigger the rate-limit errors that then abort the
+   *  walk via onError. Spacing windows out trades wall-clock time for a
+   *  meaningfully lower chance of self-inflicted rate limiting on a scan
+   *  this long. */
+  delayMs?: number
 }
 
 const DEFAULT_CHUNK = 10_000
@@ -144,6 +154,7 @@ export async function scanLogsBackward(
   const chunkBlocks = opts.chunkBlocks ?? DEFAULT_CHUNK
   const maxWindows = opts.maxWindows ?? DEFAULT_MAX_WINDOWS_BACKWARD
   const stopOnEmptyWindow = opts.stopOnEmptyWindow ?? true
+  const delayMs = opts.delayMs ?? 0
   const head = opts.toBlock ?? await provider.getBlockNumber()
   const floor = opts.fromBlock ?? 0
   const logs: Log[] = []
@@ -151,6 +162,9 @@ export async function scanLogsBackward(
   let toBlock = head
 
   for (let i = 0; i < maxWindows; i++) {
+    if (delayMs > 0 && i > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
     const fromBlock = Math.max(floor, toBlock - chunkBlocks + 1)
     let windowLogs: Log[]
     try {
@@ -207,7 +221,22 @@ export async function findContractDeployBlock(
   // Sanity check: contract must currently have code. If it doesn't, the
   // address was never deployed (or self-destructed) — return 0 so the
   // caller can decide what to do.
-  const headCode = await provider.getCode(address, head)
+  //
+  // Confirmed live: a single '0x' response here isn't reliable enough to
+  // conclude "never deployed" -- an RPC hiccup (stale/lagging node,
+  // momentary bad response) can return the same shape as a genuinely
+  // undeployed contract, and the only caller of this function
+  // (InstanceRegistryService) treats a 0 return as "deploy block is
+  // genesis" and scans the entire chain history as a result. Re-checking
+  // once before accepting '0x' costs one extra eth_getCode call in the
+  // common case (contract exists, first call already returns real code)
+  // and catches the transient-blip case without adding real latency to
+  // the genuinely-undeployed case (rare, and this function is only called
+  // once per process lifetime while managerDeployBlock is unresolved).
+  let headCode = await provider.getCode(address, head)
+  if (!headCode || headCode === '0x') {
+    headCode = await provider.getCode(address, head)
+  }
   if (!headCode || headCode === '0x') return 0
 
   // Standard binary search for the leftmost block where code !== '0x'.

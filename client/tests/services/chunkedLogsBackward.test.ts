@@ -116,6 +116,39 @@ describe('scanLogsBackward — sparse-scatter fix', () => {
     const logs = await scanLogsBackward(provider, ADDR, TOPICS, { chunkBlocks: 10_000 })
     expect(logs.map((l: any) => l.blockNumber)).to.deep.equal([95_000])
   })
+
+  it('delayMs (default 0) does not add wall-clock time for existing callers', async () => {
+    const provider = makeProvider({
+      head: 30_000,
+      events: [{ block: 25_000 }, { block: 15_000 }, { block: 5_000 }],
+    })
+    const start = Date.now()
+    await scanLogsBackward(provider, ADDR, TOPICS, { chunkBlocks: 10_000, fromBlock: 0, stopOnEmptyWindow: false })
+    const elapsed = Date.now() - start
+    // 3 windows, no delayMs specified -- should complete near-instantly
+    // (fake provider has no real I/O latency). Generous bound to avoid
+    // flaking on a loaded CI box while still catching a regression that
+    // accidentally defaults delayMs to something nonzero.
+    expect(elapsed).to.be.lessThan(50)
+  })
+
+  it('delayMs spaces out windows by the given amount', async () => {
+    const provider = makeProvider({
+      head: 30_000,
+      events: [{ block: 25_000 }, { block: 15_000 }, { block: 5_000 }],
+    })
+    const start = Date.now()
+    await scanLogsBackward(provider, ADDR, TOPICS, {
+      chunkBlocks: 10_000,
+      fromBlock: 0,
+      stopOnEmptyWindow: false,
+      delayMs: 30,
+    })
+    const elapsed = Date.now() - start
+    // 3 windows -> 2 gaps between them (no delay before the first window,
+    // per the i > 0 guard) -> at least ~60ms of enforced delay.
+    expect(elapsed).to.be.gte(55)
+  })
 })
 
 describe('findContractDeployBlock', () => {
@@ -129,5 +162,46 @@ describe('findContractDeployBlock', () => {
     const provider = makeProvider({ head: 100_000, events: [], deployBlock: 200_000 })
     const block = await findContractDeployBlock(provider, '0xManager', 100_000)
     expect(block).to.equal(0)
+  })
+
+  it('re-checks a 0x-at-head response before concluding undeployed -- recovers from a single flaky reply', async () => {
+    // Live regression: a transient upstream blip returning '0x' for a
+    // contract that genuinely exists caused managerDeployBlock to resolve
+    // to 0, which then made InstanceRegistryService scan the entire chain
+    // history (1000+ windows) instead of the real ~7-window range. The
+    // fix re-checks getCode once before accepting '0x' as "never deployed".
+    let headCallCount = 0
+    const flaky = {
+      async getBlockNumber() { return 100_000 },
+      async getCode(_addr: string, block: number) {
+        if (block === 100_000) {
+          headCallCount++
+          // First call: simulate the transient blip (empty code).
+          // Second call: the real answer -- contract exists.
+          return headCallCount === 1 ? '0x' : '0xdeadbeef'
+        }
+        return block >= 42_000 ? '0xdeadbeef' : '0x'
+      },
+    } as any
+    const block = await findContractDeployBlock(flaky, '0xManager', 100_000)
+    expect(headCallCount).to.equal(2)
+    expect(block).to.equal(42_000)
+  })
+
+  it('still returns 0 when both head checks agree the contract is genuinely undeployed', async () => {
+    const provider = makeProvider({ head: 100_000, events: [], deployBlock: 200_000 })
+    let getCodeCalls = 0
+    const wrapped = {
+      ...provider,
+      async getCode(addr: string, block: number) {
+        getCodeCalls++
+        return provider.getCode(addr, block)
+      },
+    }
+    const block = await findContractDeployBlock(wrapped, '0xManager', 100_000)
+    expect(block).to.equal(0)
+    // Two calls at head (both '0x'), no binary search since the sanity
+    // check short-circuits before the loop.
+    expect(getCodeCalls).to.equal(2)
   })
 })

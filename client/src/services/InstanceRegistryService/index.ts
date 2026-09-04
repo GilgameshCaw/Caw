@@ -195,7 +195,7 @@ async function refreshPeers(
   provider: AbstractProvider,
   clientManagerAddress: string,
   networkId: number,
-): Promise<{ added: PeerInstance[]; changed: PeerInstance[] }> {
+): Promise<{ added: PeerInstance[]; changed: PeerInstance[]; skipped?: boolean }> {
   const iface = new Interface(cawNetworkManagerAbi)
   const regSig = iface.getEvent('InstanceRegistered')!.topicHash
   const updSig = iface.getEvent('InstanceUpdated')!.topicHash
@@ -224,15 +224,56 @@ async function refreshPeers(
     // Cold start: walk backward all the way to the NetworkManager deploy
     // block so we can't miss any historical registration (including this
     // node's own — see refreshPeers doc above). Resolve the deploy block
-    // once (binary search over eth_getCode); if it can't be resolved
-    // (transient RPC failure → 0), fall back to floor 0, which the
-    // maxWindows ceiling still bounds.
+    // once (binary search over eth_getCode).
+    //
+    // On failure, do NOT fall back to floor 0. That used to be the
+    // behavior here, and it silently turned a 7-window scan (deploy block
+    // to head, the normal case) into a 1000+ window scan from genesis --
+    // confirmed live on this node: managerDeployBlock resolves to
+    // 11,499,537 in steady state, but a transient upstream failure during
+    // the binary search (rate limit / circuit breaker mid-getCode) threw,
+    // landed here, and the resulting genesis walk is what a live eRPC
+    // capture actually caught -- requests as low as block ~4.1M, nowhere
+    // near the real deploy block. Firing ~600 requests at the RPC before
+    // it rate-limits and aborts (scanIncomplete = true) is itself likely
+    // to trigger the very failure that caused the fallback, so retrying
+    // immediately with the same bad managerDeployBlock=0 on every 60s tick
+    // repeats the same explosion indefinitely.
+    //
+    // Skip this tick's scan entirely instead: leave managerDeployBlock at
+    // -1 so the next tick's isCold branch retries resolution fresh, rather
+    // than caching a value this run couldn't actually establish.
     if (managerDeployBlock < 0) {
       try {
-        managerDeployBlock = await findContractDeployBlock(provider, clientManagerAddress, latestBlock)
+        const resolved = await findContractDeployBlock(provider, clientManagerAddress, latestBlock)
+        // A 0 return here is a live signal, not just "genuinely
+        // undeployed": per @tentencaw's review, the caller can't actually
+        // tell those apart. findContractDeployBlock's own re-check (see
+        // its doc comment) already covers the transient-blip-at-head
+        // case, but a real answer of 0 for a contract we know is deployed
+        // (this whole function only runs because clientManagerAddress
+        // resolved to something) is not a state this scan should trust
+        // enough to walk genesis-to-head from. Treat it the same as the
+        // throw below: skip this tick rather than caching a value that
+        // would trigger the exact ~1,156-window explosion this fix exists
+        // to prevent.
+        if (resolved === 0) {
+          // Tradeoff worth being explicit about: if clientManagerAddress
+          // were ever genuinely misconfigured (pointing at a real address
+          // with no contract deployed there), this branch would skip
+          // forever rather than eventually accepting 0 as a real answer.
+          // Accepted deliberately -- clientManagerAddress is the protocol's
+          // core registry contract, expected to always exist in any real
+          // deployment, so treating an unexpected 0 as "still ambiguous"
+          // and refusing to act on it is the safer failure mode for a
+          // misconfiguration than silently walking genesis-to-head on it.
+          console.warn('[InstanceRegistry] NetworkManager deploy block resolved to 0 (ambiguous with a live RPC hiccup); skipping this tick\'s scan, will retry next tick')
+          return { added: [], changed: [], skipped: true }
+        }
+        managerDeployBlock = resolved
       } catch (err: any) {
-        console.warn(`[InstanceRegistry] Could not resolve NetworkManager deploy block (${err?.message}); scanning from genesis floor`)
-        managerDeployBlock = 0
+        console.warn(`[InstanceRegistry] Could not resolve NetworkManager deploy block (${err?.message}); skipping this tick's scan, will retry next tick`)
+        return { added: [], changed: [], skipped: true }
       }
     }
     // maxWindows must be large enough to span deploy→head at the default
@@ -241,10 +282,34 @@ async function refreshPeers(
     // between registration clusters doesn't bail the walk early.
     const span = Math.max(0, latestBlock - managerDeployBlock)
     const neededWindows = Math.ceil(span / 10_000) + 2
+    // Spacing windows out (rather than firing eth_getLogs back-to-back as
+    // fast as the RPC responds, measured at ~150ms apart) meaningfully
+    // reduces the chance of self-inflicted rate limiting turning into a
+    // scanIncomplete abort. Deliberately kept small: refreshAndLog has no
+    // in-flight guard against the pollIntervalMs setInterval (default 60s),
+    // so a delay long enough to make one cold scan run past the next tick
+    // would let two scans overlap and race on managerDeployBlock/
+    // lastScannedBlock instead of just being slow.
+    //
+    // The genesis-fallback fix above (skip rather than cache 0/incomplete
+    // state as managerDeployBlock) means the ~600-window case this
+    // constant was originally sized against (per @tentencaw's review,
+    // ~90s of scan time before delayMs is even added -- already past the
+    // 60s tick on its own) should no longer be reachable in the steady
+    // state. neededWindows is now ~7 in the common case (span ~50k blocks
+    // at the current deploy block), where 50ms of delay is negligible
+    // either way. Kept as a secondary safety margin for any other path
+    // that still reaches a large scan (e.g. a genuinely fresh deploy far
+    // from head) rather than as the primary defense it was originally
+    // written to be. Not measured against this node's actual rate limit
+    // threshold -- if scanIncomplete still fires regularly in that
+    // remaining case, raise this together with pollIntervalMs (or add an
+    // in-flight guard) rather than raising it alone.
     const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs], {
       fromBlock: managerDeployBlock,
       stopOnEmptyWindow: false,
       maxWindows: neededWindows,
+      delayMs: 50,
       onError: (from, to, err) => {
         scanIncomplete = true
         console.warn(`[InstanceRegistry] getLogs failed for ${from}..${to} during cold scan (peer list may be incomplete): ${(err as any)?.message ?? err}`)
@@ -340,7 +405,19 @@ async function refreshPeers(
   )
   const activations = ordered.map(o => ({ instanceId: o.instanceId, active: o.active }))
 
-  return await applyToCache(networkId, registered, updates, activations)
+  const applied = await applyToCache(networkId, registered, updates, activations)
+  // scanIncomplete means the log walk itself was cut short by an RPC
+  // error mid-scan (see onError above) -- applyToCache still writes
+  // whatever partial registered/updates/activations it received into
+  // peerCache unconditionally, so the cache silently ends up holding a
+  // truncated view rather than a complete one. That's precisely the
+  // 2c1700b5 shape ("a node re-registering because a truncated cold scan
+  // missed its own prior registration") in a different spot from the
+  // managerDeployBlock-resolution-failure case above. Folding it into the
+  // same skipped signal means selfRegister's _lastRefreshSkipped guard
+  // (which already exists for the resolution-failure case) covers this
+  // one too, without selfRegister needing to know the difference.
+  return { ...applied, skipped: scanIncomplete }
 }
 
 // =====================================================================
@@ -375,11 +452,31 @@ export const instanceRegistryService: Service = {
     let _signer: ValidatorSigner | null
     let _canRegister: boolean
     let _clientManager: Contract
+    // Set when the most recent refreshPeers() had to skip its scan
+    // (deploy-block resolution failed -- see refreshPeers). selfRegister()
+    // checks this before trusting an empty peerCache as "we're not
+    // registered yet": on the very first refresh, a skip means the cache
+    // was never actually populated, not that a genuinely-complete scan
+    // found nothing. Registering against an unpopulated cache is exactly
+    // the re-registration bug 2c1700b5 fixed (climbed from #3 to #22 in a
+    // day), so this flag exists to keep that fix intact through the
+    // skip-on-failure path added alongside it.
+    let _lastRefreshSkipped = false
+    // True until selfRegister() has actually run past its
+    // _lastRefreshSkipped guard once (i.e. run against a cache that was
+    // confirmed populated by a completed scan). Separate from instanceId
+    // being null, which can also be true after a completed, successful
+    // run (no prior registration found, about to register) -- this flag
+    // specifically tracks "has selfRegister ever had trustworthy data to
+    // act on", so the retry below fires exactly once the first time the
+    // cache becomes trustworthy, not on every tick while unregistered.
+    let _selfRegisterRanWithValidCache = false
 
     /** First refresh: populates the cache. Subsequent refreshes log diffs. */
     async function refreshAndLog() {
       try {
-        const { added, changed } = await refreshPeers(_provider, NETWORK_MANAGER_ADDRESS, networkId)
+        const { added, changed, skipped } = await refreshPeers(_provider, NETWORK_MANAGER_ADDRESS, networkId)
+        _lastRefreshSkipped = !!skipped
         for (const p of added) {
           console.log(
             `[InstanceRegistry] Peer discovered — instance #${p.instanceId} ` +
@@ -394,12 +491,27 @@ export const instanceRegistryService: Service = {
         }
       } catch (err: any) {
         console.warn(`[InstanceRegistry] Peer refresh failed (continuing): ${err.message}`)
+        // A thrown (rather than skipped) refresh also leaves the cache
+        // unconfirmed for the same reason -- treat it the same way.
+        _lastRefreshSkipped = true
       }
     }
 
     /** Self-registration. Reads the cache populated by refreshAndLog. */
     async function selfRegister() {
       if (!_canRegister || !_signer) return
+      // If the peer cache was never actually populated (the deploy-block
+      // resolution that would have scanned it failed or was skipped), an
+      // empty cache here doesn't mean "we're not registered" -- it means
+      // we don't know yet. Registering against that unconfirmed state is
+      // exactly the re-registration bug 2c1700b5 fixed. Bail and let the
+      // next periodic refresh (60s later, per pollIntervalMs) try again
+      // with a freshly-resolved deploy block.
+      if (_lastRefreshSkipped) {
+        console.warn('[InstanceRegistry] Skipping self-registration this tick — peer cache not yet confirmed complete (deploy block resolution failed); will retry next tick')
+        return
+      }
+      _selfRegisterRanWithValidCache = true
       const validatorAddress = _signer.getAddress()
       console.log(`[InstanceRegistry] Checking registration for network ${networkId}, validator ${validatorAddress}, url ${apiUrl}`)
 
@@ -487,9 +599,42 @@ export const instanceRegistryService: Service = {
       await selfRegister()
       // Kick off the periodic refresh. Subsequent ticks log only diffs
       // because the cache has the prior state.
+      //
+      // Also retries selfRegister() specifically when the startup call
+      // never got to run it (this tick's refreshAndLog() skipped its
+      // scan due to deploy-block resolution failure -- see the
+      // _lastRefreshSkipped guard in selfRegister, and the doc comment
+      // on _lastRefreshSkipped's declaration). selfRegister() was
+      // previously only ever called once, at startup, so a skip there
+      // meant this node would never retry registration for the rest of
+      // the process lifetime.
+      //
+      // Deliberately gated on _lastRefreshSkipped, not on instanceId
+      // alone: instanceId can legitimately stay null after a *completed*
+      // scan too (e.g. selfRegister found no existing entry and is about
+      // to registerInstance, or registration failed for an unrelated
+      // reason such as an RPC error on the transaction itself). Retrying
+      // selfRegister() on every tick in either of those cases would fire
+      // a fresh registerInstance() transaction each time -- the exact
+      // duplicate-registration bug 2c1700b5 fixed. Scoping this to "the
+      // scan that would have populated the cache never actually ran" is
+      // what makes the retry safe: it's not compensating for a real
+      // registration failure, only for the startup call never having had
+      // the data to act on in the first place.
       pollTimer = setInterval(() => {
         if (stopped) return
-        refreshAndLog().catch(() => { /* logged inside */ })
+        refreshAndLog()
+          .then(() => {
+            // Retry exactly once selfRegister() has never run against a
+            // confirmed-populated cache -- i.e. the startup call bailed
+            // via the _lastRefreshSkipped guard and no later tick has
+            // gotten past it yet. Once selfRegister() has run with valid
+            // data a single time (registered or not), this stops firing;
+            // whatever it decided then stands, same as the pre-existing
+            // startup-only behavior for every non-skip case.
+            if (!_selfRegisterRanWithValidCache && !_lastRefreshSkipped && _canRegister) return selfRegister()
+          })
+          .catch(() => { /* logged inside */ })
       }, pollIntervalMs)
     })()
 
