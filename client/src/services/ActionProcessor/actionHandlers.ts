@@ -1619,6 +1619,62 @@ async function handleHideAction(
       // Decrement the parent's recawCount via CountManager (floors at zero + audit log)
       await countManager.onRecawRemoved(tx, { originalCawId: originalCaw.id, senderId, amount: deleted.count })
       console.log(`[handleHideAction] Deleted recaw: user=${senderId} of caw=${originalCaw.id}`)
+
+      // Clean up the REPOST notification the recaw generated -- without
+      // this, the receiver's notification feed keeps a "ghost" repost
+      // notice for a repost that no longer exists on-chain. Mirrors the
+      // same cleanup /api/caws/:originalCawId/recaw does for the
+      // client-initiated undo path (this is the on-chain-confirmed path).
+      const staleNotifications = await tx.notification.findMany({
+        where: {
+          actorId: senderId,
+          userId: receiverId, // receiverId is the original post's author (see the where clause above)
+          type: 'REPOST',
+          cawId: originalCaw.id,
+        },
+        select: { id: true, groupId: true },
+      })
+      if (staleNotifications.length > 0) {
+        await tx.notification.deleteMany({
+          where: { id: { in: staleNotifications.map(n => n.id) } },
+        })
+        const groupIds = [...new Set(staleNotifications.map(n => n.groupId).filter((id): id is number => id != null))]
+        for (const groupId of groupIds) {
+          const deletedInGroup = staleNotifications.filter(n => n.groupId === groupId).length
+          const group = await tx.notificationGroup.findUnique({
+            where: { id: groupId },
+            select: { count: true, latestNotificationId: true },
+          })
+          if (!group) continue
+          const newCount = Math.max(0, group.count - deletedInGroup)
+          if (newCount === 0) {
+            await tx.notificationGroup.delete({ where: { id: groupId } })
+          } else {
+            const deletedWasLatest = staleNotifications.some(
+              n => n.groupId === groupId && n.id === group.latestNotificationId,
+            )
+            if (deletedWasLatest) {
+              const next = await tx.notification.findFirst({
+                where: { groupId },
+                orderBy: { createdAt: 'desc' },
+                select: { id: true },
+              })
+              await tx.notificationGroup.update({
+                where: { id: groupId },
+                data: {
+                  count: newCount,
+                  ...(next ? { latestNotificationId: next.id } : {}),
+                },
+              })
+            } else {
+              await tx.notificationGroup.update({
+                where: { id: groupId },
+                data: { count: newCount },
+              })
+            }
+          }
+        }
+      }
     } else {
       console.warn(`[handleHideAction] No recaw found to delete: user=${senderId} originalCaw=${originalCaw.id}`)
     }
