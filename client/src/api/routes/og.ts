@@ -189,7 +189,7 @@ function defaultAvatarIdFor(user: {
   defaultAvatarId?: number | null
   tokenId?: number
 }): number {
-  return Math.max(1, Math.min(100, user.defaultAvatarId || ((user.tokenId || 0) % 100) + 1))
+  return Math.max(1, Math.min(131, user.defaultAvatarId || ((user.tokenId || 0) % 100) + 1))
 }
 
 // Universal "always works" fallback. Resolved once at module init by
