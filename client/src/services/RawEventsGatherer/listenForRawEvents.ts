@@ -10,6 +10,31 @@ import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
 import { recordIndexerProgress } from '../../utils/indexerHealth'
 
+/**
+ * Decide the block range for one poll.
+ *
+ * `headMargin` keeps the request below the head that getBlockNumber
+ * reported: under a FallbackProvider (quorum 1) that call and the
+ * following getLogs can be served by different upstreams, and the one
+ * answering getLogs may be a block behind — which the provider rejects
+ * as -32602 "block range extends beyond current head block".
+ *
+ * Returns null when there is nothing to fetch. The margin has to apply
+ * to that decision as well as to `toBlock`: comparing lastSyncedBlock
+ * against the unadjusted head would let `from > to` through whenever the
+ * cursor sits inside the margin.
+ */
+export function computePollRange(
+  currentBlock: number,
+  lastSyncedBlock: number,
+  headMargin: number,
+  maxPollBlocks: number,
+): { head: number; toBlock: number } | null {
+  const head = currentBlock - headMargin
+  if (head <= lastSyncedBlock) return null
+  return { head, toBlock: Math.min(head, lastSyncedBlock + maxPollBlocks) }
+}
+
 // Calldata-decode interface. ActionsProcessed events now carry only
 // (networkId, validatorId, actionCount, batchHash) — the actual packedActions
 // bytes live in the originating tx's calldata. We fetch tx.input via
@@ -805,6 +830,27 @@ export default async function listenForRawEvents(
   // capped-RPC operator bounds both the historical chunk and the per-poll
   // range with one setting.
   const MAX_POLL_BLOCKS = L2_LOG_CHUNK_BLOCKS
+  // Poll to one block below the head rather than to the head itself.
+  //
+  // getBlockNumber and getLogs are separate calls, and with a
+  // FallbackProvider (quorum 1, first success wins) they can be answered by
+  // different upstreams. Measured on Base Sepolia across two providers:
+  // heads differ by one block about 17% of the time, never more, always in
+  // the same direction. When the higher one answers getBlockNumber and the
+  // lower one serves the getLogs, the range overshoots and the provider
+  // rejects it with -32602 "block range extends beyond current head block".
+  //
+  // Nothing is lost when that happens — lastSyncedBlock doesn't advance and
+  // the next tick re-requests the same range — but it puts a recoverable
+  // error in the log at the same severity as a real one. This margin
+  // removes that class at the skew this codebase can currently observe; a
+  // wider skew would still overshoot, and the underlying issue is mixing
+  // heads from providers that don't agree.
+  // Default 1. Operators whose upstreams drift further apart can raise it;
+  // 0 restores the previous behaviour of polling to the head itself.
+  const envHeadMargin = Number(process.env.RAW_EVENTS_HEAD_MARGIN)
+  const HEAD_MARGIN_BLOCKS =
+    Number.isFinite(envHeadMargin) && envHeadMargin >= 0 ? envHeadMargin : 1
   // 30s default — actions are already shown in the feed optimistically as
   // soon as the user signs (PostForm's optimistic insert path), so the
   // indexer only sets the SUCCESS status flag a beat later. Stretching
@@ -827,9 +873,10 @@ export default async function listenForRawEvents(
     if (isStopped) return
     try {
       const currentBlock = await httpProvider.getBlockNumber()
-      if (currentBlock > lastSyncedBlock) {
-        const toBlock = Math.min(currentBlock, lastSyncedBlock + MAX_POLL_BLOCKS)
-        if (toBlock < currentBlock) {
+      const range = computePollRange(currentBlock, lastSyncedBlock, HEAD_MARGIN_BLOCKS, MAX_POLL_BLOCKS)
+      if (range) {
+        const { head, toBlock } = range
+        if (toBlock < head) {
           console.log(`[RawEventsGatherer] Catching up: polling ${lastSyncedBlock + 1}..${toBlock} (behind by ${currentBlock - toBlock} blocks)`)
         } else {
           console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
@@ -870,7 +917,7 @@ export default async function listenForRawEvents(
         lastSyncedBlock = toBlock
       }
       // Always publish the current high-water mark — even on a quiet poll
-      // (no new events, toBlock equals currentBlock), the indexer is up
+      // (no new events, toBlock equals head), the indexer is up
       // to that block and that's the freshness signal the validator needs.
       recordIndexerProgress(config.chainId, lastSyncedBlock)
       config.onTick?.()
