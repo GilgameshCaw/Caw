@@ -223,6 +223,8 @@ export default async function listenForRawEvents(
     }
     /** Optional callback to signal liveness — called at the end of each successful poll */
     onTick?: () => void
+    /** Called when a poll iteration ran but could not make progress. */
+    onStall?: (reason: string) => void
   }
 ): Promise<{ stop(): void }> {
   let wsProvider: WebSocketProvider | null = null
@@ -877,6 +879,7 @@ export default async function listenForRawEvents(
     } catch (err) {
       console.error('[RawEventsGatherer] Polling error:', err)
       // Don't update lastSyncedBlock on error, will retry on next schedule
+      config.onStall?.(String((err as any)?.error?.message || (err as any)?.shortMessage || (err instanceof Error ? err.message : 'poll failed')).slice(0, 60))
     } finally {
       scheduleNextPoll()
     }
