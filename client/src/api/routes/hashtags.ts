@@ -75,12 +75,12 @@ router.get('/:tag/caws', async (req, res) => {
     })
 
     // Handle pagination and shape the caws
-    const { items: rawCaws, nextCursor } = handlePagination(
-      cawHashtags.map(ch => ch.caw),
+    const { items: rawCawHashtags, nextCursor } = handlePagination(
+      cawHashtags,
       limit,
-      (caw) => caw.id
+      (ch) => ch.id
     )
-    const items = rawCaws.map(caw => shapeCaw(caw))
+    const items = rawCawHashtags.map(ch => shapeCaw(ch.caw))
     await enrichWithPollVotes(items, currentUserId)
     await enrichWithXBadges(items)
 
