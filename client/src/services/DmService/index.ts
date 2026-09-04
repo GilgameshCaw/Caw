@@ -21,7 +21,13 @@ export class DmService {
       where: { userId },
       select: { publicKey: true }
     })
-    return identity?.publicKey ?? null
+    // publicKey === '' is ensureDmIdentity's placeholder (dm-relay.ts),
+    // written to satisfy ConversationParticipant's FK before the real
+    // identity relay has arrived. Treat it as "no identity" — callers
+    // key hasIdentity off publicKey !== null (dm.ts), so a placeholder
+    // leaking through here would read as a real, usable key.
+    if (!identity?.publicKey) return null
+    return identity.publicKey
   }
 
   /**
@@ -32,7 +38,9 @@ export class DmService {
   async getPublicKeysBatch(userIds: number[]): Promise<Map<number, string>> {
     if (userIds.length === 0) return new Map()
     const rows = await prisma.dmIdentity.findMany({
-      where: { userId: { in: userIds } },
+      // Exclude placeholder rows (publicKey === '') — same reasoning as
+      // getPublicKey above.
+      where: { userId: { in: userIds }, publicKey: { not: '' } },
       select: { userId: true, publicKey: true },
     })
     const out = new Map<number, string>()

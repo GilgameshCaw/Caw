@@ -71,6 +71,69 @@ export function canonicalizeEnvelope(env: RelayEnvelope): string {
   })
 }
 
+// ConversationParticipant.userId has a foreign key against
+// DmIdentity.userId. An inbound relay's sender or recipient may not
+// have a DmIdentity on this node yet — the official identity relay
+// (POST /api/dm/identity/relay) is a separate, not-yet-arrived message,
+// and cross-instance propagation isn't guaranteed to land before the
+// first DM does. Without this, prisma.conversation.create /
+// conversationParticipant.upsert throws P2003 and the inbound message
+// is dropped without being persisted (confirmed in V1 production logs —
+// this constraint is hit repeatedly, in bursts, in practice).
+//
+// ensureDmIdentity upserts a placeholder DmIdentity (publicKey: '') so
+// the FK is satisfiable, and a placeholder User first if needed (same
+// id/tokenId/username pattern used elsewhere for placeholder users —
+// see actions.ts's FOLLOW handler). getPublicKey/getPublicKeysBatch
+// treat publicKey === '' as "no identity" so downstream code can't
+// mistake the placeholder for a real key; registerIdentity's upsert
+// naturally overwrites it with the real key once the official relay
+// arrives.
+// Distinguishes an invalid-tokenId rejection from the P2003 this whole
+// function exists to prevent, so the route's catch block can log which
+// one actually happened instead of folding both into the same generic
+// "[DM Relay] Error" line.
+class InvalidRelayUserIdError extends Error {
+  constructor(userId: number) {
+    super(`ensureDmIdentity: invalid userId ${userId}`)
+    this.name = 'InvalidRelayUserIdError'
+  }
+}
+
+async function ensureDmIdentity(userId: number): Promise<void> {
+  // On-chain CawProfile tokenIds are 1-indexed; senderId/recipientId are
+  // relayed by a signature-verified peer instance (not directly
+  // attacker-controlled — see the trust model note at the top of this
+  // file), but a misbehaving or buggy peer could still relay a malformed
+  // tokenId. Guard rather than create a placeholder for something that
+  // could never be a real profile. Still throws (rather than logging and
+  // skipping) because a malformed sender/recipient means the rest of
+  // this relay -- Conversation/ConversationParticipant against that same
+  // tokenId -- can't proceed meaningfully either; there's no message to
+  // save by continuing.
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new InvalidRelayUserIdError(userId)
+  }
+
+  const existing = await prisma.dmIdentity.findUnique({
+    where: { userId },
+    select: { userId: true },
+  })
+  if (existing) return
+
+  await prisma.user.upsert({
+    where: { tokenId: userId },
+    update: {},
+    create: { id: userId, tokenId: userId, username: `user_${userId}` },
+  })
+
+  await prisma.dmIdentity.upsert({
+    where: { userId },
+    update: {},
+    create: { userId, walletAddress: '', publicKey: '' },
+  })
+}
+
 router.post('/', async (req, res) => {
   try {
     const {
@@ -266,6 +329,15 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Ensure both parties satisfy ConversationParticipant's FK against
+    // DmIdentity before touching Conversation/ConversationParticipant —
+    // see ensureDmIdentity's comment above for why this can be missing
+    // on an inbound relay.
+    await Promise.all([
+      ensureDmIdentity(Number(senderId)),
+      ensureDmIdentity(Number(recipientId)),
+    ])
+
     // Get-or-create the conversation. On first contact we set the
     // recipient's participant.status per the rule above; the sender's
     // is always ACCEPTED.
@@ -364,7 +436,11 @@ router.post('/', async (req, res) => {
 
     return res.json({ status: 'relayed', messageId: messageRecord.id })
   } catch (error: any) {
-    console.error('[DM Relay] Error:', error.message)
+    if (error instanceof InvalidRelayUserIdError) {
+      console.error(`[DM Relay] Rejected — ${error.message} (source instance sent a malformed sender/recipient tokenId)`)
+    } else {
+      console.error('[DM Relay] Error:', error.message)
+    }
     return res.status(500).json({ error: 'Relay failed' })
   }
 })
