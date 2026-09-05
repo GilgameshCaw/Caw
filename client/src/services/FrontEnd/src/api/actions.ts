@@ -2144,7 +2144,7 @@ export function useSignAndSubmitAction() {
 
   // as soon as we become connected with the correct wallet, replay the pending action
   useEffect(() => {
-    if (!isConnected || !pendingParams || !cawonce || submittingRef.current) {
+    if (!isConnected || !pendingParams || cawonce == null || submittingRef.current) {
       return
     }
 

@@ -593,7 +593,7 @@ export async function handleLikeAction(
   const userId = await findOrCreateUser(action.senderId)
 
   // Get the caw being liked
-  if (!parentCawId && rawAction.receiverId && rawAction.receiverCawonce) {
+  if (!parentCawId && rawAction.receiverId != null && rawAction.receiverCawonce != null) {
     // Try to find the caw from rawAction data
     parentCawId = await findCawId(rawAction.receiverCawonce, rawAction.receiverId)
   }
