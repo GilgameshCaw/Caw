@@ -77,8 +77,11 @@ export const MANUAL_SQL_INDEXES = [
 ]
 
 function runPsql(dbUrl, sql) {
+  // Strip Prisma-specific query params (e.g. ?connection_limit=40&pool_timeout=30)
+  // that cause psql to fail with 'invalid URI query parameter'.
+  const cleanUrl = dbUrl ? dbUrl.split('?')[0] : dbUrl
   return execSync(
-    `psql "${dbUrl}" -v ON_ERROR_STOP=1 -t -A -c ${JSON.stringify(sql)}`,
+    `psql "${cleanUrl}" -v ON_ERROR_STOP=1 -t -A -c ${JSON.stringify(sql)}`,
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   )
 }
