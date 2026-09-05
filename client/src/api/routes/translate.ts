@@ -13,7 +13,7 @@
  *   or higher-quota translation providers.
  *
  * Provider Fallback Hierarchy:
- *   1. Google Gemini (LLM): Context-aware Web3 translation (requires GEMINI_API_KEY).
+ *   1. Google Gemini (LLM): Fast and context-aware AI translation (requires GEMINI_API_KEY).
  *      Default model: gemini-3.5-flash-lite (generous 500 RPD free tier).
  *   2. DeepL API: High-precision translation (requires DEEPL_API_KEY).
  *   3. Google Cloud Translation API (v2): (requires GOOGLE_TRANSLATE_API_KEY).
@@ -41,7 +41,7 @@ const translateRateLimit = rateLimit({
 })
 
 // Optional API keys for reliable datacenter/node translation
-// Primary recommended: GEMINI_API_KEY (free tier from Google AI Studio, high-quality Web3 context)
+// Primary recommended: GEMINI_API_KEY (free tier from Google AI Studio, fast and context-aware translation)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 // Default to gemini-3.5-flash-lite (generous 500 RPD free tier, ultra-low latency)
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'
@@ -82,7 +82,7 @@ function setToCache(key: string, value: CacheEntry): void {
 
 /**
  * Translate via Google Gemini (LLM)
- * Optional provider: free tier available via Google AI Studio, Web3 & crypto context-aware.
+ * Optional provider: free tier available via Google AI Studio, fast and context-aware.
  */
 async function translateWithGemini(
   text: string,
@@ -94,10 +94,13 @@ async function translateWithGemini(
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`
 
     const systemPrompt =
-      `You are an expert translator for the Web3 and cryptocurrency social network CAW.\n` +
+      `You are a neutral, accurate, and faithful translator for social media posts.\n` +
       `Translate the following post text into target language code "${targetLang}"${sourceLang && sourceLang !== 'auto' ? ` from source language "${sourceLang}"` : ''}.\n` +
       `Guidelines:\n` +
-      `- Keep crypto, Web3, and social media slang natural (e.g. CAW, mint, LFG, gm, fren, hodl, rug, wagmi).\n` +
+      `- Provide an accurate, natural, and balanced translation that faithfully conveys the meaning and tone of the original post without exaggeration.\n` +
+      `- Translate all sentences and text naturally into the target language.\n` +
+      `- Do NOT insert extra words, slang, colloquialisms, or emojis that are not in the original text.\n` +
+      `- Preserve proper nouns, usernames (@mentions), hashtags (#tags), URLs, and financial/token tickers (e.g. $CAW, ETH). Widely recognized acronyms (e.g. WAGMI, LFG, gm) may be kept in uppercase Latin if commonly used untranslated.\n` +
       `- Return ONLY a valid raw JSON object with keys "text" and "sourceLanguage".\n` +
       `- "text" must be the translated string.\n` +
       `- "sourceLanguage" must be the 2-letter ISO language code of the original text (e.g. "en", "ja").\n` +
