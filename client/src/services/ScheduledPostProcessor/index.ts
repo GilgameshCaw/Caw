@@ -121,7 +121,7 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
       // For replies, find the parent caw ID. Receiver fields are 0/null for
       // top-level posts; for thread chunks 1..N they reference chunk 0.
       let originalCawId: number | undefined
-      if (data.receiverId != null && data.receiverCawonce != null) {
+      if (data.receiverId && data.receiverCawonce != null) {
         const parentCaw = await prisma.caw.findFirst({
           where: {
             userId: data.receiverId,
