@@ -1035,8 +1035,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Handle different menu actions
     switch (action) {
       case 'translate':
-        if (isTranslating || translatedText) {
-          // Toggle off — second click on Translate clears the translation.
+        if (isTranslating) {
+          // In-flight translation — avoid cancelling concurrent auto-translate
+          return
+        }
+        if (translatedText) {
+          // Toggle off — click on Translate when already translated clears the translation.
           setTranslatedText(null)
           setTranslatedPollOptions(null)
           return

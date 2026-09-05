@@ -1245,7 +1245,7 @@ const MessagesPage: React.FC = () => {
       const next = new Set(prev); next.add(messageId); return next
     })
     try {
-      const result = await translateText(text)
+      const result = await translateText(text, undefined, { isPrivate: true })
       if (result) setTranslations(prev => ({ ...prev, [messageId]: result }))
     } finally {
       setTranslatingIds(prev => {
