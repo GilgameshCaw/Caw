@@ -20,6 +20,7 @@ import dmRouter from './routes/dm'
 import dmGroupsRouter from './routes/dm-groups'
 import dmRelayRouter from './routes/dm-relay'
 import giphyRouter from './routes/giphy'
+import translateRouter from './routes/translate'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
 import instancesRouter from './routes/instances'
@@ -406,6 +407,7 @@ export function createApp() {
   app.use('/api/dm', dmRouter)
   app.use('/api/dm/relay', dmRelayRouter)
   app.use('/api/giphy', giphyRouter)
+  app.use('/api/translate', translateRouter)
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
   app.use('/api/instances', instancesRouter)
