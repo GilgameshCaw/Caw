@@ -1,18 +1,13 @@
 // Translation helper used by both post translation (FeedItem) and DM
-// translation (Messages). Centralized here so changing the provider, the
-// target-language strategy, or adding API-key auth happens in one place.
+// translation (Messages). Proxies requests through the node server
+// (/api/translate) for robust multi-provider support, zero-config keyless
+// fallback, in-memory LRU caching, and E2EE privacy protection.
 //
-// Current implementation: Google Translate's free unauthenticated `gtx`
-// endpoint (the same one the Chrome translate bar uses). No API key, no
-// quota visible to us, but it's undocumented and could break — wrap every
-// call in try/catch at the callsite.
-//
-// Note for DMs: this sends plaintext to a third party. The DM is E2E-
-// encrypted in transit + at rest; translating breaks that boundary. Always
-// prompt the user (see ConfirmModal with rememberKey='dmTranslateAck')
-// before calling this for a DM.
+// Note for DMs: translating plaintext sends it to the translation service;
+// translating breaks the E2EE boundary. Always prompt the user (see ConfirmModal
+// with rememberKey='dmTranslateAck') before calling this for a DM.
 
-const GOOGLE_TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single'
+import { apiFetch } from '~/api/client'
 
 /**
  * Browser-locale fallback target language. The Settings → Language picker
@@ -118,8 +113,12 @@ export interface TranslationResult {
  * that want the detected source language for caching purposes should
  * use `translateTextDetailed` instead.
  */
-export async function translateText(text: string, targetLang?: string): Promise<string | null> {
-  const detail = await translateTextDetailed(text, targetLang)
+export async function translateText(
+  text: string,
+  targetLang?: string,
+  options?: { isPrivate?: boolean },
+): Promise<string | null> {
+  const detail = await translateTextDetailed(text, targetLang, options)
   return detail?.text ?? null
 }
 
@@ -131,11 +130,12 @@ export async function translateText(text: string, targetLang?: string): Promise<
 export async function translateTextDetailed(
   text: string,
   targetLang?: string,
+  options?: { isPrivate?: boolean },
 ): Promise<TranslationResult | null> {
   if (!text || !text.trim()) return null
   const tl = targetLang || getTargetLanguage()
 
-  const first = await fetchTranslation(text, tl)
+  const first = await fetchTranslation(text, tl, options?.isPrivate)
   if (first && first.text && first.text !== text) {
     return { ...first, targetLanguage: tl }
   }
@@ -144,7 +144,7 @@ export async function translateTextDetailed(
   // user gets *something* useful (vs. tapping "Translate" and seeing the
   // same text). Skip this if we already targeted English.
   if (tl !== 'en') {
-    const en = await fetchTranslation(text, 'en')
+    const en = await fetchTranslation(text, 'en', options?.isPrivate)
     if (en && en.text && en.text !== text) {
       return { ...en, targetLanguage: 'en' }
     }
@@ -157,27 +157,17 @@ interface FetchResult {
   sourceLanguage: string
 }
 
-async function fetchTranslation(text: string, tl: string): Promise<FetchResult | null> {
+async function fetchTranslation(text: string, tl: string, isPrivate?: boolean): Promise<FetchResult | null> {
   try {
-    const url = `${GOOGLE_TRANSLATE_URL}?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const data = await res.json()
-    // Response shape: [[[translatedChunk, originalChunk, ...], ...], <??>, "<src>", ...]
-    if (!Array.isArray(data?.[0])) return null
-    const joined = (data[0] as unknown[])
-      .map(seg => Array.isArray(seg) ? (seg as unknown[])[0] : '')
-      .filter((s): s is string => typeof s === 'string')
-      .join('')
-    if (!joined) return null
-    // data[2] is gtx's detected source language (e.g. "es"). Sometimes
-    // it's a region-tagged form ("zh-CN") — strip down to the primary
-    // subtag so it lines up with our stored preferredLanguage shape.
-    const detectedRaw = typeof data?.[2] === 'string' ? data[2] : ''
-    const sourceLanguage = detectedRaw.split('-')[0].toLowerCase()
-    return { text: joined, sourceLanguage }
+    const res = await apiFetch<{ text: string; sourceLanguage: string }>('/api/translate', {
+      method: 'POST',
+      body: JSON.stringify({ text, targetLang: tl, isPrivate }),
+    })
+    if (res?.text) {
+      return { text: res.text, sourceLanguage: res.sourceLanguage || '' }
+    }
   } catch (err) {
-    console.warn('[translate] fetch failed:', err)
-    return null
+    console.warn('[translate] API proxy request failed:', err)
   }
+  return null
 }
