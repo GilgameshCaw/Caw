@@ -47,7 +47,8 @@ import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
 import { configureMediaNginx } from '../src/steps/mediaNginx.js'
-import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir } from '../src/steps/update.js'
+import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir, readDatabaseUrl } from '../src/steps/update.js'
+import { ensureManualSqlIndexes, checkManualSqlIndexes } from '../src/steps/ensureManualSql.js'
 import { reportConfigDrift } from '../src/steps/configDrift.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -685,13 +686,41 @@ program
 
 program
   .command('doctor')
-  .description('Read-only config checks (e.g. client/.env address vars vs solidity/.deploy-state.json). Never writes files.')
+  .description('Read-only config checks (e.g. client/.env address vars vs solidity/.deploy-state.json), plus a check for manually-managed DB indexes that `prisma db push` cannot create. Pass --fix to create any missing indexes; without it, doctor never writes anything.')
   .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--fix', 'Create any missing manually-managed indexes (safe to re-run; skips indexes that already exist, refuses to touch indexes blocked by pre-existing duplicate rows)')
   .action((opts) => {
     try {
       const installDir = resolveInstallDir(opts, ROOT_DIR)
       const result = reportConfigDrift(installDir)
       if (result?.ran && result.mismatches?.length > 0) process.exitCode = 1
+
+      // Manually-managed index check. Same gap this covers as
+      // install.js's post-`prisma db push` step: schema.prisma can't
+      // express a partial/expression UNIQUE index, so db push silently
+      // drops it. `npm run prisma:reset` skips install.js entirely, so
+      // this is the recovery path for a node already in that state
+      // (discovered 2026-08-20 on a node that had never been under
+      // `prisma migrate deploy` management at all).
+      const dbUrl = readDatabaseUrl(installDir)
+      if (dbUrl) {
+        if (opts.fix) {
+          const results = ensureManualSqlIndexes(dbUrl)
+          for (const r of results) {
+            if (r.status === 'created') console.log(`  [fixed] ${r.name}`)
+            else if (r.status === 'already-present') console.log(`  [ok] ${r.name}`)
+            else if (r.status === 'blocked') { console.log(`  [blocked] ${r.name}: duplicate rows would violate this index — resolve manually`); process.exitCode = 1 }
+            else { console.log(`  [error] ${r.name}: ${r.error}`); process.exitCode = 1 }
+          }
+        } else {
+          const missing = checkManualSqlIndexes(dbUrl).filter(r => r.status !== 'already-present')
+          if (missing.length > 0) {
+            console.log(`  ${missing.length} manually-managed index(es) missing — run \`caw doctor --fix\` to create them:`)
+            for (const r of missing) console.log(`    - ${r.name}`)
+            process.exitCode = 1
+          }
+        }
+      }
     } catch (e) {
       console.error('doctor failed:', e.message)
       process.exit(1)
