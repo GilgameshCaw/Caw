@@ -29,13 +29,14 @@ check('1c: cawonce=undefined -> still blocked', site1_shouldReturn(42, undefined
 check('1d: no tokenId -> still blocked even with cawonce=0', site1_shouldReturn(null, 0), true)
 
 // --- Site 2: ScheduledPostProcessor parent-lookup guard ---
-// Fixed: if (data.receiverId != null && data.receiverCawonce != null)
+// Fixed: if (data.receiverId && data.receiverCawonce != null)
 function site2_shouldLookupParent(receiverId, receiverCawonce) {
-  return receiverId != null && receiverCawonce != null
+  return Boolean(receiverId && receiverCawonce != null)
 }
 check('2a: receiverCawonce=0 (chunk 0 as parent) -> looks up parent', site2_shouldLookupParent(7, 0), true)
 check('2b: receiverCawonce=3 -> looks up parent', site2_shouldLookupParent(7, 3), true)
-check('2c: receiverId=undefined -> skips lookup (top-level post)', site2_shouldLookupParent(undefined, undefined), false)
+check('2c: receiverId=0 (top-level post, prod format) -> skips lookup', site2_shouldLookupParent(0, 0), false)
+check('2d: receiverId=undefined -> skips lookup (top-level post)', site2_shouldLookupParent(undefined, undefined), false)
 
 // --- Site 3: actions.ts pending-replay effect guard ---
 // Fixed: if (!isConnected || !pendingParams || cawonce == null || submittingRef.current)
@@ -74,13 +75,14 @@ check('6b: cawonce=undefined (malformed API response) -> throws as intended', si
 check('6c: receiverId=undefined -> throws as intended', site6_shouldThrow(undefined, 0), true)
 
 // --- Site 7: Notifications.tsx ACTION_FAILED title/link guards (all 3 sites share the same fix) ---
-// Fixed: payload.receiverId != null && payload.receiverCawonce != null
+// Fixed: payload.receiverId && payload.receiverCawonce != null
 function site7_isReplyFailure(receiverId, receiverCawonce) {
-  return receiverId != null && receiverCawonce != null
+  return Boolean(receiverId && receiverCawonce != null)
 }
 check('7a: failed reply to first post (receiverCawonce=0) -> labeled as reply failure', site7_isReplyFailure(9, 0), true)
-check('7b: top-level post failure (no receiver) -> labeled as generic posting failure', site7_isReplyFailure(undefined, undefined), false)
-check('7c: reply to post #5 -> labeled as reply failure', site7_isReplyFailure(9, 5), true)
+check('7b: top-level post failure (receiverId=0, receiverCawonce=0, prod format) -> labeled as generic posting failure', site7_isReplyFailure(0, 0), false)
+check('7c: top-level post failure (no receiver) -> labeled as generic posting failure', site7_isReplyFailure(undefined, undefined), false)
+check('7d: reply to post #5 -> labeled as reply failure', site7_isReplyFailure(9, 5), true)
 
-console.log(`\n${17 - failures}/17 passed`)
+console.log(`\n${19 - failures}/19 passed`)
 process.exit(failures > 0 ? 1 : 0)
