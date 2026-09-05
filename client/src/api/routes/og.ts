@@ -172,7 +172,7 @@ const DEFAULT_AVATARS_DIR = path.join(
 )
 const defaultAvatarCache = new Map<number, string | null>()
 function loadDefaultAvatarDataUri(id: number): string | null {
-  const clamped = Math.max(1, Math.min(100, id))
+  const clamped = Math.max(1, Math.min(131, id))
   if (defaultAvatarCache.has(clamped)) return defaultAvatarCache.get(clamped)!
   try {
     const bytes = fs.readFileSync(path.join(DEFAULT_AVATARS_DIR, `${clamped}.png`))
