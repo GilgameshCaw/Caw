@@ -101,10 +101,47 @@ async function cleanupOptimisticRows(
     // CAW (0) / RECAW (3): mark the Caw row as FAILED so the feed shows it
     // with a failure indicator rather than lingering as "pending forever".
     if ((actionType === 0 || actionType === 3) && cawonce != null) {
-      await prisma.caw.updateMany({
-        where: { userId: senderId, cawonce, status: 'PENDING' },
-        data: { status: 'FAILED', reason: reason.slice(0, 200) }
+      // Fetch-then-update was previously two separate queries (a findMany
+      // followed by a single bulk updateMany), leaving a TOCTOU window: two
+      // concurrent calls to markTxQueueFailed for the same senderId/cawonce
+      // could both read the same PENDING rows before either write landed,
+      // then each call onStatusChanged for the same row -- double-
+      // decrementing user.cawCount/recawCount. The transaction below reads
+      // the candidate rows, then claims each one individually with a
+      // status: 'PENDING' guarded updateMany and keeps only the rows where
+      // that update actually affected one row. Exactly one concurrent
+      // caller can ever win that per-row guard, so pendingCaws ends up
+      // holding only rows this call transitioned -- the onStatusChanged
+      // loop below fires at most once per row across concurrent callers.
+      const pendingCaws = await prisma.$transaction(async (tx) => {
+        const rows = await tx.caw.findMany({
+          where: { userId: senderId, cawonce, status: 'PENDING' },
+          select: { id: true, userId: true, action: true, originalCawId: true },
+        })
+        if (rows.length === 0) return rows
+
+        // Claim each row individually via a status-guarded updateMany and
+        // check its affected count. This is deliberately NOT a single bulk
+        // updateMany re-filtered by matching `reason` afterward -- two
+        // concurrent callers racing the same PENDING row often share the
+        // same reason text (they're usually reacting to the same
+        // underlying on-chain revert), so a reason-based re-filter can't
+        // tell which caller actually won the write and would let both
+        // callers' onStatusChanged fire for the same row. Per-row count
+        // === 1 is the only signal that can't be spoofed by matching text:
+        // exactly one concurrent updateMany can ever flip a given row out
+        // of 'PENDING'.
+        const claimed: typeof rows = []
+        for (const r of rows) {
+          const result = await tx.caw.updateMany({
+            where: { id: r.id, status: 'PENDING' },
+            data: { status: 'FAILED', reason: reason.slice(0, 200) }
+          })
+          if (result.count === 1) claimed.push(r)
+        }
+        return claimed
       })
+
       // If this Caw originated from a ScheduledCaw, the scheduled record is
       // currently sitting at status='published' (the processor flips it the
       // moment it queues the tx, before broadcast). Demote it to 'failed' so
@@ -113,6 +150,28 @@ async function cleanupOptimisticRows(
         where: { userId: senderId, cawonce, status: 'published' },
         data: { status: 'failed' },
       })
+
+      for (const pendingCaw of pendingCaws) {
+        // Caw.originalCawId is set for BOTH quotes and replies (see
+        // actionHandlers.ts's upsert) -- CountManager's rollback only
+        // wants it for quotes, where it also decrements the parent's
+        // recawCount. A reply's parent gets commentCount bumped instead
+        // (via Reply, not Caw.recawCount), so passing originalCawId
+        // through unconditionally here would incorrectly decrement a
+        // reply's parent's recawCount on failure. Check for a Reply row
+        // pointing at this caw, same distinction actionHandlers.ts's
+        // isReplyNotQuote already makes at creation time.
+        const replyRecord = pendingCaw.originalCawId != null
+          ? await prisma.reply.findFirst({ where: { replyCawId: pendingCaw.id }, select: { id: true } })
+          : null
+        const isReply = replyRecord != null
+
+        await countManager.onStatusChanged(prisma, 'caw', pendingCaw.id, 'PENDING', 'FAILED', {
+          userId: pendingCaw.userId,
+          action: pendingCaw.action,
+          originalCawId: isReply ? null : pendingCaw.originalCawId,
+        })
+      }
     }
 
     // FOLLOW (4) failed: mark the pending Follow row as FAILED so the UI
