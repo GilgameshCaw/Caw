@@ -412,6 +412,7 @@ export async function handleCawAction(
       action: 'CAW',
       originalCawId: quoteOriginalCawId,
       status: 'SUCCESS',
+      isReply: isReplyNotQuote,
     })
   } else if (existingCaw.status === 'PENDING' || existingCaw.status === 'FAILED') {
     // Optimistic counts already applied (PENDING) or were never rolled
@@ -1096,6 +1097,9 @@ export async function handleOtherAction(
   // Update counts via CountManager (same as regular caw).
   // For replies (parentCawId set), don't pass originalCawId — we don't want recawCount
   // bumped on the parent; commentCount is handled separately below.
+  // Quotes (RECAW with text) bump recawCount via onCawCreated; they must NOT
+  // also bump commentCount — that's reserved for true CAW replies.
+  const isReplyNotQuote = effectiveActionType !== 'RECAW'
   const otherOriginalCawId = (effectiveActionType === 'RECAW' && parentCawId) ? parentCawId : null
   await countManager.onCawCreated(tx, {
     id: newCaw.id,
@@ -1103,11 +1107,9 @@ export async function handleOtherAction(
     action: effectiveActionType === 'RECAW' ? 'RECAW' : 'CAW',
     originalCawId: otherOriginalCawId,
     status: 'SUCCESS',
+    isReply: Boolean(parentCawId && isReplyNotQuote),
   })
 
-  // Quotes (RECAW with text) bump recawCount via onCawCreated; they must NOT
-  // also bump commentCount — that's reserved for true CAW replies.
-  const isReplyNotQuote = effectiveActionType !== 'RECAW'
   if (parentCawId && isReplyNotQuote) {
     await countManager.onReplyCreated(tx, {
       cawId: parentCawId,
