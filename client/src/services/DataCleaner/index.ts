@@ -512,25 +512,29 @@ async function cleanupPendingCaws() {
             }
             if (isQuoteNotReply && pendingCaw.originalCawId) {
               try {
-                // When recomputing a quote parent's count, exclude any of
-                // its CAW-type children that are actually replies (same
-                // Reply-table distinction as above) so a reply never gets
-                // counted into recawCount alongside real quotes.
-                const replySiblingIds = pendingCaw.action === 'CAW'
-                  ? (await prisma.reply.findMany({
-                      where: { cawId: pendingCaw.originalCawId },
-                      select: { replyCawId: true },
-                    })).map(r => r.replyCawId)
-                  : []
+                // Recompute parent recawCount over the union of both plain RECAWs
+                // and quotes (non-reply CAWs), per @nyaromesama's audit. onCawCreated
+                // bumps recawCount for both, so recomputing only one category would
+                // clobber the sibling category on mixed parents.
+                const replySiblingIds = (await prisma.reply.findMany({
+                  where: { cawId: pendingCaw.originalCawId },
+                  select: { replyCawId: true },
+                })).map(r => r.replyCawId)
+
                 const actualRecawCount = await prisma.caw.count({
                   where: {
                     originalCawId: pendingCaw.originalCawId,
-                    action: pendingCaw.action === 'RECAW' ? 'RECAW' : 'CAW',
                     status: 'SUCCESS',
-                    ...(pendingCaw.action === 'CAW'
-                      ? { id: { notIn: replySiblingIds.length > 0 ? replySiblingIds : [-1] } }
-                      : {}),
-                  }
+                    OR: [
+                      { action: 'RECAW' },
+                      {
+                        action: 'CAW',
+                        ...(replySiblingIds.length > 0
+                          ? { id: { notIn: replySiblingIds } }
+                          : {}),
+                      },
+                    ],
+                  },
                 })
                 await prisma.caw.update({
                   where: { id: pendingCaw.originalCawId },

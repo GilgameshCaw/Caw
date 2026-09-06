@@ -249,14 +249,15 @@ function recomputeParentRecawCount(pendingCaw, allCaws) {
     : !isReplyRow(pendingCaw.originalCawId, pendingCaw.id)
   if (!isQuoteNotReply || !pendingCaw.originalCawId) return null
 
-  const children = allCaws.filter(c =>
+  // Count union of plain RECAWs and real quotes (non-reply CAWs), per @nyaromesama's audit
+  const countedChildren = allCaws.filter(c =>
     c.originalCawId === pendingCaw.originalCawId &&
     c.status === 'SUCCESS' &&
-    c.action === pendingCaw.action
+    (
+      c.action === 'RECAW' ||
+      (c.action === 'CAW' && !isReplyRow(pendingCaw.originalCawId, c.id))
+    )
   )
-  const countedChildren = pendingCaw.action === 'CAW'
-    ? children.filter(c => !isReplyRow(pendingCaw.originalCawId, c.id))
-    : children
   return countedChildren.length
 }
 
@@ -306,5 +307,27 @@ check(
   1
 )
 
-console.log(`\n${16 - failures}/16 passed`)
+// 13) Mixed RECAW + quote + reply under one parent -- per @nyaromesama's audit:
+//     recomputing recawCount must count the union of both plain RECAWs and
+//     real quotes, while still excluding replies. A sweep of either category
+//     must not clobber the sibling category's count contribution.
+replyRows = []
+addReply(800, 903) // caw 903 is a reply to parent 800
+const allCawsMixedUnion = [
+  { id: 901, action: 'RECAW', originalCawId: 800, status: 'SUCCESS' }, // plain recaw
+  { id: 902, action: 'CAW', originalCawId: 800, status: 'SUCCESS' },   // real quote
+  { id: 903, action: 'CAW', originalCawId: 800, status: 'SUCCESS' },   // reply (must be excluded)
+]
+check(
+  '13a: stale-pending RECAW sweep counts union (1 RECAW + 1 quote = 2, excludes reply)',
+  recomputeParentRecawCount({ id: 901, action: 'RECAW', originalCawId: 800 }, allCawsMixedUnion),
+  2
+)
+check(
+  '13b: stale-pending quote sweep counts union (1 RECAW + 1 quote = 2, excludes reply)',
+  recomputeParentRecawCount({ id: 902, action: 'CAW', originalCawId: 800 }, allCawsMixedUnion),
+  2
+)
+
+console.log(`\n${18 - failures}/18 passed`)
 process.exit(failures > 0 ? 1 : 0)
