@@ -74,11 +74,13 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [walletProtect, setWalletProtect] = useState(false)
+  const [userEditedTip, setUserEditedTip] = useState(false)
 
   // Reset state when modal opens; pre-fill tip ceiling from network target once loaded
   useEffect(() => {
     if (isOpen) {
       setError(null)
+      setUserEditedTip(false)
       // Reuse the shared default ($10 worth of CAW) so this matches the
       // /settings/session-keys default — don't hardcode a divergent figure.
       if (cawPrice > 0) setSpendLimit(getDefaultSpendLimit())
@@ -86,7 +88,15 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
       const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
       setTipCeiling(networkDefault)
     }
-  }, [isOpen, cawPrice, networkTipCaw, tipCeilingFallbackCaw])
+  }, [isOpen])
+
+  // networkTipCaw resolves asynchronously (on-chain read) — apply it once it
+  // arrives, but never clobber a value the user has since edited themselves.
+  useEffect(() => {
+    if (isOpen && !userEditedTip && networkTipCaw) {
+      setTipCeiling(networkTipCaw)
+    }
+  }, [networkTipCaw, isOpen, userEditedTip])
 
   const handleEnable = async () => {
     setLoading(true)
@@ -176,7 +186,10 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
             duration={duration}
             onDurationChange={setDuration}
             tipCeiling={tipCeiling}
-            onTipCeilingChange={setTipCeiling}
+            onTipCeilingChange={(v) => {
+              setUserEditedTip(true)
+              setTipCeiling(v)
+            }}
             walletProtect={walletProtect}
             onWalletProtectChange={setWalletProtect}
             themed

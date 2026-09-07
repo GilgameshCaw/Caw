@@ -1065,6 +1065,58 @@ export async function registerSponsoredSession(opts: {
  *   - tipCeilingUsd: the USD equivalent (number), or 0 if prices unavailable
  *   - tipCeilingFallbackCaw: a $0.0009-denominated fallback in whole CAW (always defined)
  */
+// Mirrors CawActions._getTipCost's on-chain math exactly: networkTipTargetWei
+// is ETH-denominated (see CawActions.sol:1245's "ethCap comes from
+// CawProfileLedger.networkTipTargetWei" comment), converted to whole CAW via
+// CawActions.tipState's UQ112.112 WETH-per-CAW ratio — NOT via cawPrice/ethPrice
+// USD math, and NOT the same ratio as capState (tipState has no bindsNow gate
+// and is a separate on-chain slot; the two can diverge even though today they
+// happen to share a value). tipState.ratio === 0, or a lastUpdatedAt older than
+// CAP_STALE_THRESHOLD (24h), means the on-chain target is dormant/stale — the
+// contract itself falls back to the session's own perActionTipRate ceiling in
+// that case, so the frontend mirrors that by falling back to the USD default.
+const TIP_STALE_THRESHOLD_SECONDS = 86400 // 24h, mirrors CawActions.sol's CAP_STALE_THRESHOLD
+const VALIDATOR_MIN_IMPLICIT_TIP_CAW = 1000n // mirrors the "Insufficient implicit session tip" floor
+
+/**
+ * Pure calculation, exported for unit testing. Mirrors CawActions._getTipCost's
+ * on-chain math exactly: networkTipTargetWei is ETH-denominated (see
+ * CawActions.sol:1245's "ethCap comes from CawProfileLedger.networkTipTargetWei"
+ * comment), converted to whole CAW via CawActions.tipState's UQ112.112
+ * WETH-per-CAW ratio — NOT via cawPrice/ethPrice USD math, and NOT the same
+ * ratio as capState (tipState has no bindsNow gate and is a separate on-chain
+ * slot; the two can diverge even though today they happen to share a value).
+ * tipRatio === 0, or a lastUpdatedAt older than TIP_STALE_THRESHOLD_SECONDS,
+ * means the on-chain target is dormant/stale — the contract itself falls back
+ * to the session's own perActionTipRate ceiling in that case, so this mirrors
+ * that by returning null (caller falls back to the USD default).
+ */
+export function calculateTipCeilingFromOnChainTarget(
+  tipTargetWei: bigint,
+  tipLastUpdatedAt: bigint,
+  tipRatio: bigint,
+  nowSeconds: bigint,
+): bigint | null {
+  const isStale =
+    tipTargetWei === 0n ||
+    tipRatio === 0n ||
+    nowSeconds - tipLastUpdatedAt > BigInt(TIP_STALE_THRESHOLD_SECONDS)
+
+  if (isStale) return null
+
+  // Mirror CawActions._getTipCost: r = (ethCap << 112) / ratio / 1e18, floor 1.
+  const PRECISION_1E18 = 10n ** 18n
+  const converted = (tipTargetWei << 112n) / tipRatio / PRECISION_1E18
+  const wholeCAW = converted > 0n ? converted : 1n
+
+  // Floor at the validator's minimum implicit-session-tip floor. The on-chain
+  // conversion can legitimately land below this (e.g. a low ETH-denominated
+  // target relative to the live CAW/ETH ratio), and a value under the floor
+  // would be rejected by validators as "underpriced" even though the unit
+  // conversion itself is correct.
+  return wholeCAW > VALIDATOR_MIN_IMPLICIT_TIP_CAW ? wholeCAW : VALIDATOR_MIN_IMPLICIT_TIP_CAW
+}
+
 export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
   tipCeilingCaw: bigint | undefined
   tipCeilingUsd: number
@@ -1074,10 +1126,12 @@ export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
 
   // Fallback: $0.0009 worth of CAW — the recommended default per-action tip
   // (matches the $0.0009 ★ preset in QuickSignOptions; accepted by the most
-  // validators).
+  // validators). Floored at 1000 CAW: this is also the validator's minimum
+  // implicit-session-tip floor (see "Insufficient implicit session tip"
+  // rejection), so a USD-derived value below that would still be rejected.
   const USD_FALLBACK = 0.0009
   const tipCeilingFallbackCaw: bigint =
-    cawPrice > 0 ? BigInt(Math.max(1, Math.round(USD_FALLBACK / cawPrice))) : BigInt(1000)
+    cawPrice > 0 ? BigInt(Math.max(1000, Math.round(USD_FALLBACK / cawPrice))) : BigInt(1000)
 
   // networkTipTargetWei lives on CawProfileLedger (deployed at CAW_NAMES_L2_ADDRESS),
   // NOT on CawActions. Reading it off the wrong ABI/address silently fails and the
@@ -1091,21 +1145,33 @@ export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
     staleTime: 5 * 60 * 1000, // 5 minutes per project_infura_quota_dials
   } as any)
 
-  if (tipTargetWei === undefined || tipTargetWei === null) {
+  // tipState lives on CawActions — the ratio used to convert the ETH-denominated
+  // networkTipTargetWei above into whole CAW, exactly as _getTipCost does.
+  const { data: tipStateData } = useReadContract({
+    address: CAW_ACTIONS_ADDRESS as `0x${string}`,
+    abi: cawActionsAbi,
+    functionName: 'tipState',
+    chainId: baseSepolia.id,
+    staleTime: 5 * 60 * 1000,
+  } as any)
+
+  if (tipTargetWei === undefined || tipTargetWei === null || tipStateData === undefined || tipStateData === null) {
     return { tipCeilingCaw: undefined, tipCeilingUsd: 0, tipCeilingFallbackCaw }
   }
 
   const tipTargetBigInt = tipTargetWei as bigint
+  const [tipLastUpdatedAt, tipRatio] = tipStateData as [bigint, bigint]
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000))
 
-  // tipTargetWei is in CAW-wei (18 decimals) — convert to whole CAW tokens
-  // If the target is 0 on-chain, fall back to the USD-denominated default
-  if (tipTargetBigInt === 0n) {
+  const tipCeilingCawFromChain = calculateTipCeilingFromOnChainTarget(
+    tipTargetBigInt, tipLastUpdatedAt, tipRatio, nowSeconds,
+  )
+
+  if (tipCeilingCawFromChain === null) {
     return { tipCeilingCaw: tipCeilingFallbackCaw, tipCeilingUsd: USD_FALLBACK, tipCeilingFallbackCaw }
   }
 
-  const wholeCAW = tipTargetBigInt / BigInt(10 ** 18)
-  const tipCeilingCaw = wholeCAW > 0n ? wholeCAW : BigInt(1)
-
+  const tipCeilingCaw = tipCeilingCawFromChain
   // USD value: whole CAW * cawPrice
   const tipCeilingUsd = cawPrice > 0 ? Number(tipCeilingCaw) * cawPrice : 0
 

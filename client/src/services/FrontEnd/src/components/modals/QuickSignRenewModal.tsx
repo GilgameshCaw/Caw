@@ -70,6 +70,7 @@ const QuickSignRenewModal: React.FC = () => {
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
   const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [walletProtect, setWalletProtect] = useState(false)
+  const [userEditedTip, setUserEditedTip] = useState(false)
 
   const wrongWallet = isConnected && activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
@@ -81,10 +82,21 @@ const QuickSignRenewModal: React.FC = () => {
   // navigated away mid-renew.
   React.useEffect(() => {
     if (isOpen) {
+      setUserEditedTip(false)
       const networkDefault = networkTipCaw ?? tipCeilingFallbackCaw
       setTipCeiling(networkDefault)
     }
-  }, [isOpen, networkTipCaw, tipCeilingFallbackCaw])
+  }, [isOpen])
+
+  // networkTipCaw resolves asynchronously (on-chain read) — apply it once it
+  // arrives, but never clobber a value the user has since edited themselves.
+  // Same fix as QuickSignModal (this component mirrors it and had picked up
+  // the same async-overwrite race).
+  React.useEffect(() => {
+    if (isOpen && !userEditedTip && networkTipCaw) {
+      setTipCeiling(networkTipCaw)
+    }
+  }, [networkTipCaw, isOpen, userEditedTip])
 
   // Clear stale errors when connection state changes
   React.useEffect(() => { setError(null) }, [isConnected, address, chainId])
@@ -204,7 +216,10 @@ const QuickSignRenewModal: React.FC = () => {
             duration={duration}
             onDurationChange={setDuration}
             tipCeiling={tipCeiling}
-            onTipCeilingChange={setTipCeiling}
+            onTipCeilingChange={(v) => {
+              setUserEditedTip(true)
+              setTipCeiling(v)
+            }}
             walletProtect={walletProtect}
             onWalletProtectChange={setWalletProtect}
             themed
