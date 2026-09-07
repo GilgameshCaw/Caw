@@ -661,6 +661,13 @@ export function buildTypedData(params: ActionParams, tipOverride?: bigint, opts?
   if (code === undefined) {
     throw new Error(`Unknown actionType "${params.actionType}"`)
   }
+  if (!CLIENT_ID_VALID) {
+    throw new Error(
+      `[CLIENT_ID] Cannot sign action: Network ID is unset or invalid (CLIENT_ID=${CLIENT_ID}). ` +
+      'The frontend was built without VITE_NETWORK_ID (or legacy VITE_CLIENT_ID). ' +
+      'Rebuild with VITE_NETWORK_ID set in client/src/services/FrontEnd/.env.'
+    )
+  }
   // Clone the amounts array to avoid mutating the original
   const amounts = [...(params.amounts ?? [])];
 
