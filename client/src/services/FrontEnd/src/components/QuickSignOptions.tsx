@@ -92,12 +92,18 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   }, [cawPrice])
 
   // Per-action tip presets in dollars → CAW. Label is the dollar amount.
+  // Floored at 1000 CAW (not 1): this is the validator's minimum implicit-
+  // session-tip floor (see "Insufficient implicit session tip" rejection).
+  // A USD-derived preset below that would be rejected on-chain as
+  // underpriced even though the conversion itself is correct — same failure
+  // mode as the networkTipTargetWei unit-mismatch bug this preset sits next
+  // to, just triggered by price movement instead of a unit error.
   const tipDollarOptions = useMemo(() => {
     if (!cawPrice || cawPrice <= 0) return null
     return TIP_USD_PRESETS.map(p => ({
       ...p,
       label: fmtUsdSmall(p.usd).replace(/0+$/, '').replace(/\.$/, ''),
-      caw: BigInt(Math.max(1, Math.round(p.usd / cawPrice))),
+      caw: BigInt(Math.max(1000, Math.round(p.usd / cawPrice))),
     }))
   }, [cawPrice])
 
