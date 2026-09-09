@@ -280,11 +280,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     )
   }
 
-  const handleNoLimit = () => {
-    onSpendLimitChange(BigInt(0))
-    if (onWalletProtectChange) onWalletProtectChange(true)
-  }
-
   return (
     <div className={`space-y-4 mt-4 p-4 rounded-xl border ${
       themed && !isDark ? 'bg-gray-50 border-gray-200' : ''
@@ -306,13 +301,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   {opt.label}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={handleNoLimit}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(spendLimit === 0n)}`}
-              >
-                No limit
-              </button>
             </>
           ) : (
             // Fallback if price not loaded yet — show raw CAW amounts
@@ -327,13 +315,6 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   {formatSpendLimit(BigInt(n))}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={handleNoLimit}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(spendLimit === 0n)}`}
-              >
-                No limit
-              </button>
             </>
           )}
         </div>

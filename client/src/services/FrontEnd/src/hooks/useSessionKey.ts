@@ -69,7 +69,6 @@ export const SPEND_LIMIT_OPTIONS = [
   { label: '50M',  value: BigInt(50_000_000) },
   { label: '100M', value: BigInt(100_000_000) },
   { label: '500M', value: BigInt(500_000_000) },
-  { label: 'No limit', value: BigInt(0) },
 ]
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
