@@ -851,7 +851,23 @@ export async function handleUnfollowAction(
   // orphan replay skips. Legitimate unfollows resolve via the PENDING+UNFOLLOW
   // optimistic-undo path, which this guard does not touch.
   if (fromReconciliation && existing.status === 'SUCCESS' && existing.action === 'FOLLOW') {
-    return
+    // A SUCCESS+FOLLOW row alone can't distinguish "superseded by a later
+    // re-follow" from "this UNFOLLOW never landed and only an older FOLLOW row
+    // remains" (P2028 makes the latter real). Consult the on-chain action log --
+    // the same "most recent action is the source of truth" test that
+    // cleanupPendingFollows uses -- and skip only when the pair's latest action
+    // is genuinely a FOLLOW.
+    const latest = await tx.action.findFirst({
+      where: {
+        senderId: action.senderId,
+        actionType: { in: ['FOLLOW', 'UNFOLLOW'] },
+        AND: [{ data: { path: ['receiverId'], equals: rawAction.receiverId } }],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { actionType: true },
+    })
+    if (latest?.actionType === 'FOLLOW') return // superseded by a later follow -- skip
+    // otherwise this UNFOLLOW is the latest action and never landed -- fall through
   }
 
   await tx.follow.delete({
