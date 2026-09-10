@@ -1,7 +1,7 @@
 /// <reference types="vitest" />
 import path from "path";
 import { execSync } from "child_process";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
 import svgr from "vite-plugin-svgr";
@@ -97,6 +97,41 @@ function buildManifestPlugin(clientVersion: string): Plugin {
       // eslint-disable-next-line no-console
       console.log(`[build-manifest] wrote dist/build-manifest.json (${distinct} files, version ${clientVersion})`);
     }
+  };
+}
+
+// Fail the build when the network id that gets baked into the bundle isn't a
+// usable one. CLIENT_ID in api/actions.ts is
+//   Number(VITE_NETWORK_ID ?? VITE_CLIENT_ID)
+// and CLIENT_ID_VALID is Number.isInteger(CLIENT_ID) && CLIENT_ID > 0. If that
+// resolves to NaN / 0 / negative the bundle still builds, ships, and then every
+// EIP-712 action signing dies at runtime with WebKit's opaque "Not an integer"
+// (BigInt(NaN) in the typed-data path). This turns that silent bad bundle into
+// a loud build failure.
+//
+// apply:'build' only -- dev serve, where the env may legitimately be unset, is
+// never blocked; only an emitted bundle is gated. The resolution and validity
+// test are identical to actions.ts so the build gate and the runtime
+// CLIENT_ID_VALID guard can't drift apart.
+function clientIdGuardPlugin(): Plugin {
+  return {
+    name: 'caw-client-id-guard',
+    apply: 'build',
+    config(_config, { mode }) {
+      const env = loadEnv(mode, __dirname, '');
+      const raw = env.VITE_NETWORK_ID ?? env.VITE_CLIENT_ID;
+      const clientId = Number(raw);
+      if (!Number.isInteger(clientId) || clientId <= 0) {
+        throw new Error(
+          `[caw-client-id-guard] Refusing to build: VITE_NETWORK_ID ` +
+          `(or legacy VITE_CLIENT_ID) resolved to ${JSON.stringify(raw)} ` +
+          `-> Number() = ${clientId}, which is not a positive integer. This ` +
+          `bundle would ship a NaN CLIENT_ID and fail every EIP-712 action ` +
+          `signing at runtime with "Not an integer". Set VITE_NETWORK_ID in ` +
+          `client/src/services/FrontEnd/.env (owned by the build user) and rebuild.`,
+        );
+      }
+    },
   };
 }
 
@@ -235,6 +270,7 @@ export default defineConfig({
   // hand-optimized; user-uploaded images go through the browser-side
   // compressImage.ts pipeline, not this plugin. Net loss: ~zero.
   plugins: [
+    clientIdGuardPlugin(),
     buildManifestPlugin(CLIENT_VERSION),
     coepHeadersPlugin(),
     tailwindcss(),
