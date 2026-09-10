@@ -16,7 +16,8 @@ import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
 import { useInstanceStore } from '~/store/instanceStore'
-import { CLIENT_ID } from '~/api/actions'
+import { CLIENT_ID, CLIENT_ID_VALID } from '~/api/actions'
+import { NodeConfigError } from '~/components/NodeConfigError'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { I18nProvider } from '~/i18n/I18nProvider'
 
@@ -132,7 +133,7 @@ function App() {
   // without a hard reload.
   const fetchInstances = useInstanceStore(s => s.fetchInstances)
   useEffect(() => {
-    if (!Number.isFinite(CLIENT_ID) || CLIENT_ID <= 0) return
+    if (!CLIENT_ID_VALID) return
     fetchInstances(CLIENT_ID).catch(() => { /* fetchInstances logs internally */ })
     // 30 min between refreshes. Per-instance change events arrive via
     // the API tier when peers register/update — the chain-fallback
@@ -265,6 +266,16 @@ function App() {
 
   const stakeModal = useInsufficientStakeStore()
   const actionError = useActionErrorStore()
+
+  // If the bundle shipped without a valid network id, CLIENT_ID is NaN/0 and
+  // every contract read and EIP-712 signing below would fail -- signing throws
+  // WebKit's opaque "Not an integer". Gate the whole app so a misconfigured
+  // node shows a legible error instead of a UI that silently NaNs every
+  // on-chain call. Stays below the hooks above (Rules of Hooks); CLIENT_ID_VALID
+  // is a build-time constant, so this is a no-op for any correctly-built bundle.
+  if (!CLIENT_ID_VALID) {
+    return <NodeConfigError />
+  }
 
   return (
     <BrowserRouter>
