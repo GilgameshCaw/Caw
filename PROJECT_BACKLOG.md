@@ -349,6 +349,39 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
 
 ## Frontend
 
+### X-gate and ungated signup dead-end at the username step
+
+`UsernameStep`'s `canProceed` requires `giftCaw !== undefined`. `giftCaw` is only
+ever set by the `useEffect` in `Onboarding.tsx` that opens with `if (!codeValid ||
+!normalizedCode) return`, and `normalizedCode` is `searchParams.get('code')`. The
+two code-less gates therefore reach the username step and stop: Next carries the
+`disabled` attribute, no spinner (`giftLoading` never leaves `false`), no message.
+
+Measured on tencawffee.com — same build, three gates, valid available names:
+
+| gate | giftCawDefined | canProceed |
+| --- | --- | --- |
+| invite code | true | **true** |
+| X gate | false | false |
+| ungated | false | false |
+
+The other four terms of `canProceed` are identical across all three.
+
+`e362e69b` (2026-06-08) introduced the requirement — before it `canProceed` was
+`usernameAvailable === true`. `19597d91` (X gate, 06-12) and `091eda4d` (ungated,
+06-14) each wire their gate open and thread their token through to
+`bootstrapNewUser`, but neither touches `UsernameStep.tsx`.
+
+The server accepts all three shapes, so the request simply never gets made. What
+the fix should be isn't obvious from outside: `consumeXQualifiedToken` returns
+`{ xUserId, xHandle }` only, so there is no gift figure on the X path to feed the
+FE — `depositAmountCAW` arrives from the client and is bounded by
+`SPONSOR_MAX_DEPOSIT_CAW`.
+
+Also worth deciding: `/onboarding` has no invite-code input field. A code reaches
+the app only through `?code=` in the URL, so a visitor who lands without one has
+just the two dead ends.
+
 ### Re-enable tsc in the production build — SHIPPED (`c518891a`, 2026-05)
 
 **Status:** Re-enabled in `c518891a` — `tsc -b && vite build` is back in the
