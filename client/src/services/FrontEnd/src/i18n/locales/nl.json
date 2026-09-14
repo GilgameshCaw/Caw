@@ -595,6 +595,7 @@
   "faucet.contract_address": "Contractadres",
   "faucet.network": "Netwerk: Sepolia Testnet",
   "new_profile.creating": "Aanmaken...",
+  "new_profile.preparing": "Voorbereiden...",
   "new_profile.processing": "Verwerken...",
   "new_profile.username_taken": "gebruikersnaam bezet",
   "new_profile.create_and_deposit": "Aanmaken & storten",

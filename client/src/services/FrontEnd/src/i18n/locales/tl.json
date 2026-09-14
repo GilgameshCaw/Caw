@@ -594,6 +594,7 @@
   "faucet.contract_address": "Contract Address",
   "faucet.network": "Network: Sepolia Testnet",
   "new_profile.creating": "Ginagawa...",
+  "new_profile.preparing": "Naghahanda...",
   "new_profile.processing": "Pinoproseso...",
   "new_profile.username_taken": "kinuha na ang username",
   "new_profile.create_and_deposit": "Gumawa & Mag-deposit",

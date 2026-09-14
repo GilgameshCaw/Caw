@@ -594,6 +594,7 @@
   "faucet.contract_address": "آدرس قرارداد",
   "faucet.network": "شبکه: Sepolia Testnet",
   "new_profile.creating": "در حال ساخت...",
+  "new_profile.preparing": "در حال آماده‌سازی...",
   "new_profile.processing": "در حال پردازش...",
   "new_profile.username_taken": "نام کاربری گرفته شده",
   "new_profile.create_and_deposit": "ساخت و واریز",

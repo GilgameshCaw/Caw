@@ -595,6 +595,7 @@
   "faucet.contract_address": "عنوان العقد",
   "faucet.network": "الشبكة: شبكة Sepolia التجريبية",
   "new_profile.creating": "جارٍ الإنشاء...",
+  "new_profile.preparing": "جارٍ التحضير...",
   "new_profile.processing": "جارٍ المعالجة...",
   "new_profile.username_taken": "اسم المستخدم محجوز",
   "new_profile.create_and_deposit": "إنشاء وإيداع",

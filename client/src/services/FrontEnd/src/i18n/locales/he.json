@@ -595,6 +595,7 @@
   "faucet.contract_address": "כתובת חוזה",
   "faucet.network": "רשת: Sepolia Testnet",
   "new_profile.creating": "יוצר...",
+  "new_profile.preparing": "מכין...",
   "new_profile.processing": "מעבד...",
   "new_profile.username_taken": "שם המשתמש תפוס",
   "new_profile.create_and_deposit": "צור והפקד",

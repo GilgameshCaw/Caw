@@ -727,7 +727,7 @@ console.log("BALANCE:", balance)
   // quote on‐chain LZ fee from CawProfileQuoter — switches between mint and mintAndDeposit.
   // When Quick Sign is ON alongside a deposit, use the bundled quote which
   // accounts for the larger LZ payload (extra session-key + expiry + spend args).
-  const { data: mintOnlyQuote } = useReadContract({
+  const { data: mintOnlyQuote, isLoading: mintOnlyQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintQuote",
@@ -735,7 +735,7 @@ console.log("BALANCE:", balance)
     args: [ CLIENT_ID, false ],
     query: { enabled: !depositEnabled && !authEnabled }
   })
-  const { data: mintAndAuthQuote } = useReadContract({
+  const { data: mintAndAuthQuote, isLoading: mintAndAuthQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintAndAuthQuote",
@@ -755,7 +755,7 @@ console.log("BALANCE:", balance)
   // the larger LZ gas budget on L2, so we MUST use this when QS is enabled.
   // The Quoter's signature only needs `sessionKey` to know whether the bundled
   // selector applies; expiry/spendLimit don't affect LZ payload size.
-  const { data: bundledQuote } = useReadContract({
+  const { data: bundledQuote, isLoading: bundledQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintAndDepositAndQuickSignQuote",
@@ -767,7 +767,7 @@ console.log("BALANCE:", balance)
   // ZAP quotes — same on-chain LZ + storage fees as the CAW-paid path; the
   // swap leg is computed on the frontend from pool reserves. The Quoter
   // exposes thin wrappers so the frontend has one call per flow.
-  const { data: mintAndDepositZapQuote } = useReadContract({
+  const { data: mintAndDepositZapQuote, isLoading: mintAndDepositZapQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintAndDepositZapQuote",
@@ -775,7 +775,7 @@ console.log("BALANCE:", balance)
     args: [ CLIENT_ID, chains.l2.layerZero, false ],
     query: { enabled: paymentMode === 'eth' && !quickSignEnabled }
   })
-  const { data: bundledZapQuote } = useReadContract({
+  const { data: bundledZapQuote, isLoading: bundledZapQuoteLoading } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintAndDepositAndQuickSignZapQuote",
@@ -788,6 +788,16 @@ console.log("BALANCE:", balance)
     : (!depositEnabled
         ? (authEnabled ? mintAndAuthQuote : mintOnlyQuote)
         : (quickSignEnabled ? bundledQuote : mintAndDepositQuote))
+  // Loading flag for whichever quote the branch above just selected. Kept on
+  // the identical shape so the two stay in step — if a mode is added to
+  // `quote`, it has to be added here too, or that mode goes back to a button
+  // that disables itself in silence. Unselected hooks are `enabled: false`,
+  // so their isLoading stays false and can't leak into another mode.
+  const quoteLoading = paymentMode === 'eth'
+    ? (quickSignEnabled ? bundledZapQuoteLoading : mintAndDepositZapQuoteLoading)
+    : (!depositEnabled
+        ? (authEnabled ? mintAndAuthQuoteLoading : mintOnlyQuoteLoading)
+        : (quickSignEnabled ? bundledQuoteLoading : mintAndDepositQuoteLoading))
 
   const lzTokenAmount = 0n;
   const totalCawNeeded = cost + depositAmountWei;
@@ -1660,6 +1670,19 @@ console.log("BALANCE:", balance)
     submitText = t('new_profile.username_taken')
   else if (insufficientBalance)
     submitText = t('staking.button.insufficient_balance')
+  else if (!quote && quoteLoading) {
+    // The button is disabled on `!quote` below. Say so, rather than resting on
+    // the default label while nothing responds to a press.
+    submitText = (
+      <div className="flex items-center justify-center space-x-2">
+        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+        </svg>
+        <span>{t('new_profile.preparing')}</span>
+      </div>
+    )
+  }
   else if (paymentMode === 'eth') {
     if (ethAmountWei === 0n) submitText = "Enter ETH amount"
     else if (zapQuote.loaded && zapQuote.minCawOut < cost) submitText = "Increase ETH Amount"

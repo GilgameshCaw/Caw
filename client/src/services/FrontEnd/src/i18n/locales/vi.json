@@ -595,6 +595,7 @@
   "faucet.contract_address": "Địa chỉ hợp đồng",
   "faucet.network": "Mạng: Sepolia Testnet",
   "new_profile.creating": "Đang tạo...",
+  "new_profile.preparing": "Đang chuẩn bị...",
   "new_profile.processing": "Đang xử lý...",
   "new_profile.username_taken": "tên người dùng đã tồn tại",
   "new_profile.create_and_deposit": "Tạo & nạp",
