@@ -595,6 +595,7 @@
   "faucet.contract_address": "合约地址",
   "faucet.network": "网络：Sepolia 测试网",
   "new_profile.creating": "创建中...",
+  "new_profile.preparing": "准备中...",
   "new_profile.processing": "处理中...",
   "new_profile.username_taken": "用户名已被占用",
   "new_profile.create_and_deposit": "创建并存入",

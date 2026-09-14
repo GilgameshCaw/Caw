@@ -595,6 +595,7 @@
   "faucet.contract_address": "Kontrat adresi",
   "faucet.network": "Ağ: Sepolia Testnet",
   "new_profile.creating": "Oluşturuluyor...",
+  "new_profile.preparing": "Hazırlanıyor...",
   "new_profile.processing": "İşleniyor...",
   "new_profile.username_taken": "kullanıcı adı alınmış",
   "new_profile.create_and_deposit": "Oluştur ve yatır",

@@ -595,6 +595,7 @@
   "faucet.contract_address": "Alamat Kontrak",
   "faucet.network": "Jaringan: Sepolia Testnet",
   "new_profile.creating": "Membuat...",
+  "new_profile.preparing": "Menyiapkan...",
   "new_profile.processing": "Memproses...",
   "new_profile.username_taken": "username sudah digunakan",
   "new_profile.create_and_deposit": "Buat & Deposit",

@@ -595,6 +595,7 @@
   "faucet.contract_address": "컨트랙트 주소",
   "faucet.network": "네트워크: Sepolia 테스트넷",
   "new_profile.creating": "생성 중...",
+  "new_profile.preparing": "준비 중...",
   "new_profile.processing": "처리 중...",
   "new_profile.username_taken": "이미 사용 중인 사용자 이름입니다",
   "new_profile.create_and_deposit": "생성 및 입금",

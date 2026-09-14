@@ -595,6 +595,7 @@
   "faucet.contract_address": "コントラクトアドレス",
   "faucet.network": "ネットワーク: Sepoliaテストネット",
   "new_profile.creating": "作成中...",
+  "new_profile.preparing": "準備中...",
   "new_profile.processing": "処理中...",
   "new_profile.username_taken": "ユーザー名は既に使用されています",
   "new_profile.create_and_deposit": "作成してデポジット",

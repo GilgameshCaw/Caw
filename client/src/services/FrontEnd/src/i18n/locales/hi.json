@@ -595,6 +595,7 @@
   "faucet.contract_address": "कॉन्ट्रैक्ट पता",
   "faucet.network": "नेटवर्क: Sepolia टेस्टनेट",
   "new_profile.creating": "बनाया जा रहा है...",
+  "new_profile.preparing": "तैयार हो रहा है...",
   "new_profile.processing": "प्रोसेस हो रहा है...",
   "new_profile.username_taken": "username लिया जा चुका है",
   "new_profile.create_and_deposit": "बनाएँ और जमा करें",

@@ -595,6 +595,7 @@
   "faucet.contract_address": "Endereço do contrato",
   "faucet.network": "Rede: Sepolia Testnet",
   "new_profile.creating": "Criando...",
+  "new_profile.preparing": "Preparando...",
   "new_profile.processing": "Processando...",
   "new_profile.username_taken": "nome de usuário já em uso",
   "new_profile.create_and_deposit": "Criar e depositar",
