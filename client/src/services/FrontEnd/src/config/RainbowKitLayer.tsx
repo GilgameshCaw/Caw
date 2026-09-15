@@ -131,16 +131,41 @@ wagmiConfig._internal.connectors.setState((existing) => {
   // Instantiate each RK connector factory via the internal setup helper.
   // setup() wires emitter + uid, exactly as createConfig does at init.
   const rkConnectors = rkConnectorFns.map((fn) => wagmiConfig._internal.connectors.setup(fn))
-  const rkById = new Map(rkConnectors.map((c) => [c.id, c]))
+
+  // `c.id` is NOT a unique key across RK connectors. Every WalletConnect-backed
+  // wallet (walletConnectWallet — twice, once as the QR-modal variant —
+  // rainbowWallet, ledgerWallet, and metaMaskWallet when no extension is
+  // injected) spreads the wagmi walletConnect() connector, so its top-level id
+  // is "walletConnect"; the RK wallet id lives only in `rkDetails.id`. Keying
+  // a Map on `c.id` kept only the last of them (ledger) and the append filter
+  // below then dropped the rest, which removed WalletConnect and Rainbow from
+  // the connect modal entirely.
+  //
+  // So: map a native id to an RK connector only when that id is unambiguous,
+  // and pin the native walletConnect slot to the plain walletConnectWallet.
+  const countById = new Map<string, number>()
+  for (const c of rkConnectors) countById.set(c.id, (countById.get(c.id) ?? 0) + 1)
+  const rkByNativeId = new Map<string, (typeof rkConnectors)[number]>()
+  for (const c of rkConnectors) if (countById.get(c.id) === 1) rkByNativeId.set(c.id, c)
+  const plainWalletConnect = rkConnectors.find((c) => {
+    const rk = (c as { rkDetails?: { id?: string; isWalletConnectModalConnector?: boolean } }).rkDetails
+    return rk?.id === 'walletConnect' && !rk.isWalletConnectModalConnector
+  })
+  if (plainWalletConnect) rkByNativeId.set('walletConnect', plainWalletConnect)
 
   // Replace existing connectors that have an RK equivalent; keep the rest.
   // This preserves injected() and any connector not in the RK wallet list.
-  const replaced = existing.map((c) => rkById.get(c.id) ?? c)
-  const replacedIds = new Set(replaced.map((c) => c.id))
+  const used = new Set<(typeof rkConnectors)[number]>()
+  const replaced = existing.map((c) => {
+    const rk = rkByNativeId.get(c.id)
+    if (!rk) return c
+    used.add(rk)
+    return rk
+  })
 
-  // Append any RK connectors that don't replace an existing one (e.g. rainbowWallet,
-  // ledgerWallet) — these are new entries with no prior native counterpart.
-  const appended = rkConnectors.filter((c) => !replacedIds.has(c.id))
+  // Append every RK connector that didn't take a native slot (e.g. rainbowWallet,
+  // ledgerWallet, the WalletConnect QR-modal variant). Dedupe by instance, not id.
+  const appended = rkConnectors.filter((c) => !used.has(c))
   return [...replaced, ...appended]
 })
 
