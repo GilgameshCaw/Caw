@@ -125,7 +125,17 @@ export const useActiveToken = () =>
     if (state.activeTokenId !== undefined) {
       const ownedMatch = tokensForAddress.find(t => t.tokenId === state.activeTokenId)
       if (ownedMatch) return ownedMatch
-      // else fall through (global id missing, points at a stranger, or a ghost)
+      // The fall-through below is correct ONLY when we can tell the global id is
+      // genuinely stale. If the wallet's own rows haven't loaded yet we cannot
+      // tell — and falling through then answers a DIFFERENT profile
+      // (activeTokenIdByAddress, or tokensForAddress[0]) to a caller that asked
+      // for this one. That is the post-mint window: setActiveTokenId(new) lands
+      // before the indexer surfaces the new token, so every useActiveToken()
+      // consumer silently resolves to the PREVIOUS profile — badge polls, and
+      // any write keyed on activeToken.tokenId.
+      // "Not loaded yet" is not "not owned": say undefined and let callers wait.
+      if (tokensForAddress.length === 0) return undefined
+      // else fall through (id points at a stranger, a ghost, or a sold token)
     }
 
     // No connected wallet at all — surface any named profile so a pre-connect /
@@ -338,8 +348,23 @@ export const useTokenDataStore = create<TokenDataStore>()(
             }
           })
         } else {
-          // Fallback if we can't find the token
-          set({ activeTokenId: numTokenId })
+          // The token isn't in the store yet (fresh mint: the id is set before
+          // the indexer surfaces it). Writing ONLY the global leaves
+          // activeTokenIdByAddress pointing at the PREVIOUS profile, and that
+          // mirror never runs again — the split persists in localStorage
+          // indefinitely. Anchor on lastAddress so both halves agree.
+          const fallbackAddress = state.lastAddress?.toLowerCase() as Address | undefined
+          set({
+            activeTokenId: numTokenId,
+            ...(fallbackAddress
+              ? {
+                  activeTokenIdByAddress: {
+                    ...state.activeTokenIdByAddress,
+                    [fallbackAddress]: numTokenId,
+                  },
+                }
+              : {}),
+          })
         }
       },
       setActiveTokenIdForAddress: (addr, tokenId) => set(state => {
