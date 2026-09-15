@@ -153,7 +153,17 @@ export const useActiveToken = () =>
     // token anywhere — that trailing fallback was the stranger-leak (it showed
     // another address's profile as yours during a hydration race). undefined
     // here is the correct "no owned profile" answer for AuthGate.
-    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0]
+    if (activeTokenIdForAddress !== undefined) {
+      const selected = tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress)
+      if (selected) return selected
+      // The wallet's explicit selection isn't in its rows yet. When the global
+      // agrees with it (setActiveTokenId mirrors both halves), this is a PENDING
+      // selection — the post-mint window with other profiles already loaded —
+      // not a stale one. Answering tokensForAddress[0] here would hand callers a
+      // different profile than the one selected. Say undefined and let them wait.
+      if (activeTokenIdForAddress === state.activeTokenId) return undefined
+    }
+    return tokensForAddress[0]
   }
 );
 
@@ -311,9 +321,17 @@ export const useTokenDataStore = create<TokenDataStore>()(
           const movedRow: TokenData = { ...moved, address: to, owner: to }
           next[to] = [...(next[to] || []), movedRow]
 
-          // Old owner key emptied → drop its per-address active pointer.
+          // Drop the old owner key's per-address active pointer when that key is
+          // now empty, OR when it still points at the token that just left it.
+          // A pointer to a token the address no longer holds is not a pending
+          // selection, and useActiveToken treats a pointer that agrees with the
+          // global as pending — so leaving it would pin that wallet to undefined.
           const updatedActiveByAddress = { ...state.activeTokenIdByAddress }
-          if (!next[fromKey as Address]) delete updatedActiveByAddress[fromKey as Address]
+          const fromPointer = Object.entries(updatedActiveByAddress)
+            .find(([addr]) => addr.toLowerCase() === fromKey)
+          if (fromPointer && (!next[fromKey as Address] || fromPointer[1] === tokenId)) {
+            delete updatedActiveByAddress[fromPointer[0] as Address]
+          }
 
           return {
             tokensByAddress: next,
