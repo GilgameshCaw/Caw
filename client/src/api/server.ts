@@ -96,7 +96,7 @@ export function createApp() {
     credentials: true
   }
 
-  // Public-read cross-origin endpoints. Two routes today:
+  // Public-read cross-origin endpoints. Three routes today:
   //   /api/shorturl/:code  — short-URL metadata, read by sibling nodes
   //                          when a post embeds /s/CODE from another
   //                          instance. The /s/ 302 already exposes the
@@ -105,8 +105,13 @@ export function createApp() {
   //                          frontends that need to bootstrap from any
   //                          CAW node regardless of origin. Same data
   //                          as the on-chain registry.
+  //   /api/validator-analytics/tip-config
+  //                        — this node's public tip settings, fanned out
+  //                          to by every FE via useValidatorMinTips to
+  //                          learn each peer's per-action ETH floor. The
+  //                          route is documented as public (no auth).
   //
-  // Both have NO auth state to leak (no cookies, no tokens, no per-user
+  // All three have NO auth state to leak (no cookies, no tokens, no per-user
   // payloads), so wildcarding them is safe. `credentials: false` is
   // critical: combining `*` with credentials is invalid per spec, so
   // the browser would reject the response.
@@ -118,11 +123,13 @@ export function createApp() {
   const permissiveCors = cors({ origin: '*', credentials: false, methods: ['GET'] })
   app.use('/api/shorturl/:code', permissiveCors)
   app.use('/api/instances', permissiveCors)
+  app.use('/api/validator-analytics/tip-config', permissiveCors)
 
   // Strict global cors. Skipped for the public-read routes above.
   app.use((req, res, next) => {
     if (/^\/api\/shorturl\/[^/]+\/?$/.test(req.path)) return next()
     if (/^\/api\/instances\/?$/.test(req.path)) return next()
+    if (/^\/api\/validator-analytics\/tip-config\/?$/.test(req.path)) return next()
     return cors(corsOpts)(req, res, next)
   })
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
