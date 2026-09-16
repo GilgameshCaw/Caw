@@ -1,5 +1,5 @@
 // src/api/routes/users.ts
-import { Router } from 'express'
+import { Router, type Request, type Response, type NextFunction } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
 import Redis from 'ioredis'
@@ -783,6 +783,30 @@ router.get('/onboarding/:username', async (req, res) => {
  */
 router.patch(
   '/onboarding/:username',
+  // Right after a mint the FE starts saving onboarding progress before the
+  // indexer has written the User row. Without this, requireAuth's lookup
+  // below resolves to undefined and answers 400 MISSING_TOKEN_ID, which the
+  // FE cannot tell apart from a real error. Answer 202 instead, the same
+  // "not yet indexed" contract as /ensure and /by-token, so the caller can
+  // retry. Existence is already public via GET /onboarding/:username.
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const exists = await prisma.user.findUnique({
+        where:  { username: req.params.username },
+        select: { tokenId: true },
+      })
+      if (!exists) {
+        res.setHeader('Retry-After', '3')
+        return res.status(202).json({
+          error: 'user not yet indexed',
+          retryAfterSeconds: 3,
+        })
+      }
+      return next()
+    } catch (err) {
+      return next(err)
+    }
+  },
   requireAuth({
     // Resolve username → tokenId so requireAuth can check the session.
     // verifyOwnership rejects stale-session previous-owner writes.
