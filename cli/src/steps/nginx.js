@@ -567,6 +567,44 @@ function detectNginxHttp2DirectiveSupport() {
   }
 }
 
+// Content-Security-Policy for the static frontend. Defined once and used
+// in both the server block and `location /`: an add_header inside a
+// location replaces every inherited server-level add_header, so a policy
+// set only at server level never reaches the SPA pages.
+//
+// The directives match what the frontend actually needs:
+//   connect-src https: wss:  the FE talks to peer nodes directly (redundant
+//                            POST /api/actions, per-peer tip-config reads,
+//                            instance registry). Peers are registered
+//                            on-chain under any domain, so they cannot be
+//                            listed here. script-src still blocks injected
+//                            scripts; what this gives up is only the
+//                            "exfiltration after XSS" layer.
+//   frame-src                WalletConnect Verify runs in an iframe.
+//   worker-src 'self' blob:  browser-image-compression runs in a blob Worker
+//                            (compressImage.ts, useWebWorker: true) ...
+//   script-src + jsDelivr    ... and that Worker imports the library from
+//                            this exact jsDelivr path (pinned to the
+//                            version in FrontEnd/package.json).
+// The 'sha256-...' hash covers the inline theme-flash-prevention script in
+// dist/index.html. If that script changes, regenerate:
+//   node -e "require('crypto').createHash('sha256').update($SCRIPT).digest('base64')"
+const CSP_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval' 'sha256-xkVMad1A/6ozRonIOqWni0BBYrgJP5OHmcnrwTlUgGc=' https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/",
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: https:",
+  "connect-src 'self' https: wss:",
+  "frame-src https://verify.walletconnect.org https://verify.walletconnect.com",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join('; ')
+
 function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginxSupportsHttp2Directive }) {
   // The built frontend is a SPA — every unknown path falls through to
   // index.html so React Router handles the route. /api and /socket.io go to
@@ -766,6 +804,7 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header Content-Security-Policy "${CSP_POLICY}" always;
         try_files \$uri \$uri/ /index.html;
     }
 
@@ -835,14 +874,12 @@ ${nginxSupportsHttp2Directive
     # nginx-served static dist, so we apply them here too.
     # Audit fix 2026-05-10 (Round 7 #3).
     #
-    # The 'sha256-...' hash covers the inline theme-flash-prevention
-    # script in dist/index.html. If that script changes, regenerate:
-    #   node -e "require('crypto').createHash('sha256').update(\$SCRIPT).digest('base64')"
+    # The policy itself lives in CSP_POLICY (see the comment there).
     # max-age=31536000 + includeSubDomains are required for preload list
     # submission. To register this domain for HSTS preload (browser-level
     # TOFU protection), visit https://hstspreload.org after deploying.
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-xkVMad1A/6ozRonIOqWni0BBYrgJP5OHmcnrwTlUgGc='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://*.caw.social wss://*.caw.social https://*.alchemyapi.io https://*.infura.io https://*.publicnode.com https://api.x.com https://*.filebase.io; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+    add_header Content-Security-Policy "${CSP_POLICY}" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
