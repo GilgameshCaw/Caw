@@ -54,7 +54,7 @@ import moonpayRouter from './routes/moonpay'
 import { spaPrerender } from './util/spaPrerender'
 import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { parseLocaleFromPath, withLocalePrefix } from './util/localePrefix'
-import { getSession } from './sessionStore'
+import { extractSession } from './middleware/auth'
 import { prisma } from '../prismaClient'
 import { Sentry, sentryEnabled } from '../sentry'
 
@@ -272,11 +272,16 @@ export function createApp() {
 
   // Rate limiters — tiered by auth status
   // Unauthenticated: strict daily limit. Authenticated: generous 15-min window.
+  // Resolve the session exactly the way requireAuth does (HttpOnly cookie
+  // first, legacy x-session-token header as fallback). Reading only the
+  // header here classified cookie-authenticated uploads as anonymous, so
+  // they were counted against the 10/day unauthenticated bucket even
+  // though requireAuth accepted them. extractSession stores its result on
+  // req, so the second limiter reuses the first one's lookup (requireAuth
+  // still resolves again on its own).
   const hasValidSession = async (req: express.Request) => {
-    const token = req.headers['x-session-token'] as string | undefined
-    if (!token) return false
-    const session = await getSession(token)
-    return session !== null && session.authorizedTokenIds.length > 0
+    if (req.sessionData === undefined) await extractSession(req)
+    return !!req.sessionData && req.sessionData.authorizedTokenIds.length > 0
   }
 
   // Upload: 10/day unauthenticated
