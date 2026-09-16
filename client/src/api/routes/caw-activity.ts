@@ -132,6 +132,12 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
       resolveInFlightOuter = resolve
       rejectInFlightOuter = reject
     })
+    // Waiters attach their own handler via `await cached.inFlight`. When the
+    // computation fails with no concurrent waiter, nothing else observes the
+    // rejection and it surfaces as a process-level unhandledRejection (logged
+    // by programs/start.ts, and sent to Sentry when enabled). Mark it handled
+    // here; waiters still receive the rejection.
+    inFlight.catch(() => {})
     responseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
 
     // blockTimestamp is stored as `timestamp without time zone` (Prisma's
