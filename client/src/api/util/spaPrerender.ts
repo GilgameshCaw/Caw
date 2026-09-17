@@ -406,6 +406,15 @@ const SKIP_PREFIXES = ['/uploads/', '/s/', '/socket.io/']
 export async function spaPrerender(req: Request, res: Response): Promise<void> {
   try {
     const reqPath = req.path
+    // An /api/* GET only reaches this catch-all when no API route matched.
+    // Answer with a JSON 404 instead of the SPA shell: a 200 text/html here
+    // makes a missing endpoint look like a success to fetch() callers (they
+    // then fail on res.json() with "Unexpected token '<'"), e.g. a newer
+    // frontend or peer calling a route this node doesn't have yet.
+    if (reqPath === '/api' || reqPath.startsWith('/api/')) {
+      res.status(404).json({ error: 'Not found' })
+      return
+    }
     if (SKIP_PREFIXES.some(p => reqPath.startsWith(p))) {
       res.status(404).end()
       return
