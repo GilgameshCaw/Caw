@@ -24,25 +24,8 @@ import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
-import { apiFetch, retryOnIndexing } from '~/api/client'
+import { apiFetch, persistOnboardingStep, retryOnIndexing } from '~/api/client'
 import ModalWrapper from '~/components/modals/ModalWrapper'
-
-// Latest step requested per username. Right after a mint the API answers
-// 202 until the indexer writes the User row, so each save is retried via
-// retryOnIndexing. A retry for an older step must not land after a newer
-// step's save, so every attempt checks that its step is still the latest.
-const latestOnboardingStep = new Map<string, number>()
-
-const persistOnboardingStep = (username: string, step: number) => {
-  latestOnboardingStep.set(username, step)
-  retryOnIndexing(async () => {
-    if (latestOnboardingStep.get(username) !== step) return
-    await apiFetch(`/api/users/onboarding/${username}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ step }),
-    })
-  }).catch(() => {})
-}
 import BugReportModal from '~/components/modals/BugReportModal'
 import BugIcon from '~/components/icons/BugIcon'
 import LayerZeroStatus from '~/components/LayerZeroStatus'

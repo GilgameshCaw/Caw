@@ -370,3 +370,28 @@ export async function apiFetch<T = any>(
 
   return res.json()
 }
+
+/**
+ * Save an onboarding step, tolerating the window where the User row does not
+ * exist yet.
+ *
+ * Latest step requested per username. Right after a mint the API answers 202
+ * until the indexer writes the User row, so each save is retried via
+ * retryOnIndexing. A retry for an older step must not land after a newer
+ * step's save, so every attempt checks that its step is still the latest.
+ *
+ * The map is never pruned: it holds one entry per username per page load, so
+ * it is bounded by the profiles onboarded in a single SPA session.
+ */
+const latestOnboardingStep = new Map<string, number>()
+
+export const persistOnboardingStep = (username: string, step: number) => {
+  latestOnboardingStep.set(username, step)
+  retryOnIndexing(async () => {
+    if (latestOnboardingStep.get(username) !== step) return
+    await apiFetch(`/api/users/onboarding/${username}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ step }),
+    })
+  }).catch(() => {})
+}
