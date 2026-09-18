@@ -622,6 +622,71 @@ right scope before we ship.
 
 ## Backend Services
 
+### Orphan reconciliation logs a no-op handler as a recovery
+
+`cleanupOrphanActions` (`DataCleaner/index.ts`) counts a recovery whenever
+`processDomainEffects` returns without throwing:
+
+    const exists = await checkDomainObjectExists(prisma, action, rawAction, action.actionType)
+    if (exists) continue
+    const resolved = await resolveActionUsers(rawAction)
+    await prisma.$transaction((tx) => processDomainEffects(tx, action, rawAction, resolved))
+    recovered++
+    logger.log(` Recovered orphan ${action.actionType} action id=${action.id}`)
+
+Several handlers treat "nothing matched" as a normal return rather than an
+error. `handleHideAction` on a zero-row `updateMany` does `console.warn` and
+returns; nothing throws, so the attempt is logged as recovered. Since nothing
+changed, `checkDomainObjectExists` returns false again on the next tick and the
+same action is "recovered" every minute until it ages out of
+`ORPHAN_ACTION_LOOKBACK_MS`.
+
+Measured on tencawffee.com, one day (2026-09-12, after a DB reset + full
+resync):
+
+    grep -c 'Recovered orphan' data-cleaner-2026-09-12.log       3446
+    grep -oE 'action id=[0-9]+' | sort -u | wc -l                  118
+
+    repeats per action:   6x 9    7x 16    8x 38    18x 1    21x 1
+                         41x 1   56x 3    57x 2    58x 33   59x 14
+
+No action appears once. If any had actually been recovered on the attempt that
+logged it, the next tick would have skipped it. The counts are just how long
+each action stayed inside the one-hour window - 59 is a full hour at one tick
+per minute.
+
+The same minute, in two files:
+
+    data-cleaner-2026-09-12.log
+      [2026-09-12T12:05:11.690Z] [INFO]  Recovered orphan OTHER action id=122 sender=3 cawonce=41
+
+    caw-server-error.log
+      2026-09-12 21:05:11 +09:00: [handleHideAction] No matching caw found: user=3 cawonce=8
+
+Action 122 is `hide:caw:8` from sender 3 - one call, two opposite records.
+
+Not limited to hides. The 59x group on that node was `FOLLOW`, `UNFOLLOW`,
+profile updates and hides - anything reached through `processDomainEffects`
+whose handler returns normally on a miss.
+
+Two cases produce identical output and only one of them matters:
+
+- `hide:caw:35` targets a cawonce that is an `UNFOLLOW` action. No `Caw` row
+  exists or ever will; the retry can never succeed and costs nothing.
+- Nine hides on that node targeted rows that did exist but weren't at
+  `SUCCESS` yet - the hide was indexed before its target during the resync
+  (`Action.id` 122-250 for the hides, 361-543 for their targets, nine for nine,
+  ranges not overlapping). A retry after the target landed would have worked.
+  They aged out instead, and the posts stayed visible for six days - found only
+  by diffing `/api/caws` across five nodes.
+
+**Open question before fixing:** is `recovered++` meant to mean "ran without
+throwing" or "the domain object now exists"? The log line reads as the second.
+Re-checking `checkDomainObjectExists` after `processDomainEffects` and counting
+only on a true would make it honest, at one extra query on a path that is
+already the slow path. Having handlers signal a no-op would be cleaner and much
+wider in scope.
+
 ### Validator Mesh Network — partly done
 
 **Already in place:**
