@@ -575,6 +575,10 @@ router.get('/caw-activity-all', allStatsLimiter, async (req, res): Promise<void>
       resolveInFlight = resolve
       rejectInFlight = reject
     })
+    // Same as the per-user handler above: a failure with no concurrent waiter
+    // has nothing else observing the rejection, so mark it handled here.
+    // Waiters still receive it via `await cached.inFlight`.
+    inFlight.catch(() => {})
     systemResponseCache.set(cacheKey, { expiresAt: 0, body: null, inFlight })
 
     // See bucketExpr comment in the per-user handler above — same
