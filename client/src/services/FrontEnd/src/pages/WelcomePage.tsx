@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useLocation } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { apiFetch, retryOnIndexing } from '~/api/client'
+import { apiFetch, persistOnboardingStep, retryOnIndexing } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
 import BugReportModal from '~/components/modals/BugReportModal'
 import BugIcon from '~/components/icons/BugIcon'
@@ -343,13 +343,13 @@ const WelcomePage: React.FC = () => {
       giftedMint={giftedMint}
       quickSignPending={quickSignPending}
       onComplete={() => {
-        // Mark onboarding complete (server side, and locally so future refreshes
-        // bypass the stepper even if the server PATCH failed).
+        // Mark onboarding complete locally first, so future refreshes bypass
+        // the stepper even if the server never records it.
         try { localStorage.setItem(`caw:onboardingExited:${username}`, '1') } catch {}
-        apiFetch(`/api/users/onboarding/${username}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ step: 5 }),
-        }).catch(() => {})
+        // Then server-side, through the same helper the in-stepper saves use.
+        // A bare PATCH here is answered 202 and dropped inside the indexing
+        // window, which would leave the user locally-done and server-not-done.
+        persistOnboardingStep(username, 5)
         navigate('/home', { replace: true })
       }}
     />
