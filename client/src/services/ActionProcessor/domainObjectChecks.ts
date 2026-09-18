@@ -350,19 +350,29 @@ async function checkOtherExists(
     // If the row's cawonce is OLDER than this action's, this action
     // genuinely hasn't been applied yet (e.g. crash between Tx1 and
     // Tx2) and must run.
+    // Only a CONFIRMED row can supersede an earlier action. The optimistic
+    // API write creates a pending row with cawonce === action.cawonce for
+    // the vote/unvote it's submitting; if we treated that pending row's
+    // cawonce as proof of supersession, a still-unconfirmed vote whose Tx2
+    // later fails would look "already processed" to both this check and
+    // DataCleaner's orphan sweep, and pending would stay stuck true with
+    // totalVotes never incremented. (Found in review by @GilgameshCaw.)
     const existing = await tx.vote.findFirst({
       where: { pollId, voterId },
-      select: { cawonce: true },
+      select: { cawonce: true, pending: true },
     })
     if (parsed.optionIndex === null) {
-      // Unvote: fully applied once no row remains -- but if a row DOES
-      // remain, only treat this unvote as done if that row is NEWER
-      // (a re-vote after this unvote superseded it); an older row means
-      // this unvote genuinely hasn't run yet.
+      // Unvote: fully applied once no row remains at all (a confirmed
+      // delete leaves no ambiguity, pending or not). But if a row DOES
+      // remain, it can only prove supersession if it's CONFIRMED -- a
+      // pending row's cawonce isn't trustworthy evidence a later vote
+      // has landed, so treat that case as "not yet processed" (must run)
+      // rather than risk falsely marking this unvote as already applied.
       if (!existing) return true
+      if (existing.pending) return false
       return existing.cawonce > action.cawonce
     }
-    if (!existing) return false
+    if (!existing || existing.pending) return false
     return existing.cawonce >= action.cawonce
   }
 
