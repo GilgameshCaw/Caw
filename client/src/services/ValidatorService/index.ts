@@ -4837,8 +4837,6 @@ console.log("succeededKeys", succeededKeys)
             `Unset both env vars and restart to disable.`
           )
         }
-        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = await getL2bContracts()
-
         // 1. Find networks needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
         //
@@ -4856,6 +4854,8 @@ console.log("succeededKeys", succeededKeys)
           console.warn('[validator] REPLICATE_CLIENT_IDS is deprecated; rename to REPLICATE_NETWORK_IDS')
         }
         if (replicateNetworkIds.length === 0) return
+
+        const { archiveRead: archive, archiveWrite: archiveW, l2bSubmitter: w } = await getL2bContracts()
 
         // 1a. Filter out networks whose storage chain is L1 (mainnet/Sepolia).
         //
