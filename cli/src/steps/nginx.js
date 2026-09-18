@@ -585,7 +585,10 @@ function detectNginxHttp2DirectiveSupport() {
 //                            (compressImage.ts, useWebWorker: true) ...
 //   script-src + jsDelivr    ... and that Worker imports the library from
 //                            this exact jsDelivr path (pinned to the
-//                            version in FrontEnd/package.json).
+//                            version in FrontEnd/package.json, which is
+//                            pinned exactly for this reason - a range
+//                            there would let the resolved version drift
+//                            away from the path allowed here).
 // The 'sha256-...' hash covers the inline theme-flash-prevention script in
 // dist/index.html. If that script changes, regenerate:
 //   node -e "require('crypto').createHash('sha256').update($SCRIPT).digest('base64')"
