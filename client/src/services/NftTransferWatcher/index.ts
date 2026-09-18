@@ -335,7 +335,7 @@ export const nftTransferWatcherService: Service = {
               console.log(`[NftTransferWatcher] Processing ${events.length} Transfer event(s) in blocks ${fromBlock}..${toBlock}`)
             }
 
-        let anyFailed = false
+            let anyFailed = false
             for (const ev of events) {
               const args = (ev as ethers.EventLog).args
               if (!args) continue
@@ -410,31 +410,31 @@ export const nftTransferWatcherService: Service = {
                   // Reconcile any tentative DmIdentity row now that address changed.
                   reconcileDmIdentity(tokenId, toAddr).catch(() => {})
                 }
-                  // Unconditional, idempotent prune: runs even when the address guard above
-                  // skips the update (e.g. a previous attempt committed the address update
-                  // but failed inside prune). prune is a safe no-op delete on already-pruned
-                  // tokens, so re-running it on rescans is harmless.
-                  try {
-                    const n = await pruneTokenIdFromAllSessions(tokenId)
-                    if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
-                    dmWebSocketService.disconnectUser(tokenId, 'token transferred')
-                  } catch (err: any) {
-                    console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
-                  }
+                // Unconditional, idempotent prune: runs even when the address guard above
+                // skips the update (e.g. a previous attempt committed the address update
+                // but failed inside prune). prune is a safe no-op delete on already-pruned
+                // tokens, so re-running it on rescans is harmless.
+                try {
+                  const n = await pruneTokenIdFromAllSessions(tokenId)
+                  if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
+                  dmWebSocketService.disconnectUser(tokenId, 'token transferred')
+                } catch (err: any) {
+                  console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
+                }
               } catch (err: any) {
                 anyFailed = true
                 console.warn(`[NftTransferWatcher] Failed to apply transfer for tokenId=${tokenId}:`, err?.message)
               }
             }
 
-        if (anyFailed) {
-          console.warn(`[NftTransferWatcher] Holding checkpoint at block ${fromBlock - 1} — event(s) failed to apply, will retry`)
-          consecutiveFailures++
-        } else {
-          lastBlock = toBlock
-          await redis.set(cpKey, String(lastBlock))
-          consecutiveFailures = 0
-        }
+            if (anyFailed) {
+              console.warn(`[NftTransferWatcher] Holding checkpoint at block ${fromBlock - 1} — event(s) failed to apply, will retry`)
+              consecutiveFailures++
+            } else {
+              lastBlock = toBlock
+              await redis.set(cpKey, String(lastBlock))
+              consecutiveFailures = 0
+            }
           }
           ctx.heartbeat('poll')
 
@@ -462,12 +462,12 @@ export const nftTransferWatcherService: Service = {
           // long enough for a marketplace buy to stay invisible to the
           // indexer after the user has refreshed the page.
           if (!alive) return
-        let delay = behindAfterPoll ? 250 : cfg.pollIntervalMs
-        if (consecutiveFailures > 0) {
-          delay = Math.min(cfg.pollIntervalMs * 2 ** (consecutiveFailures - 1), 300_000)
-          console.log(`[NftTransferWatcher] Backing off for ${delay}ms (consecutiveFailures=${consecutiveFailures})`)
-        }
-        pollTimer = setTimeout(poll, delay)
+          let delay = behindAfterPoll ? 250 : cfg.pollIntervalMs
+          if (consecutiveFailures > 0) {
+            delay = Math.min(cfg.pollIntervalMs * 2 ** (consecutiveFailures - 1), 300_000)
+            console.log(`[NftTransferWatcher] Backing off for ${delay}ms (consecutiveFailures=${consecutiveFailures})`)
+          }
+          pollTimer = setTimeout(poll, delay)
         }
       }
 
