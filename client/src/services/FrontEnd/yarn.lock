@@ -3638,7 +3638,7 @@ braces@^3.0.3:
   dependencies:
     fill-range "^7.1.1"
 
-browser-image-compression@^2.0.2:
+browser-image-compression@2.0.2:
   version "2.0.2"
   resolved "https://registry.npmjs.org/browser-image-compression/-/browser-image-compression-2.0.2.tgz"
   integrity sha512-pBLlQyUf6yB8SmmngrcOw3EoS4RpQ1BcylI3T9Yqn7+4nrQTXJD4sJDe5ODnJdrvNMaio5OicFo75rDyJD2Ucw==
