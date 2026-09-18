@@ -318,6 +318,22 @@ router.post('/', translateRateLimit, (async (req: any, res: any): Promise<void> 
     const cleanTarget = targetLang.split('-')[0].toLowerCase()
     const cleanSource = sourceLang ? sourceLang.split('-')[0].toLowerCase() : undefined
 
+    // cleanTarget/cleanSource flow unsanitized into the Gemini prompt string
+    // and the MyMemory/Google Cloud query URLs below -- an unvalidated value
+    // here is a prompt-injection vector into the LLM path and a URL-injection
+    // vector into the HTTP fallback paths. ISO 639-1/639-2 language codes are
+    // always 2-3 lowercase letters, so gate on that shape before either use.
+    // (Found in review by @nyaromesama.)
+    const LANG_CODE_RE = /^[a-z]{2,3}$/
+    if (!LANG_CODE_RE.test(cleanTarget)) {
+      res.status(400).json({ error: 'Field "targetLang" must be a 2-3 letter language code' })
+      return
+    }
+    if (cleanSource && !LANG_CODE_RE.test(cleanSource)) {
+      res.status(400).json({ error: 'Field "sourceLang" must be a 2-3 letter language code' })
+      return
+    }
+
     // If source and target are explicitly identical, return original
     if (cleanSource && cleanSource === cleanTarget) {
       res.json({
