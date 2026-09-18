@@ -18,6 +18,7 @@ import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
+import { pokeIndexTokenId } from '../util/indexerPoke'
 
 // ---------------------------------------------------------------------------
 // isPasskey cache + L1 provider (lazy, reused across requests)
@@ -130,6 +131,11 @@ router.post('/ensure', async (req, res) => {
 
     if (!user) {
       console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
+      // Tell the indexer to look at this tokenId now rather than on its next
+      // poll (NftTransferWatcher's pollIntervalMs defaults to 60s). Without
+      // this the 202 only asks the caller to come back; nothing shortens the
+      // wait. Fire-and-forget, de-duped per tokenId by the subscriber.
+      pokeIndexTokenId(numericTokenId)
       res.setHeader('Retry-After', '3')
       return res.status(202).json({
         error: 'user not yet indexed',
@@ -436,8 +442,10 @@ router.get('/by-token/:tokenId', async (req, res) => {
     })
 
     // Tier 1: no RPC fallback in the request path. If the indexer hasn't
-    // produced a row yet, return 202 and let the frontend retry with backoff.
+    // produced a row yet, return 202 and let the frontend retry with backoff -
+    // and poke the indexer so that retry has something to find, as /ensure does.
     if (!user) {
+      pokeIndexTokenId(tokenId)
       res.setHeader('Retry-After', '3')
       return res.status(202).json({
         error: 'user not yet indexed',
