@@ -1308,7 +1308,11 @@ router.get('/:username/followers', async (req, res) => {
         // Confirmed follows only, same definition the profile counters use
         // (see the follow.count calls in GET /api/users/:username). A FAILED
         // row is kept on purpose so the UI can revert the optimistic button,
-        // so it must not be listed here.
+        // so it must not be listed here. This also leaves out a still-PENDING
+        // follow, on purpose and for the same reason as the counters: an
+        // unconfirmed follow is not listed until it confirms. (The per-item
+        // followPending fields below describe the VIEWER's own follow of each
+        // listed user, which is a different row.)
         status: 'SUCCESS'
       },
       take: limit + 1,
@@ -1419,7 +1423,11 @@ router.get('/:username/following', async (req, res) => {
         // Confirmed follows only, same definition the profile counters use
         // (see the follow.count calls in GET /api/users/:username). A FAILED
         // row is kept on purpose so the UI can revert the optimistic button,
-        // so it must not be listed here.
+        // so it must not be listed here. This also leaves out a still-PENDING
+        // follow, on purpose and for the same reason as the counters: an
+        // unconfirmed follow is not listed until it confirms. (The per-item
+        // followPending fields below describe the VIEWER's own follow of each
+        // listed user, which is a different row.)
         status: 'SUCCESS'
       },
       take: limit + 1,
