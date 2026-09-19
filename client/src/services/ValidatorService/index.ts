@@ -5775,10 +5775,20 @@ console.log("succeededKeys", succeededKeys)
     // Loop lifecycle and scheduling
     // ================================================================
 
-    // Declare all loops with the watchdog. Timeouts are generous — 3x the
-    // typical interval — so transient slowness doesn't trigger a restart,
-    // but a truly hung loop will be caught within a few minutes.
-    ctx.declareLoop('poll', Math.max(checkInterval * 3, 60_000))
+    // Declare all loops with the watchdog. Timeouts are generous so transient
+    // slowness doesn't trigger a restart, but a truly hung loop will be caught
+    // within a few minutes.
+    //
+    // The poll loop actually runs every liveSettings.checkInterval (DB-tunable,
+    // default 60s). That is NOT the `checkInterval` from cfg (default 10s) the
+    // timeout used to be derived from: Math.max(10s * 3, 60s) = 60s, i.e. zero
+    // headroom over the real 60s cadence, so the watchdog (checks every 30s)
+    // occasionally fired a fraction of a second before the next heartbeat.
+    // Base the timeout on the live interval instead (4x, at least 3 minutes)
+    // and re-declare it in safePollLoop when the DB setting changes.
+    const pollTimeoutMs = () => Math.max(liveSettings.checkInterval * 4, 180_000)
+    let declaredPollTimeoutMs = pollTimeoutMs()
+    ctx.declareLoop('poll', declaredPollTimeoutMs)
     ctx.declareLoop('optimisticReplication', Math.max(60_000 * 3, 180_000))
     // Monitor can do a lot of work in one cycle: fetch events, rebuild
     // submitter trees, batch-relay challenges, call resolveChallenge, or
@@ -5798,6 +5808,13 @@ console.log("succeededKeys", succeededKeys)
       isPolling = true
       try {
         await pollLoop()
+        // pollLoop refreshes liveSettings from the DB; keep the watchdog timeout
+        // in step with the (possibly changed) interval before the next gap starts.
+        const wantPollTimeoutMs = pollTimeoutMs()
+        if (wantPollTimeoutMs !== declaredPollTimeoutMs) {
+          declaredPollTimeoutMs = wantPollTimeoutMs
+          ctx.declareLoop('poll', wantPollTimeoutMs)
+        }
         ctx.heartbeat('poll')
       } catch (err) {
         console.error(err)
