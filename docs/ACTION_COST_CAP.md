@@ -87,22 +87,22 @@ When the cap binds, each of these breakdowns is scaled by
 
 ### Proposed cap values (immutable constants)
 
-Anchor LIKE = $0.01 at ETH = $5,000 (i.e. 2e11 wei). All other caps
+Anchor LIKE = $0.001 at ETH = $5,000 (i.e. 2e11 wei). All other caps
 derived by preserving today's baseline CAW ratios from
 `CawActions.sol:1085-1126`:
 
 | Action          | Baseline CAW | Ratio vs LIKE | `max_eth_per_action` (wei) | Notional at ETH=$5k |
 | --------------- | ------------ | ------------- | -------------------------- | ------------------- |
-| UNLIKE/UNFOLLOW | 1,000        | 0.5×          | 100,000,000,000 (1e11)     | $0.005              |
-| LIKE            | 2,000        | 1×            | 200,000,000,000 (2e11)     | $0.01               |
-| RECAW           | 4,000        | 2×            | 400,000,000,000 (4e11)     | $0.02               |
-| CAW             | 5,000        | 2.5×          | 500,000,000,000 (5e11)     | $0.025              |
-| FOLLOW          | 30,000       | 15×           | 3,000,000,000,000 (3e12)   | $0.15               |
+| UNLIKE/UNFOLLOW | 1,000        | 0.5×          | 100,000,000,000 (1e11)     | $0.0005             |
+| LIKE            | 2,000        | 1×            | 200,000,000,000 (2e11)     | $0.001              |
+| RECAW           | 4,000        | 2×            | 400,000,000,000 (4e11)     | $0.002              |
+| CAW             | 5,000        | 2.5×          | 500,000,000,000 (5e11)     | $0.0025             |
+| FOLLOW          | 30,000       | 15×           | 3,000,000,000,000 (3e12)   | $0.015              |
 
 These are notional ceilings — at today's CAW price the baseline is far
 below the cap so it doesn't bind. By construction, when the cap *does*
 bind, the relative cost of each action matches the relative cost today
-(post is 2.5× a like; follow is 15× a like). FOLLOW at $0.15 reflects
+(post is 2.5× a like; follow is 15× a like). FOLLOW at $0.015 reflects
 that follows are a higher-value commitment than likes in the existing
 economic design; if that ratio should change at scale, that's a
 protocol-level conversation, not a cap-tuning one.
@@ -368,7 +368,7 @@ The contract-side enforcement is the source of truth; FE is UX.
 
 - **Per-action-type cap values.** Numbers above are a strawman. Should
   be reviewed against the existing baseline ratios and the UX target
-  ($0.01 likes at ETH=$5k) before being baked in as immutable
+  ($0.001 likes at ETH=$5k) before being baked in as immutable
   constants.
 
 ## Related
