@@ -481,7 +481,9 @@ export const nftTransferWatcherService: Service = {
           // heartbeat clock, and on the throwing path (the catch above does not
           // reach the heartbeat in the try body and does not increment
           // consecutiveFailures) this value is unchanged, so a poll that keeps
-          // throwing stays detectable.
+          // throwing stays detectable — against whatever window the last
+          // apply-failure run left declared, since consecutiveFailures only
+          // resets on success.
           const wantPollTimeoutMs = Math.max(delay * 2, steadyPollTimeoutMs)
           if (wantPollTimeoutMs !== declaredPollTimeoutMs) {
             declaredPollTimeoutMs = wantPollTimeoutMs
