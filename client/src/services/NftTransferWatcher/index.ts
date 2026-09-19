@@ -209,7 +209,12 @@ export const nftTransferWatcherService: Service = {
 
   start(configParam: unknown, ctx: import('../../Service').HeartbeatContext) {
     const cfg = Config.parse(configParam)
-    ctx.declareLoop('poll', Math.max(cfg.pollIntervalMs * 3, 120_000))
+    // Steady-state watchdog window: 3x the poll interval, at least 2 minutes.
+    // Widened while the retry backoff is sleeping — see the finally block of
+    // the poll loop.
+    const steadyPollTimeoutMs = Math.max(cfg.pollIntervalMs * 3, 120_000)
+    let declaredPollTimeoutMs = steadyPollTimeoutMs
+    ctx.declareLoop('poll', declaredPollTimeoutMs)
 
     const rpcUrl = getL1HttpRpcUrl(cfg.l1RpcUrl)
     const contractAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
@@ -466,6 +471,21 @@ export const nftTransferWatcherService: Service = {
           if (consecutiveFailures > 0) {
             delay = Math.min(cfg.pollIntervalMs * 2 ** (consecutiveFailures - 1), 300_000)
             console.log(`[NftTransferWatcher] Backing off for ${delay}ms (consecutiveFailures=${consecutiveFailures})`)
+          }
+          // Keep the watchdog window ahead of the sleep we are about to take.
+          // The backoff reaches 300s, past the 180s steady-state timeout at the
+          // default interval, so a deliberate wait was being reported as a hang
+          // and the service restarted while it was behaving correctly.
+          //
+          // Only re-declare when the value changes. declareLoop also resets the
+          // heartbeat clock, and on the throwing path (the catch above does not
+          // reach the heartbeat in the try body and does not increment
+          // consecutiveFailures) this value is unchanged, so a poll that keeps
+          // throwing stays detectable.
+          const wantPollTimeoutMs = Math.max(delay * 2, steadyPollTimeoutMs)
+          if (wantPollTimeoutMs !== declaredPollTimeoutMs) {
+            declaredPollTimeoutMs = wantPollTimeoutMs
+            ctx.declareLoop('poll', wantPollTimeoutMs)
           }
           pollTimer = setTimeout(poll, delay)
         }
