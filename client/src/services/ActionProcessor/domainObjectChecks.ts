@@ -362,12 +362,16 @@ async function checkOtherExists(
       select: { cawonce: true, pending: true },
     })
     if (parsed.optionIndex === null) {
-      // Unvote: fully applied once no row remains at all (a confirmed
-      // delete leaves no ambiguity, pending or not). But if a row DOES
-      // remain, it can only prove supersession if it's CONFIRMED -- a
-      // pending row's cawonce isn't trustworthy evidence a later vote
-      // has landed, so treat that case as "not yet processed" (must run)
-      // rather than risk falsely marking this unvote as already applied.
+      // Unvote: with no row left there is nothing for this action to remove,
+      // so treat it as applied. This cannot tell a confirmed delete apart from
+      // the optimistic API path's deleteMany, which removes every row for the
+      // voter before the chain confirms; re-running handleVoteAction would be
+      // a no-op in both cases (it only decrements totalVotes for the rows it
+      // still finds), so nothing is lost by skipping it here. If a row DOES
+      // remain, it can only prove supersession if it's CONFIRMED -- a pending
+      // row's cawonce isn't trustworthy evidence a later vote has landed, so
+      // treat that case as "not yet processed" (must run) rather than risk
+      // falsely marking this unvote as already applied.
       if (!existing) return true
       if (existing.pending) return false
       return existing.cawonce > action.cawonce
