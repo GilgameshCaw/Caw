@@ -216,15 +216,23 @@ router.post('/', async (req, res) => {
     const isFirstContact = !existingConv
     if (recipientIdentity?.dmPrivacy && recipientIdentity.dmPrivacy !== 'EVERYONE' && isFirstContact) {
       if (recipientIdentity.dmPrivacy === 'FOLLOWERS') {
-        const follows = await prisma.follow.findFirst({
-          where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
-        })
-        if (!follows) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWERS' })
+        // Matches dm.ts: followers OR people the recipient follows, and the
+        // follow row has to be confirmed (optimistic rows land as PENDING).
+        const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
+          prisma.follow.findFirst({
+            where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW', status: 'SUCCESS' }
+          }),
+          prisma.follow.findFirst({
+            where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW', status: 'SUCCESS' }
+          })
+        ])
+        if (!senderFollowsRecipient && !recipientFollowsSender) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWERS' })
       } else if (recipientIdentity.dmPrivacy === 'FOLLOWING') {
-        const follower = await prisma.follow.findFirst({
-          where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
+        // Matches dm.ts: only people the recipient follows.
+        const recipientFollowsSender = await prisma.follow.findFirst({
+          where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW', status: 'SUCCESS' }
         })
-        if (!follower) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
+        if (!recipientFollowsSender) return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
       }
     }
 
