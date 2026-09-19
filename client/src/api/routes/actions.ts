@@ -912,33 +912,41 @@ router.post('/', async (req, res) => {
         if (plaintext.startsWith('hide:caw:')) {
           const cawonce = parseInt(plaintext.replace('hide:caw:', ''))
           if (!isNaN(cawonce)) {
-            // Look up the target BEFORE flipping status -- we need its id
-            // and action to resolve cawCount handling, and once status
-            // flips to HIDDEN this row no longer matches the
-            // status:'SUCCESS' filter the on-chain-confirmed handler
-            // (handleHideAction) uses to find it. Without this optimistic
-            // path calling onCawHidden itself, the on-chain path's
-            // updateMany always finds 0 matching rows (this optimistic
-            // write already changed the status) and silently skips the
-            // cawCount decrement entirely -- the exact bug #96 was meant
-            // to fix, still open on the client-initiated path. Mirrors how
-            // hide:recaw: already calls countManager.onRecawRemoved here.
+            // Look up the target BEFORE flipping status: we need its id and
+            // action to resolve the cawCount decrement, and once the status
+            // flips to HIDDEN the row no longer matches the status:'SUCCESS'
+            // filter that the on-chain handler (handleHideAction) uses.
+            //
+            // The two sites are alternates, gated by the same filter, so exactly
+            // one of them decrements. For a hide submitted through this route
+            // (the client path) this write runs first and handleHideAction's
+            // updateMany later finds 0 rows; a hide that reaches the chain some
+            // other way (signed elsewhere, mirrored from a peer) finds the row
+            // still at SUCCESS, and handleHideAction's onCawHidden fires instead.
+            // Mirrors hide:recaw: below, which also applies onRecawRemoved
+            // inside the same transaction as the write it accompanies.
             const target = await prisma.caw.findFirst({
               where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
               select: { id: true, action: true },
             })
-            const result = await prisma.caw.updateMany({
-              where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
-              data: { status: 'HIDDEN' }
+            // The status flip and the decrement commit together. If the
+            // decrement fails the flip rolls back too (the caw stays visible
+            // and the on-chain handler applies both when the hide confirms),
+            // instead of leaving a HIDDEN row whose cawCount was never lowered.
+            await prisma.$transaction(async (tx) => {
+              const result = await tx.caw.updateMany({
+                where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
+                data: { status: 'HIDDEN' }
+              })
+              if (result.count > 0 && target?.id) {
+                const isReply = (await tx.reply.findFirst({
+                  where: { replyCawId: target.id },
+                  select: { id: true },
+                })) !== null
+                await countManager.onCawHidden(tx, { userId: data.senderId, action: target.action, isReply })
+              }
             })
             console.log(`[Actions] Optimistic hide: user=${data.senderId} cawonce=${cawonce}`)
-            if (result.count > 0 && target?.id) {
-              const isReply = (await prisma.reply.findFirst({
-                where: { replyCawId: target.id },
-                select: { id: true },
-              })) !== null
-              await countManager.onCawHidden(prisma, { userId: data.senderId, action: target.action, isReply })
-            }
           }
         } else if (plaintext.startsWith('hide:recaw:')) {
           const parts = plaintext.replace('hide:recaw:', '').split(':')
