@@ -205,12 +205,14 @@ const WelcomePage: React.FC = () => {
         if (stepperDismissed) {
           console.log('[WelcomePage] User previously exited stepper for this profile, redirecting to home')
           // Best-effort: bump the server step so this short-circuit is consistent
-          // across devices/sessions next time too.
+          // across devices/sessions next time too. Through the retrying helper,
+          // not a bare apiFetch: inside the indexing window the GET above
+          // answers 200 { onboardingStep: -1 } rather than 202 (users.ts, the
+          // !user branch of GET /onboarding/:username), so `-1 < 5` holds while
+          // the row still does not exist, and the PATCH is answered 202 and
+          // dropped. That is the same failure this branch exists to repair.
           if (res.onboardingStep < 5) {
-            apiFetch(`/api/users/onboarding/${username}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ step: 5 }),
-            }).catch(() => {})
+            persistOnboardingStep(username, 5)
           }
           navigate('/home', { replace: true })
           return
