@@ -5810,6 +5810,10 @@ console.log("succeededKeys", succeededKeys)
         await pollLoop()
         // pollLoop refreshes liveSettings from the DB; keep the watchdog timeout
         // in step with the (possibly changed) interval before the next gap starts.
+        // Placement is load-bearing: declareLoop() also resets the loop's heartbeat
+        // clock, which is only correct here, right before ctx.heartbeat('poll') at the
+        // end of a completed poll. Called from anywhere else (refreshSettings, a
+        // settings watcher) it would silently advance the clock of a hung loop.
         const wantPollTimeoutMs = pollTimeoutMs()
         if (wantPollTimeoutMs !== declaredPollTimeoutMs) {
           declaredPollTimeoutMs = wantPollTimeoutMs
