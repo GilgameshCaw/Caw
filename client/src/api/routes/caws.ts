@@ -82,7 +82,7 @@ router.get('/', async (req, res) => {
           {
             user: {
               follows: {
-                some: { followerId: currentUserId, action: 'FOLLOW' as const }
+                some: { followerId: currentUserId, action: 'FOLLOW' as const, status: 'SUCCESS' as const }
               }
             }
           }

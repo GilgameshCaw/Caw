@@ -1312,7 +1312,12 @@ router.get('/:username/followers', async (req, res) => {
     const followers = await prisma.follow.findMany({
       where: {
         followingId: user.tokenId,
-        action: ActionType.FOLLOW
+        action: ActionType.FOLLOW,
+        // Confirmed follows only, same definition the profile counters use
+        // (see the follow.count calls in GET /api/users/:username). A FAILED
+        // row is kept on purpose so the UI can revert the optimistic button,
+        // so it must not be listed here.
+        status: 'SUCCESS'
       },
       take: limit + 1,
       skip: cursor ? 1 : 0,
@@ -1418,7 +1423,12 @@ router.get('/:username/following', async (req, res) => {
     const following = await prisma.follow.findMany({
       where: {
         followerId: user.tokenId,
-        action: ActionType.FOLLOW
+        action: ActionType.FOLLOW,
+        // Confirmed follows only, same definition the profile counters use
+        // (see the follow.count calls in GET /api/users/:username). A FAILED
+        // row is kept on purpose so the UI can revert the optimistic button,
+        // so it must not be listed here.
+        status: 'SUCCESS'
       },
       take: limit + 1,
       skip: cursor ? 1 : 0,
