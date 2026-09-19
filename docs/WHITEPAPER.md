@@ -538,10 +538,10 @@ Each action has an **ETH-denominated upper bound** baked in at deploy:
 
 | Action            | Cap (wei)     | Notional @ ETH = $5,000 |
 |-------------------|--------------:|------------------------:|
-| LIKE              | 2 × 10¹¹     | $0.01                   |
-| RECAW             | 4 × 10¹¹     | $0.02                   |
-| CAW (post)        | 5 × 10¹¹     | $0.025                  |
-| FOLLOW            | 30 × 10¹¹    | $0.15                   |
+| LIKE              | 2 × 10¹¹     | $0.001                  |
+| RECAW             | 4 × 10¹¹     | $0.002                  |
+| CAW (post)        | 5 × 10¹¹     | $0.0025                 |
+| FOLLOW            | 30 × 10¹¹    | $0.015                  |
 | UNLIKE / UNFOLLOW | —             | no on-chain cost; no cap |
 
 The cap rule is `cost_in_CAW = min(baseline_caw, max_eth_per_action / TWAP_eth_per_caw)`. When the cap binds, every internal distribution amount is scaled by `cost_in_CAW / baseline_caw`. **The split percentages do not change.** A LIKE that today is `2000 = 1600 receiver + 400 depositors` becomes, when the cap binds at e.g. 500 CAW: `500 = 400 receiver + 100 depositors`, still 80%/20%.
