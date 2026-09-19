@@ -4277,6 +4277,18 @@ console.log("succeededKeys", succeededKeys)
     const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl, 84532)
     console.log(`[Replication] HTTP RPC: ${redactRpcUrl(replicationHttpRpcUrl)}`)
 
+    // Optimistic replication and its monitor both reach the archive through
+    // getL2bContracts(), which throws when neither REPLICATION_RPC nor
+    // L2B_RPC_URL is set. Both loops gate on the same setting below and
+    // return quietly, so say it once here rather than every cycle — and say
+    // it at all, so an operator who meant to enable replication isn't left
+    // with a silent no-op.
+    if (!getReplicationHttpRpcUrl()) {
+      console.warn(
+        '[validator] REPLICATION_RPC (or L2B_RPC_URL) is not set — optimistic ' +
+        'replication and its monitor are disabled. Set it to enable them.'
+      )
+    }
 
     // ================================================================
     // Optimistic replication: direct L2b submission with stake + fraud proofs
@@ -4830,6 +4842,9 @@ console.log("succeededKeys", succeededKeys)
       try {
         // Loud reminder every cycle when corruption is active, so this can't
         // silently keep producing fraud after being left on by accident.
+        // Deliberately ahead of the RPC gate below: leaving CORRUPT on while
+        // the archive RPC happens to be unset is exactly the state that turns
+        // into fraud the moment the RPC comes back, so it has to stay audible.
         if (CORRUPT_REPLICATION) {
           console.warn(
             `[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true CORRUPT_MODE=${CORRUPT_MODE} — ` +
@@ -4837,6 +4852,12 @@ console.log("succeededKeys", succeededKeys)
             `Unset both env vars and restart to disable.`
           )
         }
+
+        // No replication RPC configured — nothing to submit to, and the
+        // finalize / withdraw passes below run from inside this loop.
+        // Warned once at startup; stay quiet here.
+        if (!getReplicationHttpRpcUrl()) return
+
         // 1. Find networks needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
         //
@@ -5410,6 +5431,10 @@ console.log("succeededKeys", succeededKeys)
      */
     async function monitorOptimisticSubmissions() {
       try {
+        // Same gate as the replication loop: without the archive RPC there
+        // is nothing to monitor. Warned once at startup.
+        if (!getReplicationHttpRpcUrl()) return
+
         // Use the MONITOR wallet here so that a separate REPLICATOR_PRIVATE_KEY
         // submitter's submissions are not skipped as "our own" — the monitor
         // wants to challenge them during the slash test.
