@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import Redis from 'ioredis'
 import { Service } from '../../Service'
-import listenForRawEvents, { RawEventInput } from './listenForRawEvents'
+import listenForRawEvents, { RawEventInput, getRawEventsPollIntervalMs } from './listenForRawEvents'
 import { convertBigIntsToStrings } from "./utils";
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
@@ -34,7 +34,13 @@ export const rawEventsGathererService: Service = {
 
   start(configParam: unknown, ctx: import('../../Service').HeartbeatContext) {
     const cfg = Config.parse(configParam)
-    ctx.declareLoop('poll', 90_000) // 3× the 15s poll interval + buffer
+    // Derive the watchdog timeout from the interval the loop actually runs at
+    // (RAW_EVENTS_POLL_MS, 30s default) rather than a constant. The 90s here
+    // was 3x the 15s interval when it was written in 73dfcc9; d19c3f8 later
+    // took the interval to 30s and this line kept the old number, leaving no
+    // buffer at all. 4x / at least 3 minutes, matching 2848b87.
+    const pollIntervalMs = getRawEventsPollIntervalMs()
+    ctx.declareLoop('poll', Math.max(pollIntervalMs * 4, 180_000))
     // Prefer environment variable for RPC URL (never commit API keys to config)
     const rpcUrl = getL2WsRpcUrl() || cfg.rpcUrl
     const { chainId, redisUrl } = cfg

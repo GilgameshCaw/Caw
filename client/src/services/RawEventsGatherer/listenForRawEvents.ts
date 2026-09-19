@@ -221,6 +221,20 @@ const CONTRACT_ABI = [
 
 
 /**
+ * The HTTP poll interval, read lazily.
+ *
+ * Deliberately a function and not a module-level const: this module does not
+ * import 'dotenv/config' itself (it runs because a sibling service does), so
+ * reading process.env at module scope would make the value depend on import
+ * order and silently fall back to the default when .env has not been loaded
+ * yet. Both call sites invoke it from start()/the poll loop, after every
+ * import has settled.
+ */
+export function getRawEventsPollIntervalMs(): number {
+  return Number(process.env.RAW_EVENTS_POLL_MS) || 30000
+}
+
+/**
  * listenForRawEvents
  * @description stream historical + live ActionsProcessed logs, compute parentHash chain
  */
@@ -889,7 +903,7 @@ export default async function listenForRawEvents(
   // the only visible difference is a confirmed badge appearing a few
   // seconds later. Ops who need tighter timing override via
   // RAW_EVENTS_POLL_MS.
-  const POLL_INTERVAL_MS = Number(process.env.RAW_EVENTS_POLL_MS) || 30000
+  const POLL_INTERVAL_MS = getRawEventsPollIntervalMs()
 
   // setTimeout chain (NOT setInterval) so slow polls don't pile up. With
   // setInterval, a 20s-slow iteration during a rate-limit window would let
