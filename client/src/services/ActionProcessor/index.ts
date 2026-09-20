@@ -19,7 +19,7 @@ import getActionType from '../../abi/getActionType'
 // rewriter does for static imports. No circular-import risk: StakeLedger
 // only `type`-imports from ActionProcessor/types (erased at compile time).
 // Reported by Zin running the standard .nvmrc environment.
-import { verifyMultiplier, recordAction } from '../StakeLedger'
+import { verifyMultiplier, recordAction, prefetchOwnershipForAction, flushOwnershipRefreshes } from '../StakeLedger'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -376,6 +376,16 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // checksum in handleRawEvent will halt the writer if state has
     // drifted.
     try {
+      // Load the on-chain ownership of tokens this node has not seen yet BEFORE
+      // opening the transaction: RPC reads must never run inside (and eat the
+      // budget of) the 30 s Prisma transaction below. Bounded by a per-read
+      // timeout and never throws.
+      await prefetchOwnershipForAction({
+        rawAction,
+        validatorId,
+        blockNumber: raw.blockNumber,
+        logIndex: raw.logIndex,
+      })
       const postCommit = await prisma.$transaction(async (tx) => {
         return await recordAction(tx, {
           rawAction,
@@ -392,6 +402,9 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
       // must never lead the DB (orphan mutation on rollback / double count on
       // Prisma deadlock retry).
       postCommit?.()
+      // Re-read from chain any sender recordAction() flagged (insufficient balance,
+      // unseen WITHDRAW sender). Outside the transaction; never throws.
+      await flushOwnershipRefreshes()
     } catch (err: any) {
       console.error('[ActionProcessor] StakeLedger snapshot failed (domain rows committed):', err?.message ?? err)
     }
