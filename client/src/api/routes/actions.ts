@@ -28,6 +28,7 @@ function decompressActionText(textField: unknown): string {
 import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
+import { writeOptimisticPollVote } from '../util/optimisticPollVote'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
 import { cawProfileLedgerAbi, cawActionsAbi } from '../../abi/generated'
@@ -1595,56 +1596,16 @@ router.post('/', async (req, res) => {
             const pollId = targetCaw.poll.id
             const voterId = data.senderId
 
-            if (parsed.optionIndex === null) {
-              // Optimistic unvote: drop ALL rows for this voter on this
-              // poll (covers both single-select and multi-select).
-              await prisma.vote.deleteMany({
-                where: { pollId, voterId },
-              })
-            } else if (targetCaw.poll.multiSelect) {
-              // Multi-select toggle. Find the existing row for this
-              // specific (pollId, voterId, optionIndex) — if present,
-              // drop it (toggle OFF); if absent, write a pending row
-              // (toggle ON, indexer confirms).
-              const existing = await prisma.vote.findUnique({
-                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
-              })
-              if (existing) {
-                await prisma.vote.delete({ where: { id: existing.id } })
-              } else {
-                await prisma.vote.create({
-                  data: {
-                    pollId,
-                    voterId,
-                    optionIndex: parsed.optionIndex,
-                    cawonce: data.cawonce,
-                    pending: true,
-                  },
-                })
-              }
-            } else {
-              // Single-select optimistic vote / change-vote. Drop any
-              // prior rows on a DIFFERENT optionIndex first (the new
-              // pick replaces the old), then upsert the row on the new
-              // option as pending. If the user already had this exact
-              // option marked, the upsert just re-stamps pending=true
-              // (a no-op for the UI but resets the failure-cleanup
-              // window — accept it).
-              await prisma.vote.deleteMany({
-                where: { pollId, voterId, NOT: { optionIndex: parsed.optionIndex } },
-              })
-              await prisma.vote.upsert({
-                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
-                update: { cawonce: data.cawonce, pending: true },
-                create: {
-                  pollId,
-                  voterId,
-                  optionIndex: parsed.optionIndex,
-                  cawonce: data.cawonce,
-                  pending: true,
-                },
-              })
-            }
+            // The optimistic write lives in ../util/optimisticPollVote.ts. It never
+            // deletes or rewrites a confirmed row: the indexer (handleVoteAction)
+            // does that, and the totalVotes bookkeeping, when the action confirms.
+            await writeOptimisticPollVote(prisma, {
+              pollId,
+              voterId,
+              optionIndex: parsed.optionIndex,
+              multiSelect: targetCaw.poll.multiSelect,
+              cawonce: data.cawonce,
+            })
           }
         }
       } catch (voteErr) {
