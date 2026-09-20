@@ -456,9 +456,15 @@ router.get('/:model', async (req, res) => {
     }
 
     res.json({
-      records: JSON.parse(JSON.stringify(records, (_key, value) =>
-        typeof value === 'bigint' ? value.toString() : value
-      )),
+      // Pre-stringify BigInt (JSON can't) and Decimal (its toJSON goes
+      // exponential above 1e21; read the original off the holder since
+      // toJSON runs before this replacer). Same rule as server.ts's global
+      // json replacer, which this inner stringify would otherwise bypass.
+      records: JSON.parse(JSON.stringify(records, function (this: any, key, value) {
+        const raw = this != null ? this[key] : undefined
+        if (raw instanceof Prisma.Decimal) return raw.toFixed(0)
+        return typeof value === 'bigint' ? value.toString() : value
+      })),
       total,
       limit,
       offset,

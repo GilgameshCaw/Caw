@@ -57,6 +57,7 @@ import { cawPath, parseCawIdSlug } from './util/cawUrl'
 import { parseLocaleFromPath, withLocalePrefix } from './util/localePrefix'
 import { extractSession } from './middleware/auth'
 import { prisma } from '../prismaClient'
+import { Prisma } from '@prisma/client'
 import { Sentry, sentryEnabled } from '../sentry'
 
 /**
@@ -73,6 +74,18 @@ export function createApp() {
   // 2026-05-09 (Round 5 VPS H-2). 'loopback' = trust 127.0.0.1, ::1
   // only — safe; the value won't be honored from public clients.
   app.set('trust proxy', 'loopback')
+
+  // Prisma Decimal columns (marketplace prices/bids/offers, DECIMAL(78,0)
+  // wei) must reach the client as plain digit strings: the frontend does
+  // BigInt(listing.startPrice). Decimal's own toJSON switches to exponent
+  // notation above 1e21 ("3.55e+26"), which BigInt() rejects. JSON.stringify
+  // calls toJSON before the replacer sees the value, so the replacer reads
+  // the ORIGINAL off its holder (`this[key]`) and formats it with toFixed(0).
+  // Applies to every res.json() in the app, so no route has to remember.
+  app.set('json replacer', function (this: any, key: string, value: unknown) {
+    const raw = this != null ? this[key] : undefined
+    return raw instanceof Prisma.Decimal ? raw.toFixed(0) : value
+  })
 
   // Don't advertise Express. Free fingerprinting for attackers
   // otherwise. Audit fix 2026-05-09 (Round 5 VPS M-4).

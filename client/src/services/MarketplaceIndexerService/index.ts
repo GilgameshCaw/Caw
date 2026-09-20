@@ -433,8 +433,9 @@ export const marketplaceIndexerService: Service = {
                         username: listing.username,
                         tokenId: listing.tokenId,
                         newBidAmount: amount,
-                        // Decimal column now; keep the payload a plain digit string.
-                        previousBidAmount: listing.highestBid?.toString() ?? null,
+                        // Decimal column now; toFixed(0), NOT toString(): Decimal's
+                        // toString goes exponential above 1e21 and BigInt() rejects it.
+                        previousBidAmount: listing.highestBid?.toFixed(0) ?? null,
                       },
                     })
                     console.log(`[Marketplace] Sent OUTBID notification to tokenId=${outbidUser.tokenId} for listing ${listing.listingId}`)
