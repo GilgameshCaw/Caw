@@ -1331,7 +1331,7 @@ async function handleTipAction(
  * Confirms a pending vote (set pending=false) when the API submit path
  * already wrote one optimistically — same pattern as Like / Tip.
  */
-async function handleVoteAction(
+export async function handleVoteAction(
   tx: PrismaTransactionClient,
   action: any,
   rawAction: any,

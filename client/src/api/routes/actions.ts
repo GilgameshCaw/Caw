@@ -28,6 +28,7 @@ function decompressActionText(textField: unknown): string {
 import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
+import { writeOptimisticPollVote } from '../util/optimisticPollVote'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
 import { cawProfileLedgerAbi, cawActionsAbi } from '../../abi/generated'
@@ -1595,66 +1596,16 @@ router.post('/', async (req, res) => {
             const pollId = targetCaw.poll.id
             const voterId = data.senderId
 
-            if (parsed.optionIndex === null) {
-              // Optimistic unvote: same class of bug as the change-vote
-              // and toggle-ON cases below -- deleting the confirmed
-              // row(s) here, before on-chain confirmation, means
-              // handleVoteAction's `existing` query comes up empty by
-              // the time the on-chain unvote lands, so it takes the
-              // "no existing vote, no-op" branch and totalVotes never
-              // gets decremented. The frontend's own optimistic state
-              // (PollDisplay.tsx) already reflects the unvote locally
-              // without needing this row gone from the DB, so there's
-              // nothing to write here -- leave the confirmed row(s)
-              // intact and let the indexer delete + decrement at
-              // confirm time.
-            } else if (targetCaw.poll.multiSelect) {
-              // Multi-select toggle. Find the existing row for this
-              // specific (pollId, voterId, optionIndex) — if present,
-              // drop it (toggle OFF); if absent, write a pending row
-              // (toggle ON, indexer confirms).
-              const existing = await prisma.vote.findUnique({
-                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
-              })
-              if (existing) {
-                await prisma.vote.delete({ where: { id: existing.id } })
-              } else {
-                await prisma.vote.create({
-                  data: {
-                    pollId,
-                    voterId,
-                    optionIndex: parsed.optionIndex,
-                    cawonce: data.cawonce,
-                    pending: true,
-                  },
-                })
-              }
-            } else {
-              // Single-select optimistic vote / change-vote. Do NOT
-              // delete any prior confirmed row here -- the indexer
-              // (handleVoteAction) needs that row to still exist when
-              // the on-chain action lands so it can tell "this is a
-              // change from option X" apart from "this is a fresh
-              // vote", and decrement totalVotes for the old option
-              // accordingly. Deleting it here early made that
-              // distinction unrecoverable and caused totalVotes to
-              // only ever increment, never decrement, on every vote
-              // change (see PR body for the live-DB reproduction).
-              // Just upsert the new pick as pending; the indexer
-              // reconciles the prior row (delete + decrement) and this
-              // row (confirm + increment) atomically at confirm time.
-              await prisma.vote.upsert({
-                where: { pollId_voterId_optionIndex: { pollId, voterId, optionIndex: parsed.optionIndex } },
-                update: { cawonce: data.cawonce, pending: true },
-                create: {
-                  pollId,
-                  voterId,
-                  optionIndex: parsed.optionIndex,
-                  cawonce: data.cawonce,
-                  pending: true,
-                },
-              })
-            }
+            // The optimistic write lives in ../util/optimisticPollVote.ts. It never
+            // deletes or rewrites a confirmed row: the indexer (handleVoteAction)
+            // does that, and the totalVotes bookkeeping, when the action confirms.
+            await writeOptimisticPollVote(prisma, {
+              pollId,
+              voterId,
+              optionIndex: parsed.optionIndex,
+              multiSelect: targetCaw.poll.multiSelect,
+              cawonce: data.cawonce,
+            })
           }
         }
       } catch (voteErr) {
