@@ -59,7 +59,9 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
       hiddenRecaws: {},
 
       hideCaw: (tokenId, cawonce) => {
-        if (!tokenId || !cawonce) return
+        // cawonce is a 0-based per-tokenId nonce, so a user's first post is
+        // cawonce=0 — reject only missing/negative, never the valid 0.
+        if (!tokenId || cawonce == null || cawonce < 0) return
         set((state) => ({
           hiddenCawonces: {
             ...state.hiddenCawonces,
@@ -69,7 +71,8 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
       },
 
       hideRecaw: (recawerTokenId, originalTokenId, originalCawonce) => {
-        if (!recawerTokenId || !originalTokenId || !originalCawonce) return
+        // originalCawonce is a 0-based nonce; reject only missing/negative.
+        if (!recawerTokenId || !originalTokenId || originalCawonce == null || originalCawonce < 0) return
         set((state) => ({
           hiddenRecaws: {
             ...state.hiddenRecaws,
