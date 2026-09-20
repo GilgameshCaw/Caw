@@ -433,7 +433,8 @@ export const marketplaceIndexerService: Service = {
                         username: listing.username,
                         tokenId: listing.tokenId,
                         newBidAmount: amount,
-                        previousBidAmount: listing.highestBid,
+                        // Decimal column now; keep the payload a plain digit string.
+                        previousBidAmount: listing.highestBid?.toString() ?? null,
                       },
                     })
                     console.log(`[Marketplace] Sent OUTBID notification to tokenId=${outbidUser.tokenId} for listing ${listing.listingId}`)

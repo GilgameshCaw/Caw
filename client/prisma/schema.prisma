@@ -808,12 +808,12 @@ model MarketplaceListing {
   listingType    MarketListingType
   paymentToken   String
   paymentAddress String
-  startPrice     String
-  endPrice       String?
+  startPrice     Decimal             @db.Decimal(78, 0)
+  endPrice       Decimal?            @db.Decimal(78, 0)
   startTime      DateTime
   endTime        DateTime?
   status         MarketListingStatus @default(ACTIVE)
-  highestBid     String?
+  highestBid     Decimal?            @db.Decimal(78, 0)
   highestBidder  String?
   username       String
   usernameLength Int
@@ -833,7 +833,7 @@ model MarketplaceBid {
   id        Int                @id @default(autoincrement())
   listingId Int
   bidder    String
-  amount    String
+  amount    Decimal            @db.Decimal(78, 0)
   txHash    String?
   status    BidStatus          @default(ACTIVE)
   createdAt DateTime           @default(now())
@@ -850,7 +850,7 @@ model MarketplaceSale {
   buyer        String
   seller       String
   tokenId      Int
-  price        String
+  price        Decimal            @db.Decimal(78, 0)
   paymentToken String
   username     String
   txHash       String?
@@ -868,7 +868,7 @@ model MarketplaceOffer {
   offerer        String
   paymentToken   String
   paymentAddress String
-  amount         String
+  amount         Decimal                     @db.Decimal(78, 0)
   expiry         DateTime
   status         OfferStatus                 @default(ACTIVE)
   username       String
