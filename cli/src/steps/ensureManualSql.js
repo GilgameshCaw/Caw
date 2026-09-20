@@ -76,10 +76,38 @@ export const MANUAL_SQL_INDEXES = [
   },
 ]
 
+// Query params that Prisma understands but libpq/psql rejects with
+// 'invalid URI query parameter'. Anything NOT in this set is passed through
+// to psql -- crucially the libpq-valid ones (sslmode, sslrootcert, sslcert,
+// sslkey, connect_timeout, application_name, ...) MUST be preserved, since
+// stripping the whole query string breaks psql on any SSL-required database
+// (i.e. production).
+const PRISMA_ONLY_PARAMS = new Set([
+  'connection_limit',
+  'pool_timeout',
+  'socket_timeout',
+  'pgbouncer',
+  'schema',
+  'statement_cache_size',
+  'sslidentity',
+  'sslpassword',
+])
+
+function stripPrismaOnlyParams(dbUrl) {
+  if (!dbUrl || !dbUrl.includes('?')) return dbUrl
+  const [base, query] = dbUrl.split('?')
+  const kept = query
+    .split('&')
+    .filter(Boolean)
+    .filter((kv) => !PRISMA_ONLY_PARAMS.has(kv.split('=')[0].toLowerCase()))
+  return kept.length ? `${base}?${kept.join('&')}` : base
+}
+
 function runPsql(dbUrl, sql) {
   // Strip Prisma-specific query params (e.g. ?connection_limit=40&pool_timeout=30)
-  // that cause psql to fail with 'invalid URI query parameter'.
-  const cleanUrl = dbUrl ? dbUrl.split('?')[0] : dbUrl
+  // that cause psql to fail with 'invalid URI query parameter', while KEEPING
+  // libpq-valid ones like sslmode so psql can still connect to a TLS-required DB.
+  const cleanUrl = stripPrismaOnlyParams(dbUrl)
   return execSync(
     `psql "${cleanUrl}" -v ON_ERROR_STOP=1 -t -A -c ${JSON.stringify(sql)}`,
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
