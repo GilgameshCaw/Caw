@@ -133,6 +133,11 @@ export function createApp() {
     if (/^\/api\/validator-analytics\/tip-config\/?$/.test(req.path)) return next()
     return cors(corsOpts)(req, res, next)
   })
+  // Tight body cap for the translation proxy, mounted BEFORE the global 50mb
+  // parser so an oversized body is rejected at parse time rather than fully
+  // buffered into memory ahead of the route's 2,000-char check. 16kb comfortably
+  // holds a 2,000-char text plus the small JSON envelope.
+  app.use('/api/translate', express.json({ limit: '16kb' }))
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
   // Security headers for every response (HTML + JSON + everything).
