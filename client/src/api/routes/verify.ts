@@ -14,6 +14,7 @@ import {
   takeState,
   validateRedirectUri as coreValidateRedirectUri,
   validateReturnTo,
+  xOauthConfigured,
 } from './xOauthCore'
 
 const router = Router()
@@ -52,6 +53,12 @@ const redirectPageWithResult = (payload: Record<string, any>, returnTo: string) 
  * session state.
  */
 router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req, res) => {
+  // Unconfigured is not an internal error: answer 503 before doing any
+  // work, and leave the catch below to mean what it says. The response
+  // body is unchanged so the client keeps surfacing the same sentence.
+  if (!xOauthConfigured()) {
+    return res.status(503).json({ error: 'X verification is not available on this node' })
+  }
   try {
     const tokenId = Number(req.body?.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0) {

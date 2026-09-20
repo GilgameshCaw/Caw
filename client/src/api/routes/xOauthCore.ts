@@ -38,6 +38,22 @@ export function envOrThrow(key: string): string {
   return v
 }
 
+/**
+ * Whether this node can run the X OAuth flow at all. Both halves are
+ * required and they are read at different points: the start endpoints
+ * need the client id to build the authorize URL, and
+ * exchangeCodeForUser needs the secret for the token exchange. A node
+ * with only the id set would hand the user a working X consent screen
+ * and then fail on the callback, after they have already authorized —
+ * so the start endpoints check both and decline up front.
+ *
+ * X_OAUTH_ORIGINS is deliberately not part of this: it is not read on
+ * the server at all (the allow-list is a hardcoded Set on the client).
+ */
+export function xOauthConfigured(): boolean {
+  return Boolean(process.env.X_OAUTH_CLIENT_ID && process.env.X_OAUTH_CLIENT_SECRET)
+}
+
 export function b64url(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

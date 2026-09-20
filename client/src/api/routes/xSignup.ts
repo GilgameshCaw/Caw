@@ -37,6 +37,7 @@ import {
   takeState,
   validateRedirectUri as coreValidateRedirectUri,
   validateReturnTo,
+  xOauthConfigured,
 } from './xOauthCore'
 
 const router = Router()
@@ -104,6 +105,11 @@ export async function consumeXQualifiedToken(token: string): Promise<{ xUserId: 
  * tokenId/address (there is no account yet).
  */
 router.post('/x/signup-start', async (req, res) => {
+  // See the note on the link flow's start-popup: unconfigured answers
+  // 503 up front, the catch below stays for genuine failures.
+  if (!xOauthConfigured()) {
+    return res.status(503).json({ error: 'X verification is not available on this node' })
+  }
   try {
     const redirectUri = validateRedirectUri(req.body?.redirectUri)
 
