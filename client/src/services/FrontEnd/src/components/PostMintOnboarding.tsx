@@ -294,7 +294,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   //     amount as if it were confirmed.
   const onboardingToken = useMemo(() => {
     if (activeToken?.tokenId === tokenId) return activeToken
-    return { tokenId, username, address }
+    // Stub for the wrong/stale-profile case. stakedAmount is intentionally
+    // absent (undefined) so stake gates that read it treat this profile as
+    // unstaked (fail-safe) instead of inheriting the old profile's stake.
+    return { tokenId, username, address, stakedAmount: undefined as bigint | undefined }
   }, [activeToken, tokenId, username, address])
   const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
 
@@ -784,7 +787,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     const qsDone = qsComplete || hasActiveSession || quickSignPending
     const checks: Record<StepId, boolean> = {
       verify:    isProfileAuthorized,
-      stake:     depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n),
+      // Read stake off onboardingToken, not activeToken: during post-mint
+      // indexer lag activeToken can be the stale OLD profile, and a well-staked
+      // old profile would fail this action gate open for the new, unstaked one.
+      // onboardingToken is activeToken only when its tokenId matches; otherwise
+      // a stub with no stakedAmount → treated as 0n → gate stays closed.
+      stake:     depositPending || stakeConfirmed || (typeof onboardingToken?.stakedAmount === 'bigint' && onboardingToken.stakedAmount > 0n),
       dms:       dmDone,
       quicksign: qsDone,
       setup:     dmDone && qsDone,
@@ -824,8 +832,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     })
   }, [isProfileAuthorized, activeToken?.stakedAmount, dmAlreadyEnabled, dmComplete, hasActiveSession, qsComplete, stakeConfirmed, currentStep, depositPending])
 
-  // Auto-advance past steps that are already completed (but not when user explicitly clicked a step)
-  const isStakeComplete = depositPending || stakeConfirmed || (typeof activeToken?.stakedAmount === 'bigint' && activeToken.stakedAmount > 0n)
+  // Auto-advance past steps that are already completed (but not when user explicitly clicked a step).
+  // Read stake off onboardingToken (see the setCompletedSteps note above): a stale
+  // activeToken pointing at a well-staked OLD profile must not auto-advance the new
+  // unstaked profile past the deposit step.
+  const isStakeComplete = depositPending || stakeConfirmed || (typeof onboardingToken?.stakedAmount === 'bigint' && onboardingToken.stakedAmount > 0n)
   const isDmsComplete = dmComplete || !!dmAlreadyEnabled
   const isQsComplete = qsComplete || hasActiveSession || quickSignPending
   useEffect(() => {
