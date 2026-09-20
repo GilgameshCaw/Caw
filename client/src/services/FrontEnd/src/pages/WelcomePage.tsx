@@ -345,6 +345,7 @@ const WelcomePage: React.FC = () => {
       giftedMint={giftedMint}
       quickSignPending={quickSignPending}
       onComplete={() => {
+        if (!username) { navigate('/home', { replace: true }); return }
         // Mark onboarding complete locally first, so future refreshes bypass
         // the stepper even if the server never records it.
         try { localStorage.setItem(`caw:onboardingExited:${username}`, '1') } catch {}
