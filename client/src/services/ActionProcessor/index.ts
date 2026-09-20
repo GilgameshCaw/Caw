@@ -91,15 +91,24 @@ export const actionProcessorService: Service = {
               console.warn(`[ActionProcessor] Skipping stale event ${raw.id}: ${err.message}`)
               lastId = raw.id
             } else {
-              console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
-              // Don't advance lastId — the next restart will retry this event.
-              break
+              // Do NOT stop the backlog here. A single failing event used to
+              // `break` (874c1f4), which does not even achieve "retry on next
+              // restart": the resume cursor above is the newest Action's
+              // rawEventId, and the live subscription that starts right after
+              // this loop advances it past the whole remaining backlog, so
+              // everything from the failed event onward was skipped for good.
+              // Instead: record it in the persistent retry registry, advance
+              // past it, and let the retry loop (below) bring it back with
+              // backoff. Nothing halts, nothing is silently dropped.
+              console.error(`[ActionProcessor] Failed to process backlog event ${raw.id} (queued for retry):`, err)
+              await noteFailedEvent(raw.id, err)
+              lastId = raw.id
             }
           }
           ctx.heartbeat('listen')
         }
-        // If the entire chunk failed without advancing, stop — otherwise we'd
-        // re-fetch and re-fail the same rows forever. Next restart retries.
+        // Defensive: lastId always advances above, but keep the guard so a
+        // future edit can't turn this into a tight re-fetch loop.
         if (lastId === startOfChunk) {
           console.warn('[ActionProcessor] Backlog stuck — no events processed in chunk, bailing out')
           break
@@ -155,8 +164,11 @@ export const actionProcessorService: Service = {
               console.warn(`[ActionProcessor] Skipping stale event ${rawEventId}: ${(err as Error).message}`)
               lastId = rawEventId
             } else {
-              console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
-              // Don't advance lastId — retry on next message/restart
+              // Same registry as the backlog path: the next message has a
+              // higher id and the `rawEventId <= lastId` gate means nothing
+              // would ever come back for this one otherwise.
+              console.error(`[ActionProcessor] Failed to process event ${rawEventId} (queued for retry):`, err)
+              await noteFailedEvent(rawEventId, err)
             }
           }
         }).catch(err => {
@@ -166,6 +178,24 @@ export const actionProcessorService: Service = {
         })
       })
 
+      // Retry loop for the failed-event registry. Chained onto processChain
+      // so a retry never runs concurrently with a live event (StakeLedger's
+      // in-memory state is not safe under concurrent handleRawEvent calls).
+      // Each entry backs off exponentially from RETRY_BASE_MS up to
+      // RETRY_MAX_MS; after RETRY_LOUD_AFTER attempts it is logged as an
+      // error on every pass so an operator sees it, but it keeps retrying
+      // and never blocks other events.
+      retryTimer = setInterval(() => {
+        if (stopRequested) return
+        processChain = processChain.then(async () => {
+          if (stopRequested) return
+          const touched = await retryFailedEvents()
+          if (touched) scheduleVerify()
+        }).catch(err => {
+          console.error('[ActionProcessor] Retry pass error:', err)
+        })
+      }, RETRY_INTERVAL_MS)
+
     })()
 
     return {
@@ -173,11 +203,135 @@ export const actionProcessorService: Service = {
       async stop() {
         stopRequested = true
         clearInterval(idleHeartbeat)
+        if (retryTimer) clearInterval(retryTimer)
         await prisma.$disconnect()
       },
-      stats: async () => `actions: ${await prisma.action.count()}`
+      stats: async () => {
+        const failed = await loadFailedEvents()
+        const n = Object.keys(failed).length
+        return `actions: ${await prisma.action.count()}${n > 0 ? `, failed-events awaiting retry: ${n}` : ''}`
+      },
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Failed-event retry registry.
+//
+// A RawEvent whose processing throws (RPC hiccup, transient DB error, or a
+// genuinely poisoned payload) must neither halt the indexer nor be dropped.
+// The registry is a small JSON document in ChainData (durable, no migration)
+// keyed by rawEvent id, holding the attempt count and the next retry time.
+// handleRawEvent is safe to re-run for the same RawEvent: createOrFindAction
+// finds the existing Action row, the domain checks skip effects already
+// applied, and StakeLedger.recordAction ignores (block, logIndex) pairs at or
+// below its cursor.
+//
+// Known limitation, unchanged from before: a retried event's stake-ledger
+// effects land out of block order and are skipped by recordAction's cursor,
+// so the ledger can drift until the daily reconciler corrects it. The old
+// `continue` behaviour had the same property; the old `break` behaviour lost
+// the events entirely.
+// ---------------------------------------------------------------------------
+
+const FAILED_EVENTS_KEY = 'action-processor:failed-raw-events'
+const RETRY_INTERVAL_MS = 60_000
+const RETRY_BASE_MS = 60_000
+const RETRY_MAX_MS = 60 * 60_000
+const RETRY_LOUD_AFTER = 5
+let retryTimer: NodeJS.Timeout | null = null
+
+type FailedEventEntry = { attempts: number; nextRetryAt: number; lastError: string; firstFailedAt: number }
+type FailedEventRegistry = Record<string, FailedEventEntry>
+
+async function loadFailedEvents(): Promise<FailedEventRegistry> {
+  try {
+    const row = await prisma.chainData.findUnique({ where: { key: FAILED_EVENTS_KEY } })
+    const v = row?.value
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as FailedEventRegistry) : {}
+  } catch (err: any) {
+    console.warn('[ActionProcessor] Could not load failed-event registry:', err?.message ?? err)
+    return {}
+  }
+}
+
+async function saveFailedEvents(reg: FailedEventRegistry): Promise<void> {
+  try {
+    await prisma.chainData.upsert({
+      where: { key: FAILED_EVENTS_KEY },
+      update: { value: reg },
+      create: { key: FAILED_EVENTS_KEY, value: reg },
+    })
+  } catch (err: any) {
+    console.warn('[ActionProcessor] Could not save failed-event registry:', err?.message ?? err)
+  }
+}
+
+async function noteFailedEvent(rawEventId: number, err: unknown): Promise<void> {
+  const reg = await loadFailedEvents()
+  const prev = reg[String(rawEventId)]
+  const attempts = (prev?.attempts ?? 0) + 1
+  const delay = Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS)
+  reg[String(rawEventId)] = {
+    attempts,
+    nextRetryAt: Date.now() + delay,
+    lastError: String((err as any)?.message ?? err).slice(0, 300),
+    firstFailedAt: prev?.firstFailedAt ?? Date.now(),
+  }
+  await saveFailedEvents(reg)
+}
+
+/** One retry pass. Returns true when at least one event was re-processed. */
+async function retryFailedEvents(): Promise<boolean> {
+  const reg = await loadFailedEvents()
+  const ids = Object.keys(reg)
+  if (ids.length === 0) return false
+  const now = Date.now()
+  let touched = false
+  let changed = false
+  for (const id of ids) {
+    const entry = reg[id]
+    if (entry.nextRetryAt > now) continue
+    const rawEventId = Number(id)
+    const raw = await prisma.rawEvent.findUnique({ where: { id: rawEventId } })
+    if (!raw) {
+      console.warn(`[ActionProcessor] Retry: RawEvent ${rawEventId} no longer exists; dropping from registry`)
+      delete reg[id]
+      changed = true
+      continue
+    }
+    try {
+      await handleRawEvent(raw, /* skipVerify */ true)
+      console.log(`[ActionProcessor] Retry succeeded for event ${rawEventId} after ${entry.attempts} failed attempt(s)`)
+      delete reg[id]
+      touched = true
+      changed = true
+    } catch (err) {
+      if (err instanceof StaleTokenError) {
+        console.warn(`[ActionProcessor] Retry: event ${rawEventId} is stale; dropping from registry: ${err.message}`)
+        delete reg[id]
+        changed = true
+        continue
+      }
+      const attempts = entry.attempts + 1
+      const delay = Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS)
+      reg[id] = {
+        attempts,
+        nextRetryAt: now + delay,
+        lastError: String((err as any)?.message ?? err).slice(0, 300),
+        firstFailedAt: entry.firstFailedAt,
+      }
+      changed = true
+      const level = attempts >= RETRY_LOUD_AFTER ? console.error : console.warn
+      level(
+        `[ActionProcessor] Retry ${attempts} failed for event ${rawEventId}` +
+        `${attempts >= RETRY_LOUD_AFTER ? ' — NEEDS OPERATOR ATTENTION (still retrying)' : ''}` +
+        `; next attempt in ${Math.round(delay / 1000)}s: ${reg[id].lastError}`,
+      )
+    }
+  }
+  if (changed) await saveFailedEvents(reg)
+  return touched
 }
 
 

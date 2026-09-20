@@ -12,6 +12,8 @@ import { section, success, dim, brand, warn, err } from '../utils/ui.js'
 import { configureMediaNginx } from './mediaNginx.js'
 import { patchMainNginxConfig } from './nginx.js'
 import { reportConfigDrift } from './configDrift.js'
+import { reportServiceDrift } from './serviceDrift.js'
+import { runCspGuard } from './cspGuard.js'
 
 // Subset of SQL keywords that indicate a destructive migration. We refuse
 // to auto-apply migrations whose .sql contains any of these without an
@@ -1109,6 +1111,22 @@ export async function runUpdate(installDir, opts = {}) {
     console.log(warn('  Skipping schema verification per --skip-verify-schema.'))
   }
 
+  // CSP guard — HARD STOP before anything is built or restarted. A commit
+  // that loosens script-src (or adds an inline handler index.html) must not
+  // reach a running node: with connect-src open, script-src is the only
+  // thing between an XSS and users' Quick Sign keys. Code is already pulled
+  // at this point, but the old processes keep running until the operator
+  // fixes the policy and re-runs `caw update`.
+  {
+    const csp = runCspGuard(installDir)
+    if (csp.violations.length > 0) {
+      console.log(err(`  ✖ CSP guard failed — refusing to build/restart:`))
+      for (const v of csp.violations) console.log(err(`      - ${v}`))
+      throw new Error('CSP guard failed; see violations above. Fix cli/src/steps/nginx.js CSP_POLICY or the frontend index.html, then re-run caw update.')
+    }
+    console.log(success(`  CSP guard ok (${csp.checked.join(', ')})`))
+  }
+
   if (codeResult.feChanged) {
     await buildFrontend(installDir)
   } else {
@@ -1156,6 +1174,17 @@ export async function runUpdate(installDir, opts = {}) {
     reportConfigDrift(installDir)
   } catch (e) {
     console.log(warn(`  Config-drift check failed (non-fatal): ${e.message}`))
+  }
+
+  // Service-list drift. Read-only here: tells the operator which services
+  // this update's generator would run that their config.json doesn't, with
+  // the exact entries and the `caw doctor --fix` command that appends them.
+  // Never auto-applied on update — an operator may have disabled a service
+  // on purpose, and a new service usually wants its config values checked.
+  try {
+    reportServiceDrift(installDir)
+  } catch (e) {
+    console.log(warn(`  Service-drift check failed (non-fatal): ${e.message}`))
   }
 
   if (appName && !opts.skipRestart) {

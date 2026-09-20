@@ -592,7 +592,7 @@ function detectNginxHttp2DirectiveSupport() {
 // The 'sha256-...' hash covers the inline theme-flash-prevention script in
 // dist/index.html. If that script changes, regenerate:
 //   node -e "require('crypto').createHash('sha256').update($SCRIPT).digest('base64')"
-const CSP_POLICY = [
+export const CSP_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval' 'sha256-xkVMad1A/6ozRonIOqWni0BBYrgJP5OHmcnrwTlUgGc=' https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/",
   "worker-src 'self' blob:",

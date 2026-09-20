@@ -50,6 +50,8 @@ import { configureMediaNginx } from '../src/steps/mediaNginx.js'
 import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir, readDatabaseUrl } from '../src/steps/update.js'
 import { ensureManualSqlIndexes, checkManualSqlIndexes } from '../src/steps/ensureManualSql.js'
 import { reportConfigDrift } from '../src/steps/configDrift.js'
+import { reportServiceDrift } from '../src/steps/serviceDrift.js'
+import { runCspGuard } from '../src/steps/cspGuard.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(__dirname, '../..')
@@ -686,7 +688,7 @@ program
 
 program
   .command('doctor')
-  .description('Read-only config checks (e.g. client/.env address vars vs solidity/.deploy-state.json), plus a check for manually-managed DB indexes that `prisma db push` cannot create. Pass --fix to create any missing indexes; without it, doctor never writes anything.')
+  .description('Read-only config checks (e.g. client/.env address vars vs solidity/.deploy-state.json), plus a check for manually-managed DB indexes that `prisma db push` cannot create. Also checks client/config.json against the service list the installer generates today, and runs the frontend CSP guard. Pass --fix to create any missing indexes and append any missing services; without it, doctor never writes anything.')
   .option('--dir <path>', 'Installation directory', ROOT_DIR)
   .option('--fix', 'Create any missing manually-managed indexes (safe to re-run; skips indexes that already exist, refuses to touch indexes blocked by pre-existing duplicate rows)')
   .action((opts) => {
@@ -694,6 +696,24 @@ program
       const installDir = resolveInstallDir(opts, ROOT_DIR)
       const result = reportConfigDrift(installDir)
       if (result?.ran && result.mismatches?.length > 0) process.exitCode = 1
+
+      // Service-list drift: services the generator now emits for this node
+      // type that client/config.json does not run. --fix appends them (never
+      // removes anything). See steps/serviceDrift.js for the motivating case.
+      const svc = reportServiceDrift(installDir, { fix: !!opts.fix })
+      if (svc.ran && svc.missing.length > 0 && !svc.fixed) process.exitCode = 1
+
+      // CSP guard: refuse to call the node healthy if the frontend policy or
+      // index.html would let injected script run (that is the QS-key theft
+      // path). Read-only; the fix is always a code change.
+      const csp = runCspGuard(installDir)
+      if (csp.violations.length > 0) {
+        console.log(`  CSP guard: ${csp.violations.length} violation(s):`)
+        for (const v of csp.violations) console.log(`    - ${v}`)
+        process.exitCode = 1
+      } else {
+        console.log(`  CSP guard: ok (${csp.checked.join(', ')})`)
+      }
 
       // Manually-managed index check. Same gap this covers as
       // install.js's post-`prisma db push` step: schema.prisma can't
@@ -703,6 +723,9 @@ program
       // (discovered 2026-08-20 on a node that had never been under
       // `prisma migrate deploy` management at all).
       const dbUrl = readDatabaseUrl(installDir)
+      // Own try/catch: an unreachable database must not abort the checks
+      // above/below (they are file-based), only report itself.
+      try {
       if (dbUrl) {
         if (opts.fix) {
           const results = ensureManualSqlIndexes(dbUrl)
@@ -720,6 +743,9 @@ program
             process.exitCode = 1
           }
         }
+      }
+      } catch (e) {
+        console.log(`  [warn] manually-managed index check skipped: ${String(e.message).split('\n')[0]}`)
       }
     } catch (e) {
       console.error('doctor failed:', e.message)
