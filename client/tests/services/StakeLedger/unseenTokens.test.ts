@@ -2,10 +2,10 @@
 // no RPC read inside the ledger transaction, and deposit / withdraw replays that
 // never reconstruct a balance from the chain's HEAD.
 //
-// The module reads the network id from the environment at import time, so set it
-// first and import the module lazily (a static import would be hoisted above this).
-process.env.NETWORK_ID = process.env.NETWORK_ID || '1'
-process.env.CLIENT_ID = process.env.CLIENT_ID || '1'
+// The module reads the network id from the environment at import time, so it is
+// imported lazily (a static import would be hoisted above any assignment made
+// here) from each describe's before() hook. A root-level hook would run for every
+// test file in the mocha run, not just this one.
 
 import { expect } from 'chai'
 import type * as StakeLedgerModule from '../../../src/services/StakeLedger/index'
@@ -14,9 +14,11 @@ import { PRECISION, balanceOf } from '../../../src/services/StakeLedger/contract
 
 let L: typeof StakeLedgerModule
 
-before(async () => {
+async function loadModule(): Promise<void> {
+  process.env.NETWORK_ID = process.env.NETWORK_ID || '1'
+  process.env.CLIENT_ID = process.env.CLIENT_ID || '1'
   L = await import('../../../src/services/StakeLedger/index')
-})
+}
 
 const W = (n: number | bigint): bigint => BigInt(n) * PRECISION // whole CAW -> wei
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -97,6 +99,7 @@ const recordParams = (rawAction: any, validatorId = 9) => ({
 })
 
 describe('StakeLedger / unseen tokens (behaviour)', () => {
+  before(loadModule)
   beforeEach(() => L._resetForTests())
   afterEach(() => L._resetForTests())
 
@@ -171,6 +174,7 @@ describe('StakeLedger / unseen tokens (behaviour)', () => {
 })
 
 describe('StakeLedger / ownership prefetch (new API)', () => {
+  before(loadModule)
   beforeEach(() => L._resetForTests())
   afterEach(() => L._resetForTests())
 
