@@ -34,7 +34,7 @@
 // will fail to create, so we check first and report rather than
 // attempting a CREATE that would just error out uglier.
 
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 
 export const MANUAL_SQL_INDEXES = [
   {
@@ -108,8 +108,13 @@ function runPsql(dbUrl, sql) {
   // that cause psql to fail with 'invalid URI query parameter', while KEEPING
   // libpq-valid ones like sslmode so psql can still connect to a TLS-required DB.
   const cleanUrl = stripPrismaOnlyParams(dbUrl)
-  return execSync(
-    `psql "${cleanUrl}" -v ON_ERROR_STOP=1 -t -A -c ${JSON.stringify(sql)}`,
+  // execFileSync with an argv array: no shell is involved, so a DATABASE_URL
+  // whose password contains `$`, `"`, backticks or `;` is passed to psql
+  // verbatim instead of being interpreted (or executed) by /bin/sh. The SQL
+  // itself is a fixed string from MANUAL_SQL_INDEXES, never caller input.
+  return execFileSync(
+    'psql',
+    [cleanUrl, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   )
 }

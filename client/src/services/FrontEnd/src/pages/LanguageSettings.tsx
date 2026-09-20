@@ -9,6 +9,7 @@ import { useUserByToken } from '~/hooks/useUserData'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useT } from '~/i18n/I18nProvider'
 import ThemedListbox from '~/components/forms/ThemedListbox'
+import { getDmTranslateRoute, setDmTranslateRoute, type DmTranslateRoute } from '~/utils/translate'
 
 const LanguageSettings: React.FC = () => {
   const { isDark } = useTheme()
@@ -22,6 +23,13 @@ const LanguageSettings: React.FC = () => {
   // on every change but render from this state until the refetch lands.
   const [preferredLanguage, setPreferredLanguage] = useState<string>('')
   const [autoTranslate, setAutoTranslate] = useState<boolean>(true)
+  // Per-device (localStorage), not on the User row: it says where THIS
+  // device is willing to send decrypted DM text. See utils/translate.ts.
+  const [dmTranslateRoute, setDmTranslateRouteState] = useState<DmTranslateRoute>(() => getDmTranslateRoute())
+  const onDmTranslateRouteChange = (route: DmTranslateRoute) => {
+    setDmTranslateRouteState(route)
+    setDmTranslateRoute(route)
+  }
 
   useEffect(() => {
     if (!user) return
@@ -156,6 +164,51 @@ const LanguageSettings: React.FC = () => {
               </div>
             </div>
             <Toggle checked={autoTranslate} onChange={onAutoTranslateChange} label={t('language_settings.auto_translate.title')} />
+          </div>
+
+          {/* Where decrypted DM text goes when the user translates a DM.
+              Public posts always use the node proxy (the text is public);
+              DMs default to the browser → Google path so the node operator
+              never sees them. Stored per device, see utils/translate.ts. */}
+          <div className={`py-4 border-b ${isDark ? 'border-white/10' : 'border-gray-100'}`}>
+            <div className="flex items-start gap-3">
+              <div className={`mt-0.5 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                <HiTranslate className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {t('language_settings.dm_route.title')}
+                </h3>
+                <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  {t('language_settings.dm_route.description')}
+                </p>
+                <div role="radiogroup" aria-label={t('language_settings.dm_route.title')} className="mt-3 flex flex-col gap-2">
+                  {([
+                    { value: 'browser', title: t('language_settings.dm_route.browser.title'), desc: t('language_settings.dm_route.browser.description') },
+                    { value: 'node',    title: t('language_settings.dm_route.node.title'),    desc: t('language_settings.dm_route.node.description') },
+                  ] as const).map(opt => {
+                    const selected = dmTranslateRoute === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => onDmTranslateRouteChange(opt.value)}
+                        className={`text-left px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
+                          selected
+                            ? 'border-yellow-500 bg-yellow-500/10'
+                            : isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{opt.title}</div>
+                        <div className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>{opt.desc}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 

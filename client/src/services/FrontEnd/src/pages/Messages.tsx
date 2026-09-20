@@ -60,7 +60,7 @@ import { useDmMuteStore } from '~/store/dmMuteStore'
 import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
 import ConfirmModal, { wasAcknowledged } from '~/components/modals/ConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
-import { translateText } from '~/utils/translate'
+import { translateText, getDmTranslateRoute } from '~/utils/translate'
 import { linkifyText } from '~/utils/linkifyText'
 import { FollowButton } from '~/components/FollowButton'
 import { useT } from '~/i18n/I18nProvider'
@@ -3028,8 +3028,11 @@ const MessagesPage: React.FC = () => {
               title="Translate this message?"
               message={
                 "Direct messages are end-to-end encrypted. To translate this message, " +
-                "its plaintext will be sent to a third-party translation service " +
-                "(Google Translate). The service may log or retain this content.\n\n" +
+                "its plaintext will be sent " +
+                (getDmTranslateRoute() === 'node'
+                  ? "to this node's translation service, which forwards it to the provider the node operator configured. The operator and that provider may log or retain this content."
+                  : "from this device straight to Google Translate. This node never sees it; Google may log or retain this content.") +
+                "\n\nYou can change where DM translations go under Settings → Language. " +
                 "This affects only this message — your other DMs stay encrypted."
               }
               confirmText="Translate anyway"

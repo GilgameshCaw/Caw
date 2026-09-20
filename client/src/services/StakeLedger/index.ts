@@ -52,6 +52,49 @@ function getCawActions(): { capState: (...args: any[]) => Promise<any> } {
   return (_cawActionsOverride ?? _getCawActionsReal()) as any
 }
 
+// Last successfully-read CawActions.capState, persisted so a boot whose RPC
+// read fails resumes from the last known ratio instead of silently dropping
+// to baseline costs. With the cap active on chain, a baseline-cost replay is
+// exactly the DIVERGENCE halt the dynamic-cost fix exists to prevent — and
+// a boot-time RPC failure is not rare. Keyed per network in ChainData (a
+// durable key/value table; no migration needed). Reads and writes are
+// best-effort: the ledger never fails over this bookkeeping.
+const capStateKey = () => `stake-ledger:${CAW_CLIENT_ID}:cap-state`
+
+async function readPersistedCapState(): Promise<{ ratio: bigint; lastUpdatedAt: bigint } | null> {
+  try {
+    const row = await prisma.chainData.findUnique({ where: { key: capStateKey() } })
+    const v = row?.value as { ratio?: string; lastUpdatedAt?: string } | null | undefined
+    if (!v || typeof v.ratio !== 'string' || typeof v.lastUpdatedAt !== 'string') return null
+    return { ratio: BigInt(v.ratio), lastUpdatedAt: BigInt(v.lastUpdatedAt) }
+  } catch {
+    return null
+  }
+}
+
+async function persistCapState(ratio: bigint, lastUpdatedAt: bigint): Promise<void> {
+  try {
+    const key = capStateKey()
+    const value = { ratio: ratio.toString(), lastUpdatedAt: lastUpdatedAt.toString() }
+    await prisma.chainData.upsert({ where: { key }, update: { value }, create: { key, value } })
+  } catch (err: any) {
+    console.warn('[StakeLedger] Failed to persist capState (non-fatal):', err?.message ?? err)
+  }
+}
+
+/** One RPC read of capState. Returns null (never throws) when the read fails. */
+async function fetchCapState(): Promise<{ ratio: bigint; lastUpdatedAt: bigint } | null> {
+  try {
+    const cs = await getCawActions().capState()
+    if (cs && cs[0] !== undefined && cs[1] !== undefined) {
+      return { lastUpdatedAt: BigInt(cs[0]), ratio: BigInt(cs[1]) }
+    }
+  } catch (err: any) {
+    console.warn('[StakeLedger] capState RPC read failed:', err?.message ?? err)
+  }
+  return null
+}
+
 // One client per process — the snapshotter reads CLIENT_ID from env at
 // boot and persists state under that key.
 const CAW_CLIENT_ID = (() => {
@@ -103,16 +146,26 @@ export async function ensureBooted(): Promise<RuntimeState> {
     const currentRows = await prisma.cawOwnershipCurrent.findMany()
     for (const row of currentRows) ownership.set(row.tokenId, BigInt(row.ownership))
 
+    // Live RPC read first; on failure fall back to the last persisted read
+    // rather than to 0n. Only when there has never been a successful read
+    // do we start at baseline costs (which is also what the contract does
+    // for a dormant oracle).
     let initialCapRatio = 0n
     let initialCapLastUpdatedAt = 0n
-    try {
-      const cs = await getCawActions().capState()
-      if (cs && cs[0] !== undefined && cs[1] !== undefined) {
-        initialCapLastUpdatedAt = BigInt(cs[0])
-        initialCapRatio = BigInt(cs[1])
+    const live = await fetchCapState()
+    if (live) {
+      initialCapRatio = live.ratio
+      initialCapLastUpdatedAt = live.lastUpdatedAt
+      await persistCapState(live.ratio, live.lastUpdatedAt)
+    } else {
+      const saved = await readPersistedCapState()
+      if (saved) {
+        initialCapRatio = saved.ratio
+        initialCapLastUpdatedAt = saved.lastUpdatedAt
+        console.warn(`[StakeLedger] capState RPC read failed at boot; using last persisted capState (ratio=${saved.ratio}, lastUpdatedAt=${saved.lastUpdatedAt})`)
+      } else {
+        console.warn('[StakeLedger] capState RPC read failed at boot and nothing is persisted; defaulting to 0n (baseline costs)')
       }
-    } catch (err: any) {
-      console.warn('[StakeLedger] Failed to fetch initial capState from CawActions; defaulting to 0n (baseline costs):', err?.message ?? err)
     }
 
     const next: RuntimeState = persisted
@@ -765,15 +818,16 @@ export async function verifyMultiplier(): Promise<void> {
     }
   }
 
-  // Keep capRatio and capLastUpdatedAt fresh in case the oracle pushed a new ratio
-  try {
-    const cs = await getCawActions().capState()
-    if (cs && cs[0] !== undefined && cs[1] !== undefined) {
-      s.capLastUpdatedAt = BigInt(cs[0])
-      s.capRatio = BigInt(cs[1])
-    }
-  } catch {
-    // non-critical: transient RPC failure should not break verification
+  // Keep capRatio and capLastUpdatedAt fresh in case the oracle pushed a new
+  // ratio. A failed read leaves the previous value in place (never resets to
+  // 0n); a successful one is also persisted so the next boot can fall back
+  // to it if its own RPC read fails.
+  const fresh = await fetchCapState()
+  if (fresh) {
+    const changed = fresh.ratio !== s.capRatio || fresh.lastUpdatedAt !== s.capLastUpdatedAt
+    s.capLastUpdatedAt = fresh.lastUpdatedAt
+    s.capRatio = fresh.ratio
+    if (changed) await persistCapState(fresh.ratio, fresh.lastUpdatedAt)
   }
 
   if (onChain !== s.multiplier) {

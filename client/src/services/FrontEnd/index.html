@@ -37,18 +37,18 @@
     <meta name="caw-client-version" content="%VITE_CLIENT_VERSION%" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      Plain blocking stylesheet on purpose. The async-load idiom
+      (media="print" onload="this.media='all'") relies on an inline event
+      handler, which the nginx / API Content-Security-Policy blocks
+      (script-src has no 'unsafe-inline' or 'unsafe-hashes'), so the sheet
+      stayed print-only and Inter never rendered on any CSP-enforced node.
+      display=swap already keeps text visible while the font downloads.
+    -->
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
       rel="stylesheet"
-      media="print"
-      onload="this.media='all'"
     />
-    <noscript>
-      <link
-        href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
-        rel="stylesheet"
-      />
-    </noscript>
     <meta
       name="description"
       content="CAW is a decentralized, censorship-resistant social protocol. Speak freely, own your identity, and connect without intermediaries."

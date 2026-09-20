@@ -2,7 +2,9 @@
 //   1. ensureDmIdentity's placeholder-creation logic
 //   2. getPublicKey/getPublicKeysBatch treating publicKey === '' as "no identity"
 //   3. POST /api/dm/conversations rejecting a peer with only a placeholder identity
-// Run: node scripts/verify-dm-relay-fk-fix.js
+// Run: node scripts/verify-dm-relay-fk-fix.mjs
+// (.mjs so the top-level awaits below are legal; as a .js file under this
+// CommonJS package it failed to even parse.)
 
 // --- Simulated DB state ---
 let dmIdentities = new Map() // userId -> { userId, publicKey, walletAddress }

@@ -1,13 +1,54 @@
 // Translation helper used by both post translation (FeedItem) and DM
-// translation (Messages). Proxies requests through the node server
-// (/api/translate) for robust multi-provider support, zero-config keyless
-// fallback, in-memory LRU caching, and E2EE privacy protection.
+// translation (Messages).
 //
-// Note for DMs: translating plaintext sends it to the translation service;
-// translating breaks the E2EE boundary. Always prompt the user (see ConfirmModal
-// with rememberKey='dmTranslateAck') before calling this for a DM.
+// Two routes exist and the caller's `isPrivate` flag plus the user's
+// setting decide which one runs:
+//
+//   node    POST /api/translate on this node. Multi-provider (Gemini /
+//           DeepL / Google Cloud / keyless MyMemory), server-side LRU cache,
+//           works from datacenter IPs and privacy relays that Google's
+//           unauthenticated gtx endpoint rate-limits. Public posts always
+//           take this route: the text is public anyway.
+//
+//   browser The original path: this device calls Google Translate's
+//           unauthenticated gtx endpoint directly. The node operator never
+//           sees the plaintext. It is the DEFAULT for DMs, because a DM is
+//           end-to-end encrypted and routing its plaintext through the node
+//           would hand it to the operator (and to whatever provider the
+//           operator configured) — a strictly larger trust surface than the
+//           user was told about. Users who prefer the node's providers can
+//           opt in under Settings → Language.
+//
+// Either way, translating a DM sends its plaintext off-device. Always prompt
+// the user first (see ConfirmModal with rememberKey='dmTranslate').
 
 import { apiFetch } from '~/api/client'
+
+/** Where DM plaintext goes when the user translates a direct message. */
+export type DmTranslateRoute = 'browser' | 'node'
+
+const DM_TRANSLATE_ROUTE_KEY = 'caw:dmTranslateRoute'
+const DM_TRANSLATE_ROUTE_DEFAULT: DmTranslateRoute = 'browser'
+
+/**
+ * Per-device preference (localStorage, like the dmTranslate acknowledgement
+ * itself): it is a statement about where THIS device is willing to send
+ * decrypted DM text, so it deliberately does not sync through the User row.
+ */
+export function getDmTranslateRoute(): DmTranslateRoute {
+  try {
+    const v = localStorage.getItem(DM_TRANSLATE_ROUTE_KEY)
+    return v === 'node' ? 'node' : DM_TRANSLATE_ROUTE_DEFAULT
+  } catch {
+    return DM_TRANSLATE_ROUTE_DEFAULT
+  }
+}
+
+export function setDmTranslateRoute(route: DmTranslateRoute): void {
+  try { localStorage.setItem(DM_TRANSLATE_ROUTE_KEY, route) } catch {}
+}
+
+const GOOGLE_TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single'
 
 /**
  * Browser-locale fallback target language. The Settings → Language picker
@@ -158,6 +199,14 @@ interface FetchResult {
 }
 
 async function fetchTranslation(text: string, tl: string, isPrivate?: boolean): Promise<FetchResult | null> {
+  // Private (DM) text only goes through the node when the user opted in.
+  if (isPrivate && getDmTranslateRoute() === 'browser') {
+    return fetchTranslationDirect(text, tl)
+  }
+  return fetchTranslationViaNode(text, tl, isPrivate)
+}
+
+async function fetchTranslationViaNode(text: string, tl: string, isPrivate?: boolean): Promise<FetchResult | null> {
   try {
     const res = await apiFetch<{ text: string; sourceLanguage: string }>('/api/translate', {
       method: 'POST',
@@ -170,4 +219,34 @@ async function fetchTranslation(text: string, tl: string, isPrivate?: boolean): 
     console.warn('[translate] API proxy request failed:', err)
   }
   return null
+}
+
+/**
+ * Browser → Google Translate directly (the unauthenticated `gtx` endpoint
+ * the Chrome translate bar uses). Undocumented and rate-limited from
+ * datacenter IPs and privacy relays, which is why public posts moved to the
+ * node proxy — but it is the only route where the node operator never sees
+ * the text, so it stays as the default for DMs.
+ */
+async function fetchTranslationDirect(text: string, tl: string): Promise<FetchResult | null> {
+  try {
+    const url = `${GOOGLE_TRANSLATE_URL}?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = await res.json()
+    // Response shape: [[[translatedChunk, originalChunk, ...], ...], <??>, "<src>", ...]
+    if (!Array.isArray(data?.[0])) return null
+    const joined = (data[0] as unknown[])
+      .map(seg => Array.isArray(seg) ? (seg as unknown[])[0] : '')
+      .filter((s): s is string => typeof s === 'string')
+      .join('')
+    if (!joined) return null
+    // data[2] is gtx's detected source language (e.g. "es"). Sometimes a
+    // region-tagged form ("zh-CN") — strip to the primary subtag.
+    const detectedRaw = typeof data?.[2] === 'string' ? data[2] : ''
+    return { text: joined, sourceLanguage: detectedRaw.split('-')[0].toLowerCase() }
+  } catch (err) {
+    console.warn('[translate] direct request failed:', err)
+    return null
+  }
 }
