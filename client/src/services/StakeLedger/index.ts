@@ -124,18 +124,35 @@ export async function ensureBooted(): Promise<RuntimeState> {
 //  - recordAction() only reads s.ownership; a token that is still unseen reads
 //    as 0n.
 //  - A sender that turned out to be short (or an unseen WITHDRAW sender) is
-//    queued with requestOwnershipRefresh() and re-read from chain by
-//    flushOwnershipRefreshes() after the transaction.
+//    queued for a refresh, but only by the callback that recordAction() returns
+//    (which the caller runs after the commit), so a rolled-back or retried
+//    transaction leaves nothing in the queue. flushOwnershipRefreshes() then
+//    re-reads the queued tokens AT THE ACTION'S BLOCK, not at HEAD: HEAD would
+//    put balances from later events into replay state. An RPC that cannot serve
+//    that block fails the read and nothing is written.
 // Every chain read has a hard timeout. On failure or timeout nothing is cached
 // and the token stays unseen, so the next action retries.
 
 let OWNERSHIP_FETCH_TIMEOUT_MS = 5_000
-const pendingOwnershipRefresh = new Set<number>()
+// tokenId -> the block whose state the post-transaction refresh reads. Filled only
+// by the callbacks recordAction() returns (i.e. after a commit), never from inside
+// the transaction.
+const pendingOwnershipRefresh = new Map<number, bigint>()
+let _nonArchiveRefreshWarnEmitted = false
 
-async function fetchChainOwnership(tokenId: number): Promise<bigint | null> {
+/**
+ * Read cawOwnership(tokenId). With `atBlock` the read is pinned to that block; an RPC
+ * that no longer serves that block's state fails the read (the caller then writes
+ * nothing). It never falls back to HEAD.
+ */
+async function fetchChainOwnership(tokenId: number, atBlock?: bigint): Promise<bigint | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const read = Promise.resolve(getCawProfileLedger().cawOwnership(tokenId)).then((v) => BigInt(v))
+    const ledger = getCawProfileLedger()
+    const call = atBlock === undefined
+      ? ledger.cawOwnership(tokenId)
+      : ledger.cawOwnership(tokenId, { blockTag: Number(atBlock) })
+    const read = Promise.resolve(call).then((v) => BigInt(v))
     read.catch(() => {}) // the timeout may win the race; don't leave a late rejection unhandled
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
@@ -144,12 +161,51 @@ async function fetchChainOwnership(tokenId: number): Promise<bigint | null> {
       )
     })
     return await Promise.race([read, timeout])
-  } catch (err) {
-    console.warn(`[StakeLedger] Failed to read on-chain ownership for tokenId=${tokenId}:`, err)
+  } catch (err: any) {
+    const msg: string = err?.message ?? String(err)
+    if (atBlock !== undefined && isNonArchiveError(msg)) {
+      // Expected while catching up on a non-archive RPC: warn once, not per token.
+      if (!_nonArchiveRefreshWarnEmitted) {
+        console.warn(
+          '[StakeLedger] non-archive RPC: ownership refreshes are skipped for blocks it no longer serves ' +
+            `(configure an archive RPC for exact catch-up refreshes). Error: ${msg}`,
+        )
+        _nonArchiveRefreshWarnEmitted = true
+      }
+    } else {
+      console.warn(`[StakeLedger] Failed to read on-chain ownership for tokenId=${tokenId}:`, err)
+    }
     return null
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+/**
+ * True when (blockNumber, logIndex) is at or before the position the ledger has
+ * already consumed (warm restart, replay). prefetchOwnershipForAction() and
+ * recordAction() must agree on this, so both call this one function: if they
+ * disagreed, prefetch would skip while recordAction went ahead and read an unseen
+ * token as 0n.
+ */
+function isActionAlreadyProcessed(s: RuntimeState, blockNumber: bigint, logIndex: number): boolean {
+  return blockNumber < s.lastBlock || (blockNumber === s.lastBlock && logIndex <= s.lastLogIndex)
+}
+
+/**
+ * What step 2 of recordAction() charges the sender on top of the type-specific
+ * cost: the extra recipients' amounts (the first recipient of a WITHDRAW is not
+ * one) plus the validator tip, the last element of `amounts`. It sizes the
+ * assumed balance of an unseen WITHDRAW sender, which must cover this as well:
+ * real WITHDRAW actions carry a validator tip. A test checks it against step 2.
+ */
+function stepTwoChargeWei(rawAction: RawAction, isWithdraw: boolean): bigint {
+  const amounts = rawAction.amounts ?? []
+  const recipients = rawAction.recipients ?? []
+  if (amounts.length === 0) return 0n
+  let total = 0n
+  for (let i = isWithdraw ? 1 : 0; i < recipients.length; i++) total += BigInt(amounts[i] ?? 0) * PRECISION
+  return total + BigInt(amounts[amounts.length - 1] ?? 0) * PRECISION
 }
 
 /**
@@ -185,12 +241,7 @@ export async function prefetchOwnershipForAction(params: {
     const s = await ensureBooted()
     if (s.halted) return
     // recordAction() skips actions it has already processed; don't spend RPC reads on them.
-    if (
-      params.blockNumber < s.lastBlock ||
-      (params.blockNumber === s.lastBlock && params.logIndex <= s.lastLogIndex)
-    ) {
-      return
-    }
+    if (isActionAlreadyProcessed(s, params.blockNumber, params.logIndex)) return
     const missing = tokensTouchedByAction(params.rawAction, params.validatorId).filter((id) => !s.ownership.has(id))
     if (missing.length === 0) return
     await Promise.all(
@@ -206,24 +257,28 @@ export async function prefetchOwnershipForAction(params: {
   }
 }
 
-function requestOwnershipRefresh(tokenId: number): void {
-  pendingOwnershipRefresh.add(tokenId)
+function requestOwnershipRefresh(tokenId: number, readAtBlock: bigint): void {
+  const queued = pendingOwnershipRefresh.get(tokenId)
+  if (queued === undefined || readAtBlock > queued) pendingOwnershipRefresh.set(tokenId, readAtBlock)
 }
 
 /**
- * Re-read the queued tokens from chain and overwrite their cached ownership.
- * Call it AFTER the transaction that ran recordAction(). Never throws.
+ * Re-read the queued tokens from chain, at the block recorded with each request,
+ * and replace their cached ownership. Call it AFTER the transaction that ran
+ * recordAction(). Never throws. A value that changed while the read was in flight
+ * is newer than the read and is left alone (as in prefetchOwnershipForAction).
  */
 export async function flushOwnershipRefreshes(): Promise<void> {
   if (pendingOwnershipRefresh.size === 0) return
-  const ids = [...pendingOwnershipRefresh]
+  const requests = [...pendingOwnershipRefresh]
   pendingOwnershipRefresh.clear()
   try {
     const s = await ensureBooted()
     await Promise.all(
-      ids.map(async (tokenId) => {
-        const own = await fetchChainOwnership(tokenId)
-        if (own !== null) s.ownership.set(tokenId, own)
+      requests.map(async ([tokenId, readAtBlock]) => {
+        const before = s.ownership.get(tokenId)
+        const own = await fetchChainOwnership(tokenId, readAtBlock)
+        if (own !== null && s.ownership.get(tokenId) === before) s.ownership.set(tokenId, own)
       }),
     )
   } catch (err) {
@@ -238,7 +293,7 @@ export function _setOwnershipFetchTimeoutForTests(ms: number): void {
 
 /** Test hook: tokens currently queued for a post-transaction refresh. */
 export function _pendingOwnershipRefreshForTests(): number[] {
-  return [...pendingOwnershipRefresh]
+  return [...pendingOwnershipRefresh.keys()]
 }
 
 interface RecordParams {
@@ -273,7 +328,9 @@ interface RecordParams {
  * commits. Mutating `s` inside this callback would reintroduce the orphan
  * mutation / double-count bug (DB rollback or Prisma deadlock-retry leaves
  * memory diverged from the chain). Returns null when no memory update is
- * due (halted, or action already processed).
+ * due (halted, or action already processed). An action skipped for insufficient
+ * balance returns a callback that only queues an ownership refresh for its
+ * sender, so the refresh queue is touched only after a commit.
  */
 export async function recordAction(
   tx: PrismaTransactionClient,
@@ -284,12 +341,7 @@ export async function recordAction(
 
   // Skip already-processed actions on warm restart. ActionProcessor
   // resumes from lastId; we resume from (lastBlock, lastLogIndex).
-  if (
-    params.blockNumber < s.lastBlock ||
-    (params.blockNumber === s.lastBlock && params.logIndex <= s.lastLogIndex)
-  ) {
-    return null
-  }
+  if (isActionAlreadyProcessed(s, params.blockNumber, params.logIndex)) return null
 
   const { rawAction, validatorId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
   const senderId = Number(rawAction.senderId)
@@ -301,6 +353,9 @@ export async function recordAction(
   let localMultiplier = s.multiplier
   let localTotalCaw = s.totalCaw
   const stagedOwnership = new Map<number, bigint>()
+  // Refresh requests are staged like ownership: they reach the module queue only
+  // from the post-commit callback, never from inside the transaction.
+  const refreshAfterCommit = new Map<number, bigint>()
   // Ownership lookup: the in-transaction staging map first (so a token touched
   // earlier in THIS action sees its own uncommitted delta), then the cache.
   // No RPC in here: unseen tokens were loaded by prefetchOwnershipForAction()
@@ -384,9 +439,10 @@ export async function recordAction(
           `[StakeLedger] INSUFFICIENT_BALANCE_SKIP senderId=${senderId} action=${rawTypeName} ` +
           `block=${blockNumber} logIndex=${logIndex} (bal=${senderBalBefore}). Refreshing from chain and skipping this action.`,
         )
-        // The chain read happens after the transaction (no RPC in here).
-        requestOwnershipRefresh(senderId)
-        return null
+        // Skipped: nothing is applied, and nothing is queued from in here. The callback
+        // queues the refresh once the transaction has committed, for the state just
+        // before this action (the ledger did not apply it).
+        return () => requestOwnershipRefresh(senderId, blockNumber - 1n)
       }
       throw err
     }
@@ -433,12 +489,17 @@ export async function recordAction(
     // an unseen sender is never seeded from chain: cawOwnership() is a HEAD
     // read, which already includes this withdraw (double-subtract) and every
     // later event, and it would be an RPC read inside the transaction.
-    // The withdraw succeeded on-chain, so the sender held at least `amount`
-    // before it. For an unseen sender we assume exactly that: the totalCaw
-    // decrement stays exact (it feeds the multiplier) and the sender is not
-    // wrongly skipped as insufficient. The sender's cached ownership is re-read
-    // from chain after the transaction (requestOwnershipRefresh), and the daily
-    // reconciler covers the rest.
+    // The withdraw succeeded on-chain, so the sender held at least `amount` plus
+    // whatever step 2 charges (the validator tip and any extra recipients) before
+    // it. For an unseen sender we assume exactly that: the totalCaw decrement stays
+    // exact (it feeds the multiplier) and the sender is not wrongly skipped as
+    // insufficient, at step 1 or at step 2.
+    // It is an approximation. The persisted CawOwnershipCurrent and
+    // User.onChainStakeWei rows are written from it and keep it until the token's
+    // next action or a reconciler pass (which corrects upwards only), and a
+    // restart drops the in-memory refresh below. After the commit the sender is
+    // queued for a refresh at this block (requestOwnershipRefresh); an RPC without
+    // that block's state does not serve it, and nothing is written then.
     const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
     const stagedSenderOwn = stagedOwnership.get(senderId)
     const cachedSenderOwn = stagedSenderOwn !== undefined ? stagedSenderOwn : s.ownership.get(senderId)
@@ -446,9 +507,9 @@ export async function recordAction(
     if (cachedSenderOwn !== undefined) {
       senderBal = balanceOf(cachedSenderOwn, localMultiplier)
     } else {
-      senderBal = amount
-      requestOwnershipRefresh(senderId)
-      console.warn(`[StakeLedger] WITHDRAW for unseen sender=${senderId}: assuming pre-withdraw balance == amount (${amount}); ownership is refreshed from chain after commit.`)
+      senderBal = amount + stepTwoChargeWei(rawAction, true)
+      refreshAfterCommit.set(senderId, blockNumber)
+      console.warn(`[StakeLedger] WITHDRAW for unseen sender=${senderId}: assuming pre-withdraw balance == amount + step 2 charge (${senderBal}); ownership is refreshed from chain after commit when the RPC can serve block ${blockNumber}.`)
     }
     if (senderBal < amount) {
       // An unseen sender never reaches this branch (handled above), so a
@@ -525,9 +586,8 @@ export async function recordAction(
             `[StakeLedger] INSUFFICIENT_BALANCE_SKIP senderId=${senderId} action=${rawTypeName} (step2, tip send) ` +
             `block=${blockNumber} logIndex=${logIndex} (bal=${senderBalBefore}). Refreshing from chain and skipping this action.`,
           )
-          // The chain read happens after the transaction (no RPC in here).
-          requestOwnershipRefresh(senderId)
-          return null
+          // Skipped: see the step 1 handler; the callback queues the refresh after the commit.
+          return () => requestOwnershipRefresh(senderId, blockNumber - 1n)
         }
         throw err
       }
@@ -695,6 +755,8 @@ export async function recordAction(
     for (const [tokenId, own] of stagedOwnership) {
       s.ownership.set(tokenId, own)
     }
+    // Queue the refreshes only now that the transaction has committed.
+    for (const [tokenId, readAtBlock] of refreshAfterCommit) requestOwnershipRefresh(tokenId, readAtBlock)
   }
 }
 
@@ -925,6 +987,7 @@ export function _resetForTests(): void {
   state = null
   bootPromise = null
   _nonArchiveWarnEmitted = false
+  _nonArchiveRefreshWarnEmitted = false
   _cawProfileLedgerOverride = null
   pendingOwnershipRefresh.clear()
   OWNERSHIP_FETCH_TIMEOUT_MS = 5_000

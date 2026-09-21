@@ -80,12 +80,12 @@ const likeAction = (senderId: number, receiverId: number) => ({
   text: '',
 })
 
-const withdrawAction = (senderId: number, wholeCaw: string) => ({
+const withdrawAction = (senderId: number, wholeCaw: string, tip = '0') => ({
   actionType: 6, // WITHDRAW; amounts = [withdrawn amount, validator tip]
   senderId,
   cawonce: 1,
   text: '',
-  amounts: [wholeCaw, '0'],
+  amounts: [wholeCaw, tip],
 })
 
 const recordParams = (rawAction: any, validatorId = 9) => ({
@@ -196,25 +196,33 @@ describe('StakeLedger / ownership prefetch (new API)', () => {
     expect(snapshots.find((r) => r.tokenId === 5).balance).to.equal(W(8_000).toString())
   })
 
-  it('an unseen sender that comes up short is skipped, queued, and refreshed after the transaction', async () => {
+  it('an unseen sender that comes up short is skipped; the returned callback queues the refresh after the commit', async () => {
     L._injectStateForTests(makeState())
     const reads = useChain(async () => W(10_000))
     const { tx } = makeTx()
-    expect(await L.recordAction(tx, recordParams(likeAction(5, 6)))).to.equal(null)
+    const afterCommit = await L.recordAction(tx, recordParams(likeAction(5, 6)))
+    expect(afterCommit).to.be.a('function') // skipped, but the callback that queues the refresh is returned
     expect(reads).to.deep.equal([])
     expect(L._peekState()!.halted).to.equal(false)
+    expect(L._peekState()!.lastBlock).to.equal(100n) // nothing was applied
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([]) // nothing is queued from inside the transaction
+    afterCommit!()
     expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([5])
     await L.flushOwnershipRefreshes()
     expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([])
     expect(L._peekState()!.ownership.get(5)).to.equal(W(10_000))
-    expect(await L.recordAction(tx, recordParams(likeAction(5, 6)))).to.not.equal(null)
+    const applied = await L.recordAction(tx, recordParams(likeAction(5, 6)))
+    applied!()
+    expect(L._peekState()!.lastBlock).to.equal(101n) // with the refreshed balance the action is applied
   })
 
   it('an unseen WITHDRAW sender is queued for a refresh after the transaction', async () => {
     L._injectStateForTests(makeState())
     useChain(async () => W(20))
     const { tx } = makeTx()
-    await L.recordAction(tx, recordParams(withdrawAction(29, '50')))
+    const afterCommit = await L.recordAction(tx, recordParams(withdrawAction(29, '50')))
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([]) // not from inside the transaction
+    afterCommit!()
     expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([29])
     await L.flushOwnershipRefreshes()
     expect(L._peekState()!.ownership.get(29)).to.equal(W(20))
@@ -242,5 +250,154 @@ describe('StakeLedger / ownership prefetch (new API)', () => {
     L._peekState()!.ownership.set(5, 7n)
     await pending
     expect(L._peekState()!.ownership.get(5)).to.equal(7n)
+  })
+})
+
+describe('StakeLedger / review follow-ups (post-commit queue, block-pinned refresh, WITHDRAW with a tip)', () => {
+  before(loadModule)
+  beforeEach(() => L._resetForTests())
+  afterEach(() => L._resetForTests())
+
+  /** Mock chain that also records the overrides (block tag) of every cawOwnership read. */
+  function recordChain(read: (tokenId: number) => Promise<bigint>): Array<{ tokenId: number; overrides: any }> {
+    const calls: Array<{ tokenId: number; overrides: any }> = []
+    L._setContractForTests({
+      rewardMultiplier: async () => PRECISION,
+      cawOwnership: async (tokenId: number, overrides?: any) => {
+        calls.push({ tokenId: Number(tokenId), overrides })
+        return read(Number(tokenId))
+      },
+    })
+    return calls
+  }
+
+  it('an unseen WITHDRAW sender whose action carries a validator tip is applied, not skipped', async () => {
+    // Real WITHDRAW actions carry a validator tip (amounts = [amount, tip]) and step 2 charges it to the sender.
+    L._injectStateForTests(makeState())
+    const reads = useChain(async () => 0n)
+    const { tx, snapshots } = makeTx()
+    const afterCommit = await L.recordAction(tx, recordParams({ ...withdrawAction(29, '50', '1000'), recipients: [29] }))
+    afterCommit!()
+    const s = L._peekState()!
+    expect(s.lastBlock).to.equal(101n) // applied, not skipped as insufficient
+    expect(s.totalCaw).to.equal(W(1_000_000) - W(50)) // only the withdrawn amount leaves the pool; the tip moves between holders
+    expect(reads).to.deep.equal([])
+    const sender = snapshots.filter((r) => r.tokenId === 29)
+    expect(sender.map((r) => r.delta)).to.deep.equal([(-W(50)).toString(), (-W(1000)).toString()])
+    expect(sender[sender.length - 1].balance).to.equal('0')
+    expect(snapshots.find((r) => r.tokenId === 9).delta).to.equal(W(1000).toString()) // the validator (id 9) got the tip
+  })
+
+  it('the assumed pre-withdraw balance covers everything step 2 charges: extra recipients and the tip', async () => {
+    L._injectStateForTests(makeState())
+    useChain(async () => 0n)
+    const { tx, snapshots } = makeTx()
+    const action = { ...withdrawAction(29, '50', '1000'), recipients: [29, 31], amounts: ['50', '20', '1000'] }
+    const afterCommit = await L.recordAction(tx, recordParams(action))
+    afterCommit!()
+    expect(L._peekState()!.lastBlock).to.equal(101n)
+    const sender = snapshots.filter((r) => r.tokenId === 29)
+    expect(sender[sender.length - 1].balance).to.equal('0')
+    expect(snapshots.find((r) => r.tokenId === 31).delta).to.equal(W(20).toString())
+  })
+
+  it('a rolled-back or retried transaction leaves nothing in the refresh queue', async () => {
+    L._injectStateForTests(makeState())
+    const reads = useChain(async () => W(10_000))
+    // (a) an action skipped for insufficient balance: the transaction rolls back, so the caller never runs the callback
+    const skipped = await L.recordAction(makeTx().tx, recordParams(likeAction(5, 6)))
+    expect(skipped).to.be.a('function')
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([])
+    // (b) an unseen WITHDRAW sender whose ledger write fails inside the transaction
+    const failing = makeTx()
+    failing.tx.stakeLedgerState.upsert = async () => {
+      throw new Error('commit failed')
+    }
+    let threw = false
+    try {
+      await L.recordAction(failing.tx, recordParams(withdrawAction(29, '50')))
+    } catch {
+      threw = true
+    }
+    expect(threw).to.equal(true)
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([])
+    // the next flush has nothing to read for the tokens of the rolled-back actions
+    await L.flushOwnershipRefreshes()
+    expect(reads).to.deep.equal([])
+  })
+
+  it('the refresh reads the state just before a skipped action, not HEAD', async () => {
+    L._injectStateForTests(makeState())
+    const calls = recordChain(async () => W(10_000))
+    const afterCommit = await L.recordAction(makeTx().tx, recordParams(likeAction(5, 6))) // block 101
+    afterCommit!()
+    await L.flushOwnershipRefreshes()
+    expect(calls).to.deep.equal([{ tokenId: 5, overrides: { blockTag: 100 } }])
+    expect(L._peekState()!.ownership.get(5)).to.equal(W(10_000))
+  })
+
+  it("the refresh of an unseen WITHDRAW sender reads the state at the action's block", async () => {
+    L._injectStateForTests(makeState())
+    const calls = recordChain(async () => W(20))
+    const afterCommit = await L.recordAction(makeTx().tx, recordParams(withdrawAction(29, '50'))) // block 101
+    afterCommit!()
+    await L.flushOwnershipRefreshes()
+    expect(calls).to.deep.equal([{ tokenId: 29, overrides: { blockTag: 101 } }])
+    expect(L._peekState()!.ownership.get(29)).to.equal(W(20))
+  })
+
+  it('the refresh never overwrites a value that changed while the read was in flight', async () => {
+    L._injectStateForTests(makeState({ ownership: new Map([[5, W(10)]]) })) // stale: too little for a LIKE
+    useChain(async () => {
+      await sleep(30)
+      return W(10_000)
+    })
+    const afterCommit = await L.recordAction(makeTx().tx, recordParams(likeAction(5, 6)))
+    afterCommit!()
+    const flushing = L.flushOwnershipRefreshes()
+    await sleep(5)
+    L._peekState()!.ownership.set(5, 7n)
+    await flushing
+    expect(L._peekState()!.ownership.get(5)).to.equal(7n)
+  })
+
+  it('an RPC that cannot serve the block fails the read: nothing is written, and it warns once', async () => {
+    L._injectStateForTests(makeState())
+    L._setContractForTests({
+      rewardMultiplier: async () => PRECISION,
+      cawOwnership: async () => {
+        throw new Error('missing trie node 0xabc (path ) state 0xdef is not available')
+      },
+    })
+    const warns: string[] = []
+    const originalWarn = console.warn
+    console.warn = (...args: any[]) => {
+      warns.push(String(args[0]))
+    }
+    try {
+      for (let i = 0; i < 3; i++) {
+        const afterCommit = await L.recordAction(makeTx().tx, recordParams(likeAction(5, 6)))
+        afterCommit!()
+        await L.flushOwnershipRefreshes()
+      }
+    } finally {
+      console.warn = originalWarn
+    }
+    expect(L._peekState()!.ownership.has(5)).to.equal(false)
+    expect(warns.filter((w) => w.includes('non-archive')).length).to.equal(1)
+  })
+
+  it('prefetch and recordAction agree on which actions are already processed', async () => {
+    L._injectStateForTests(makeState({ lastBlock: 101n, lastLogIndex: 3 }))
+    const reads = useChain(async () => W(1))
+    for (const [blockNumber, logIndex] of [[100n, 9], [101n, 3], [101n, 0]] as Array<[bigint, number]>) {
+      await L.prefetchOwnershipForAction({ rawAction: likeAction(5, 6) as any, validatorId: 9, blockNumber, logIndex })
+      const afterCommit = await L.recordAction(makeTx().tx, { ...recordParams(likeAction(5, 6)), blockNumber, logIndex })
+      expect(afterCommit, `${blockNumber}/${logIndex}`).to.equal(null)
+    }
+    expect(reads).to.deep.equal([])
+    // one position later both go ahead: prefetch reads the unseen tokens
+    await L.prefetchOwnershipForAction({ rawAction: likeAction(5, 6) as any, validatorId: 9, blockNumber: 101n, logIndex: 4 })
+    expect(reads.length).to.be.greaterThan(0)
   })
 })
