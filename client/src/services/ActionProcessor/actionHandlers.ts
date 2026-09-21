@@ -103,7 +103,7 @@ export async function handleCawAction(
   // via a different mirror). HIDDEN is moderation state and stays sticky.
   const existingCaw = await tx.caw.findUnique({
     where: { userId_cawonce: { userId: authorId, cawonce: action.cawonce } },
-    select: { status: true }
+    select: { status: true, action: true }
   })
   const chainOverridesStatus =
     existingCaw?.status === 'PENDING' || existingCaw?.status === 'FAILED'
@@ -396,8 +396,8 @@ export async function handleCawAction(
   // Increment user's caw count + parent recawCount for quotes. Skip if
   // the existing row was PENDING or FAILED: in both cases the FE-side
   // optimistic `onCawCreated` already incremented the user's cawCount
-  // (and DataCleaner doesn't roll back caw counts on PENDING→FAILED — see
-  // txQueueFailure.ts and DataCleaner/index.ts), so this branch would
+  // (a FAILED row was rolled back by its failure path, and the FAILED ->
+  // SUCCESS reconcile below puts the counts back), so this branch would
   // double-count.
   //
   // For replies, do NOT pass originalCawId — onCawCreated would bump
@@ -414,11 +414,23 @@ export async function handleCawAction(
       status: 'SUCCESS',
     })
   } else if (existingCaw.status === 'PENDING' || existingCaw.status === 'FAILED') {
-    // Optimistic counts already applied (PENDING) or were never rolled
-    // back on the sweep (FAILED) — reconcile the status transition.
+    // PENDING: the optimistic counts are already in place. FAILED: the failure
+    // path rolled the user's counter back, so onStatusChanged puts it back (a
+    // reply never bumped it, hence isReply). The action is the row's own, the
+    // one the rollback used, not one derived from this event.
     await countManager.onStatusChanged(tx, 'caw', newCaw.id, existingCaw.status, 'SUCCESS', {
-      userId: authorId, action: 'CAW', originalCawId: quoteOriginalCawId,
+      userId: authorId, action: existingCaw.action, originalCawId: quoteOriginalCawId, isReply: isReplyNotQuote,
     })
+    // A quote that had been rolled back also owes its parent the +1 back:
+    // recompute from the live SUCCESS children, which is right whether the
+    // rollback was a decrement or a recompute.
+    if (existingCaw.status === 'FAILED' && quoteOriginalCawId) {
+      try {
+        await countManager.recomputeParentRecawCount(tx, quoteOriginalCawId)
+      } catch (err) {
+        console.error(`[handleCawAction] Failed to restore parent ${quoteOriginalCawId} recawCount after FAILED to SUCCESS:`, err)
+      }
+    }
   }
   // else: existingCaw is already SUCCESS (or HIDDEN) — this is a REPROCESS of an
   // already-counted caw (ActionProcessor backlog re-pass, e.g. after a restart).
@@ -504,9 +516,9 @@ export async function handleRecawAction(
   })
 
   // Increment counts only if this is truly new (no existing record).
-  // If it was pending OR failed, counts were already optimistically
-  // incremented at submit time and never rolled back by the sweep —
-  // see recawChainOverrides branch below.
+  // If it was pending, the counts are already in place from submit time. If
+  // it was failed, the failure path rolled them back and the FAILED -> SUCCESS
+  // branch below puts them back.
   if (!existingRecaw) {
     // onCawCreated handles user.cawCount/recawCount and parent recawCount
     const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
@@ -529,38 +541,28 @@ export async function handleRecawAction(
       console.error(`Failed to create repost/quote notification:`, err)
     }
   } else if (recawChainOverrides) {
-    // PENDING → SUCCESS: counts were already set optimistically by the
-    // API submit path and never rolled back; this is a true no-op.
+    // PENDING -> SUCCESS: the counts were set optimistically by the submit
+    // path, so onStatusChanged is a logged no-op.
     //
-    // FAILED → SUCCESS: chain confirmed an action that DataCleaner had
-    // previously swept to FAILED (>30 min pending without indexer
-    // confirmation). DataCleaner.checkForFailedActions decrements the
-    // parent's recawCount on the sweep — see DataCleaner/index.ts:431
-    // and :537 — so we owe the parent its +1 back now. Recompute from
-    // the live SUCCESS-row count (just-flipped row included) to match
-    // exactly what DataCleaner does in reverse; no risk of drift if
-    // multiple recaws ping-pong PENDING→FAILED→SUCCESS in a window.
-    // Quotes don't bump parent.recawCount, so they skip the recompute.
-    //
-    // user.recawCount is left alone in both directions — DataCleaner
-    // doesn't touch it on sweep, so no restore is required here.
+    // FAILED -> SUCCESS: a failure path (DataCleaner's stale-pending sweep,
+    // markTxQueueFailed, or the submit path when its optimistic increment
+    // failed) had marked the row FAILED and rolled its counts back. The chain
+    // confirmation puts them back: onStatusChanged re-applies the user's
+    // counter, keyed on the row's own action (the one the rollback used), and
+    // the parent's recawCount is recomputed from its live SUCCESS children
+    // (plain RECAWs and quotes), which is right whether the parent was rolled
+    // back by a decrement or by a recompute.
     const recawCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
     if (recawCaw) {
       const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
       await countManager.onStatusChanged(tx, 'caw', recawCaw.id, existingRecaw!.status, 'SUCCESS', {
-        userId, action: isQuoteRecaw ? 'CAW' : 'RECAW', originalCawId,
+        userId, action: existingRecaw!.action, originalCawId,
       })
-      if (existingRecaw!.status === 'FAILED' && !isQuoteRecaw && originalCawId) {
+      if (existingRecaw!.status === 'FAILED' && originalCawId) {
         try {
-          const actualRecawCount = await tx.caw.count({
-            where: { originalCawId, action: 'RECAW', status: 'SUCCESS' },
-          })
-          await tx.caw.update({
-            where: { id: originalCawId },
-            data: { recawCount: actualRecawCount },
-          })
+          await countManager.recomputeParentRecawCount(tx, originalCawId)
         } catch (err) {
-          console.error(`[handleRecawAction] Failed to restore parent ${originalCawId} recawCount after FAILED→SUCCESS:`, err)
+          console.error(`[handleRecawAction] Failed to restore parent ${originalCawId} recawCount after FAILED to SUCCESS:`, err)
         }
       }
       // Mirror what the LIKE handler does on its PENDING→SUCCESS path:

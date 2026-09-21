@@ -392,7 +392,7 @@ async function cleanupPendingReplies() {
  * - If action exists, mark as SUCCESS
  * - If action doesn't exist and it's been > 30 minutes, mark as FAILED
  */
-async function cleanupPendingCaws() {
+export async function cleanupPendingCaws() {
   logger.log('Cleaning up stale pending caws...')
 
   try {
@@ -473,25 +473,61 @@ async function cleanupPendingCaws() {
             // No action found after 30 minutes, mark as FAILED
             logger.log(` Marking caw ${pendingCaw.id} as FAILED (pending > 30 min, user ${pendingCaw.userId}, cawonce: ${pendingCaw.cawonce})`)
 
-            await prisma.caw.update({
-              where: { id: pendingCaw.id },
-              data: { status: 'FAILED' }
+            // Claim the row before touching any counter. markTxQueueFailed (the
+            // validator's failure path) may have failed this same row and rolled
+            // its counts back since stalePendingCaws was read above; a plain
+            // update by id would succeed on the already-FAILED row and the
+            // rollback below would then run a second time. Only the caller whose
+            // update actually moves the row out of PENDING rolls the counters back.
+            const claimed = await prisma.caw.updateMany({
+              where: { id: pendingCaw.id, status: 'PENDING' },
+              data: { status: 'FAILED' },
             })
 
-            // If this was a recaw, decrement the parent's recawCount
-            if (pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+            if (claimed.count === 1) {
+              // Undo the optimistic user.cawCount/recawCount bump from creation
+              // (the same PENDING->FAILED rollback txQueueFailure.ts uses). The
+              // parent's recawCount is recomputed below, so originalCawId is null
+              // here. A reply is recognised by its Reply row: the submit path
+              // never bumped user.cawCount for one.
+              const ownReplyForRollback = pendingCaw.originalCawId != null
+                ? await prisma.reply.findFirst({
+                    where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+                    select: { id: true },
+                  })
+                : null
+              await countManager.onStatusChanged(prisma, 'caw', pendingCaw.id, 'PENDING', 'FAILED', {
+                userId: pendingCaw.userId,
+                action: pendingCaw.action,
+                originalCawId: null,
+                isReply: ownReplyForRollback != null,
+              })
+            } else {
+              logger.log(` Caw ${pendingCaw.id} was already moved out of PENDING by another path -- skipping the count rollback`)
+            }
+
+            // If this was a recaw or quote, decrement the parent's recawCount.
+            // CountManager.onCawCreated bumps recawCount for both RECAW and
+            // quote (CAW with originalCawId) -- the recompute here needs to
+            // match, or quotes swept by this stale-pending path never get
+            // their recawCount contribution restored on later confirm.
+            //
+            // action === 'CAW' && originalCawId is ambiguous between quote
+            // and reply -- actionHandlers.ts's upsert sets originalCawId
+            // unconditionally for both. A Reply row (cawId=parent,
+            // replyCawId=this row) is what actually distinguishes a reply;
+            // check that before treating a CAW row as a quote.
+            let isQuoteNotReply = pendingCaw.action === 'RECAW'
+            if (pendingCaw.action === 'CAW' && pendingCaw.originalCawId) {
+              const ownReplyRow = await prisma.reply.findFirst({
+                where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+                select: { id: true },
+              })
+              isQuoteNotReply = !ownReplyRow
+            }
+            if (isQuoteNotReply && pendingCaw.originalCawId) {
               try {
-                const actualRecawCount = await prisma.caw.count({
-                  where: {
-                    originalCawId: pendingCaw.originalCawId,
-                    action: 'RECAW',
-                    status: 'SUCCESS'
-                  }
-                })
-                await prisma.caw.update({
-                  where: { id: pendingCaw.originalCawId },
-                  data: { recawCount: actualRecawCount }
-                })
+                const actualRecawCount = await countManager.recomputeParentRecawCount(prisma, pendingCaw.originalCawId)
                 logger.log(` Updated parent caw ${pendingCaw.originalCawId} recawCount to ${actualRecawCount}`)
               } catch (err) {
                 logger.error(` Failed to update recawCount for parent caw ${pendingCaw.originalCawId}:`, err)
@@ -577,7 +613,7 @@ async function cleanupFailedTxQueue() {
             where: { userId: data.senderId, cawonce: data.cawonce, status: 'PENDING' }
           })
 
-          await prisma.caw.updateMany({
+          const claimedByQueueSweep = await prisma.caw.updateMany({
             where: {
               userId: data.senderId,
               cawonce: data.cawonce,
@@ -588,16 +624,40 @@ async function cleanupFailedTxQueue() {
             }
           })
 
-          // Decrement recawCount on parent if this was a pending recaw
-          if (pendingCaw && pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+          // Roll the sender's counter back only when this update is the one that
+          // moved the row out of PENDING (markTxQueueFailed normally got there
+          // first, in which case there is nothing left to do). The parent's
+          // recawCount is recomputed below, so originalCawId is null here.
+          if (pendingCaw && claimedByQueueSweep.count === 1) {
+            const ownReplyForQueueRollback = pendingCaw.originalCawId != null
+              ? await prisma.reply.findFirst({
+                  where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+                  select: { id: true },
+                })
+              : null
+            await countManager.onStatusChanged(prisma, 'caw', pendingCaw.id, 'PENDING', 'FAILED', {
+              userId: pendingCaw.userId,
+              action: pendingCaw.action,
+              originalCawId: null,
+              isReply: ownReplyForQueueRollback != null,
+            })
+          }
+
+          // Decrement recawCount on parent if this was a pending recaw or
+          // quote -- see the matching comment on the single-action path
+          // above for why quotes need the same treatment, and why the
+          // Reply-table check is required to tell a quote from a reply.
+          let isQuoteNotReplyBatch = pendingCaw ? pendingCaw.action === 'RECAW' : false
+          if (pendingCaw && pendingCaw.action === 'CAW' && pendingCaw.originalCawId) {
+            const ownReplyRow = await prisma.reply.findFirst({
+              where: { cawId: pendingCaw.originalCawId, replyCawId: pendingCaw.id },
+              select: { id: true },
+            })
+            isQuoteNotReplyBatch = !ownReplyRow
+          }
+          if (pendingCaw && isQuoteNotReplyBatch && pendingCaw.originalCawId) {
             try {
-              const actualRecawCount = await prisma.caw.count({
-                where: { originalCawId: pendingCaw.originalCawId, action: 'RECAW', status: 'SUCCESS' }
-              })
-              await prisma.caw.update({
-                where: { id: pendingCaw.originalCawId },
-                data: { recawCount: actualRecawCount }
-              })
+              const actualRecawCount = await countManager.recomputeParentRecawCount(prisma, pendingCaw.originalCawId)
               logger.log(` Updated parent caw ${pendingCaw.originalCawId} recawCount to ${actualRecawCount}`)
             } catch (err) {
               logger.error(` Failed to update recawCount:`, err)
