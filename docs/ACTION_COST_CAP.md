@@ -14,7 +14,7 @@ Action costs in `CawActions.sol` are currently fixed CAW amounts:
 | LIKE    | 2,000            | `CawActions.sol:1099` |
 | RECAW   | 4,000            | `CawActions.sol:1103` |
 | FOLLOW  | 30,000           | `CawActions.sol:1107` |
-| UNLIKE/UNFOLLOW | 1,000    | `CawActions.sol:1126` |
+| UNLIKE/UNFOLLOW | 1,000    | no contract-side charge as of 86dda5e (see below) |
 
 If CAW market cap reaches X/Twitter-scale (~$44B), one CAW is ~$0.664,
 making a single post cost ~$3.32. That's a UX wall the protocol can't
@@ -71,7 +71,7 @@ Properties:
 
 ### Distribution splits (preserved at every price point)
 
-From `CawActions.sol:1085-1126`:
+From `CawActions.sol` (`_getCost` call sites at L1310, L1321, L1327, L1333, L1714):
 
 | Action | Total | Receiver | Depositors | Notes |
 | ------ | ----- | -------- | ---------- | ----- |
@@ -79,17 +79,19 @@ From `CawActions.sol:1085-1126`:
 | LIKE   | 2,000 | 1,600 (80%) | 400 (20%) | |
 | RECAW  | 4,000 | 2,000 (50%) | 2,000 (50%) | |
 | FOLLOW | 30,000 | 24,000 (80%) | 6,000 (20%) | receiver = followee |
-| UNLIKE | 1,000 | 1,000 to validator (100%) | 0 | griefing floor |
-| UNFOLLOW | 1,000 | 1,000 to validator (100%) | 0 | griefing floor |
+| UNLIKE | 0 | 0 | 0 | no contract-side charge (see note below) |
+| UNFOLLOW | 0 | 0 | 0 | no contract-side charge (see note below) |
+
+**UNLIKE/UNFOLLOW no longer charge CAW.** As of `86dda5e`, `CawActions.sol` L1350-1358 treats UNLIKE/UNFOLLOW as a no-op: the off-chain validator tip floor already stops the gas-griefing path the 1,000 CAW transfer used to guard against, so the contract-side charge was removed. The 1,000 CAW baseline shown above now applies to the `ActionType.OTHER` fast path instead (`_getCost(1000, 1e11)` at L1714), not to UNLIKE/UNFOLLOW. `CawCapOracle.sol` still defines `CAP_UNLIKE_UNFOLLOW`; whether anything still reads it is out of scope for this doc fix.
 
 When the cap binds, each of these breakdowns is scaled by
 `scale_num/scale_den` and the percentages preserved.
 
-### Proposed cap values (immutable constants)
+### Cap values (deployed as immutable constants)
 
 Anchor LIKE = $0.001 at ETH = $5,000 (i.e. 2e11 wei). All other caps
 derived by preserving today's baseline CAW ratios from
-`CawActions.sol:1085-1126`:
+`CawActions.sol` (`_getCost` call sites at L1310, L1321, L1327, L1333, L1714):
 
 | Action          | Baseline CAW | Ratio vs LIKE | `max_eth_per_action` (wei) | Notional at ETH=$5k |
 | --------------- | ------------ | ------------- | -------------------------- | ------------------- |
@@ -366,10 +368,10 @@ The contract-side enforcement is the source of truth; FE is UX.
   send sites read that slot instead. Worse failure mode (keeper goes
   down), skip it.
 
-- **Per-action-type cap values.** Numbers above are a strawman. Should
-  be reviewed against the existing baseline ratios and the UX target
-  ($0.001 likes at ETH=$5k) before being baked in as immutable
-  constants.
+- **Per-action-type cap values.** Deployed as shown above, matching
+  the existing baseline ratios and the UX target ($0.001 likes at
+  ETH=$5k). Changing any cap now needs a `CawCapOracle` redeploy,
+  not just a docs update.
 
 ## Related
 
