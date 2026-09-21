@@ -285,21 +285,22 @@ const countManager = {
   //                                   in flight — counts come off now, will
   //                                   come back via PENDING -> SUCCESS-undo
   //                                   if the tx fails)
-  //   FAILED  -> SUCCESS : NO-OP here. Chain confirmed a caw that
-  //                        DataCleaner had previously swept to FAILED.
-  //                        Restoring counts that DataCleaner rolled back
-  //                        (parent.recawCount for RECAW) is done at the
-  //                        handler callsite — see handleRecawAction's
-  //                        FAILED→SUCCESS branch — because it requires a
-  //                        live COUNT(*) recompute that mirrors what
-  //                        DataCleaner does in reverse, and is action-
-  //                        type-specific in a way the generic transition
-  //                        rule can't express.
+  //   FAILED  -> SUCCESS : caw: chain confirmed a caw that an earlier failure
+  //                        path had marked FAILED (DataCleaner's stale-pending
+  //                        sweep, markTxQueueFailed, or the submit path when its
+  //                        optimistic increment failed). The user counter that
+  //                        the PENDING -> FAILED rollback took off is put back
+  //                        here, the exact inverse (a reply never bumped it, so
+  //                        it is skipped both ways). The parent's recawCount is
+  //                        restored by the callsites with a live COUNT(*)
+  //                        recompute (recomputeParentRecawCount), which is
+  //                        right whether the parent was rolled back by a
+  //                        decrement or by a recompute. Other entities: no-op.
   //   All other transitions: log a warning
   //
   // The `meta` parameter carries entity-specific context needed to know
   // WHICH counts to decrement. Shape depends on entity:
-  //   entity='caw':    meta = { userId, action, originalCawId }
+  //   entity='caw':    meta = { userId, action, originalCawId, isReply? }
   //   entity='reply':  meta = { cawId, replyCawId }
   //   entity='like':   meta = { cawId, userId }
   //   entity='follow': meta = { followerId, followingId }
@@ -318,14 +319,30 @@ const countManager = {
       return
     }
 
-    // FAILED -> SUCCESS: chain confirmed an entity that DataCleaner had
-    // previously swept to FAILED. Restoration of any rolled-back counts
-    // (specifically parent.recawCount for plain RECAW; userCawCount is
-    // not touched by DataCleaner) is done at the handler callsite via a
-    // direct COUNT(*) recompute. From CountManager's perspective this
-    // is a logged no-op — keeping the call here means every status
-    // transition flows through one place for log consistency.
+    // FAILED -> SUCCESS: chain confirmed an entity that was marked FAILED
+    // earlier (DataCleaner's stale-pending sweep, markTxQueueFailed, or the
+    // submit path when its optimistic increment failed). For a caw, the
+    // PENDING -> FAILED rollback took the user's counter off, so put it back
+    // here: the exact inverse. A reply never bumped user.cawCount (the submit
+    // path passes isReply to onCawCreated), so it is skipped both ways. The
+    // parent's recawCount is restored by the callsites with a live COUNT(*)
+    // recompute (recomputeParentRecawCount). Other entities keep the
+    // previous logged no-op.
     if (oldStatus === 'FAILED' && newStatus === 'SUCCESS') {
+      if (entity === 'caw') {
+        if (!meta) { warn(`onStatusChanged caw ${id}: missing meta for FAILED -> SUCCESS`); return }
+        const { userId, action, isReply } = meta
+        if (isReply) {
+          log(`caw ${id}: FAILED -> SUCCESS (reply: user counters untouched)`)
+        } else if (action === 'RECAW') {
+          await safeIncrement(tx, 'User', 'tokenId', userId, 'recawCount')
+          log(`recawCount +1 on user ${userId} (caw ${id} confirmed after FAILED)`)
+        } else {
+          await safeIncrement(tx, 'User', 'tokenId', userId, 'cawCount')
+          log(`cawCount +1 on user ${userId} (caw ${id} confirmed after FAILED)`)
+        }
+        return
+      }
       log(`${entity} ${id}: FAILED -> SUCCESS (chain confirmation; count restoration handled at callsite)`)
       return
     }
@@ -446,10 +463,14 @@ const countManager = {
       switch (entity) {
         case 'caw': {
           if (!meta) { warn(`onStatusChanged caw ${id}: missing meta for rollback`); return }
-          const { userId, action, originalCawId } = meta
+          const { userId, action, originalCawId, isReply } = meta
 
-          // Undo user count increment
-          if (action === 'RECAW') {
+          // Undo user count increment. A reply never bumped user.cawCount
+          // (the submit path passes isReply to onCawCreated), so there is
+          // nothing to undo for it.
+          if (isReply) {
+            log(`caw ${id} failed (reply: user counters untouched)`)
+          } else if (action === 'RECAW') {
             await safeDecrement(tx, 'User', 'recawCount', 'tokenId', userId)
             log(`recawCount -1 on user ${userId} (caw ${id} failed)`)
           } else {
@@ -513,6 +534,36 @@ const countManager = {
 
     // Unexpected transition
     warn(`${entity} ${id}: unexpected transition ${oldStatus} -> ${newStatus} — no count change`)
+  },
+
+  // =========================================================================
+  // recomputeParentRecawCount
+  // Set parent.recawCount from its live SUCCESS children: plain RECAWs and
+  // quotes. onCawCreated bumps recawCount for both, so both must be counted,
+  // or recomputing after one kind clobbers the other on a parent that has
+  // both. Replies are excluded through their Reply rows (Caw.originalCawId is
+  // set for quotes and replies alike). An absolute assignment, so it is right
+  // whichever way the parent was rolled back before. Returns the new count.
+  // =========================================================================
+  async recomputeParentRecawCount(tx: TxClient, parentId: number): Promise<number> {
+    const replyRows = await (tx as any).reply.findMany({
+      where: { cawId: parentId },
+      select: { replyCawId: true },
+    })
+    const replyIds: number[] = replyRows.map((r: { replyCawId: number }) => r.replyCawId)
+    const actual: number = await (tx as any).caw.count({
+      where: {
+        originalCawId: parentId,
+        status: 'SUCCESS',
+        OR: [
+          { action: 'RECAW' },
+          { action: 'CAW', ...(replyIds.length > 0 ? { id: { notIn: replyIds } } : {}) },
+        ],
+      },
+    })
+    await (tx as any).caw.update({ where: { id: parentId }, data: { recawCount: actual } })
+    log(`recawCount set to ${actual} on caw ${parentId} (recomputed from SUCCESS children)`)
+    return actual
   },
 
   // =========================================================================

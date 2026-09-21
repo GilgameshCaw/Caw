@@ -170,6 +170,7 @@ async function cleanupOptimisticRows(
           userId: pendingCaw.userId,
           action: pendingCaw.action,
           originalCawId: isReply ? null : pendingCaw.originalCawId,
+          isReply,
         })
       }
     }
