@@ -1,0 +1,11 @@
+-- The TxQueue retention sweep (DataCleaner, utils/txQueuePruning.ts) looks up
+-- final rows by status and updatedAt. Without this index every hourly sweep
+-- reads the whole table.
+--
+-- Not CONCURRENTLY: `prisma migrate deploy` runs each migration file in a
+-- transaction, where CONCURRENTLY is rejected (see 20260514020000_add_feed_indexes).
+-- A node whose TxQueue is already very large can build the index first, by hand
+-- and outside a transaction, so writes are not blocked while it is built:
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS "TxQueue_status_updatedAt_idx" ON "TxQueue" ("status", "updatedAt");
+-- The statement below then does nothing.
+CREATE INDEX IF NOT EXISTS "TxQueue_status_updatedAt_idx" ON "TxQueue" ("status", "updatedAt");
