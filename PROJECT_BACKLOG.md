@@ -765,7 +765,7 @@ wider in scope.
   - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
   - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
 
-- [x] **Scope Elasticsearch indexes per install — RESOLVED.** `ElasticsearchService.ts` derives `cawsIndex`/`usersIndex`/`notificationsIndex` from `ES_INDEX_PREFIX`, used consistently at every call site; no bare `'caws'`/`'users'`/`'notifications'` string remains anywhere else in `client/src`.
+- [x] **Scope Elasticsearch indexes per install — RESOLVED.** `ElasticsearchService.ts` derives `cawsIndex`/`usersIndex` from `ES_INDEX_PREFIX`, used consistently at every call site; no bare `'caws'`/`'users'` string remains anywhere else in `client/src`. (The notifications index this line used to also cover was removed entirely, since nothing read it.)
   - Today `ElasticsearchService.ts` creates flat indexes: `caws`, `users`, `notifications`. Two CAW installs pointing at the same ES cluster (the common case for testnet + mainnet on one VPS) write to the same indexes — search results mix content from both.
   - The CLI already writes `ES_INDEX_PREFIX` to `client/.env` (derived from the domain). Just nothing reads it yet.
   - **Sketch:** add a `prefixedIndex(name: string)` helper inside `ElasticsearchService` that returns `${process.env.ES_INDEX_PREFIX || ''}${name}` (with a separator if prefix is set). Replace every literal `'caws'` / `'users'` / `'notifications'` with the helper. Same for the search-time queries elsewhere (`search.ts`, `notifications.ts`, etc).
