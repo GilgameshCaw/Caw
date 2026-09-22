@@ -102,8 +102,12 @@ The CAW Protocol backend consists of twelve services that work together to manag
 
 ### Indexes
 - **caws** - Content, hashtags, mentions, engagement
-- **notifications** - User notifications with grouping
 - **users** - Profiles with follower counts
+
+Notifications were removed from Elasticsearch entirely: nothing ever read
+the index, so the sync/write path was deleted (see git history around
+"remove the unused notifications sync"). Every notification route reads
+Postgres directly.
 
 ### Key Methods
 ```typescript

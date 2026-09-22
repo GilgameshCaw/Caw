@@ -82,8 +82,8 @@ Postgres/Redis/ES server without colliding:
 - **Redis** — each install gets its own logical DB number (`?db=N`),
   auto-assigned by scanning existing installs.
 - **Elasticsearch** — each install gets its own index prefix
-  (`test_caw_social_*`), derived from the domain, so the flat `caws` / `users` /
-  `notifications` indices don't collide.
+  (`test_caw_social_*`), derived from the domain, so the flat `caws` / `users`
+  indices don't collide.
 - **pm2** processes and **nginx** vhosts are domain-suffixed.
 
 So sharing one box across mirrors is fine until that box itself is the limit —
