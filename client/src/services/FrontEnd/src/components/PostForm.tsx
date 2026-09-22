@@ -2153,7 +2153,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       // Mid-chunk overflow (case B): no-op. The user's textarea still has
       // focus and the browser-maintained selection is correct for where
       // they were typing.
-    } else if (nextCount < prevCount) {
+    } else if (nextCount < prevCount && !(nextCount > 1 && pendingMasterCursorRef.current != null)) {
+      // (A recorded master cursor in thread mode is left to the cursor-restore
+      // effect below, so a mid-chunk deletion keeps the caret in place.)
       // SHRANK. Active chunk merged backward. Cursor at END of the
       // absorbing chunk so the user can keep typing where they left off.
       // Two sub-cases:
@@ -2179,13 +2181,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       } else {
         // Collapsed back to single-textarea mode. The chunk-mode textareas
         // are about to unmount; wait one frame for the single-mode one to
-        // mount and claim the outer textareaRef, then focus it at END.
+        // mount and claim the outer textareaRef, then focus it.
+        // Keep a recorded master cursor (mid-text deletion); else go to END.
+        const mc = pendingMasterCursorRef.current
         requestAnimationFrame(() => {
           const ta = textareaRef.current
           if (ta) {
-            const fullLen = ta.value.length
+            const pos = mc != null ? Math.min(mc, ta.value.length) : ta.value.length
             ta.focus({ preventScroll: true })
-            ta.setSelectionRange(fullLen, fullLen)
+            ta.setSelectionRange(pos, pos)
           }
         })
       }
