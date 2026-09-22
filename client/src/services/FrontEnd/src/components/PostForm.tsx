@@ -2153,7 +2153,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       // Mid-chunk overflow (case B): no-op. The user's textarea still has
       // focus and the browser-maintained selection is correct for where
       // they were typing.
-    } else if (nextCount < prevCount) {
+    } else if (nextCount < prevCount && !(nextCount > 1 && pendingMasterCursorRef.current != null)) {
+      // (A recorded master cursor in thread mode is left to the cursor-restore
+      // effect below, so a mid-chunk deletion keeps the caret in place.)
       // SHRANK. Active chunk merged backward. Cursor at END of the
       // absorbing chunk so the user can keep typing where they left off.
       // Two sub-cases:
@@ -2179,13 +2181,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       } else {
         // Collapsed back to single-textarea mode. The chunk-mode textareas
         // are about to unmount; wait one frame for the single-mode one to
-        // mount and claim the outer textareaRef, then focus it at END.
+        // mount and claim the outer textareaRef, then focus it.
+        // Keep a recorded master cursor (mid-text deletion); else go to END.
+        const mc = pendingMasterCursorRef.current
         requestAnimationFrame(() => {
           const ta = textareaRef.current
           if (ta) {
-            const fullLen = ta.value.length
+            const pos = mc != null ? Math.min(mc, ta.value.length) : ta.value.length
             ta.focus({ preventScroll: true })
-            ta.setSelectionRange(fullLen, fullLen)
+            ta.setSelectionRange(pos, pos)
           }
         })
       }
@@ -2586,38 +2590,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       goNext(xy ? xy.x : null)
     } else if (e.key === 'Backspace' && isAtLogicalStart && i > 0) {
       // Backspace at position 0 of a non-first chunk. Always preventDefault
-      // and hop focus to end of the previous chunk — same intuition as
-      // backspace-at-start in a single textarea (deletes the preceding
-      // newline-equivalent boundary). Two sub-cases:
-      //
-      //   a) Current chunk has content (value.length > 0):
-      //      Merge it backward into the previous chunk via setText. The
-      //      layoutEffect's SHRANK branch then handles focus + cursor.
-      //
-      //   b) Current chunk is empty:
-      //      No merge needed. Just move focus + cursor to end of the
-      //      previous chunk. The empty chunk stays rendered (the splitter
-      //      keeps it as long as the previous chunk is at the cap), but
-      //      the user can keep typing/deleting in the previous chunk.
-      //      When they delete enough from prev chunk to fall under the
-      //      cap, the splitter collapses both chunks and the layoutEffect
-      //      SHRANK branch handles the final cursor.
+      // and hop focus to end of the previous chunk. Chunks are contiguous
+      // slices of `text` (see chunkSlices), so there is no boundary
+      // character to delete: prevSlice + value rebuilds `text` unchanged.
+      // The next Backspace edits the previous chunk normally; once it falls
+      // under the cap, the splitter reflows and the layoutEffect SHRANK
+      // branch handles the final cursor.
       const prevSlice = chunkSlices[i - 1] ?? ''
       const cursorLand = prevSlice.length
       const prevTa = chunkRefs.current[i - 1]
       e.preventDefault()
-      if (value.length > 0) {
-        // Merge sub-case: rebuild master text with this chunk concatenated
-        // onto the previous one.
-        const mergedPrev = prevSlice + value
-        const prevStart = chunkBoundaries[i - 1]
-        const thisEnd = chunkBoundaries[i + 1] ?? text.length
-        const nextText = text.slice(0, prevStart) + mergedPrev + text.slice(thisEnd)
-        setActiveChunkIndex(i - 1)
-        setActiveChunkCursor(cursorLand)
-        setText(nextText)
-      } else if (prevTa) {
-        // Hop sub-case: empty chunk, just move focus.
+      if (prevTa) {
         setActiveChunkIndex(i - 1)
         setActiveChunkCursor(cursorLand)
         prevTa.focus({ preventScroll: true })
