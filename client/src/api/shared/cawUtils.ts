@@ -129,6 +129,8 @@ export interface ShapedCaw {
   parent?: ShapedCaw | null
   imageData?: string
   hasImage?: boolean
+  videoData?: string | null
+  hasVideo?: boolean
   /** Detected source language (BCP-47 primary subtag). Null = not yet
    * detected; the FE falls back to always showing the manual Translate
    * button. Populated lazily the first time any viewer translates the
@@ -230,6 +232,8 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     parent: raw.parent ? shapeCaw(raw.parent) : null,
     imageData: raw.imageData,
     hasImage: raw.hasImage,
+    videoData: raw.videoData,
+    hasVideo: raw.hasVideo,
     sourceLanguage: raw.sourceLanguage ?? null,
     status: raw.status || 'SUCCESS',
     reason: raw.reason,
