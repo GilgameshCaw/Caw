@@ -1,6 +1,5 @@
 import { prisma } from '../prismaClient'
 import { NotificationType, Prisma } from '@prisma/client'
-import { elasticsearchService } from './ElasticsearchService'
 
 /**
  * Derive the persistent-group `targetKey` for a notification. NULL

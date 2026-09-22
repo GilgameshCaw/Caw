@@ -3,15 +3,12 @@ import { prisma } from '../prismaClient'
 import { extractHashtagBodies, MENTION_REGEX, isValidTagBody } from '../tools/hashtagRegex'
 
 // Page sizes for syncAllData()'s cursor-paginated PostgreSQL -> Elasticsearch
-// backfill. Kept small enough that one page's worth of Prisma rows (plus
-// their `include`d relations) stays well under typical max_memory_restart
-// budgets even on nodes with hundreds of thousands of rows. Notification
-// rows carry two includes (actor + caw) and are heaviest, so they get the
-// smallest page. Env-overridable for operators tuning against their own
-// memory ceiling.
+// backfill. Kept small enough that one page's worth of Prisma rows stays
+// well under typical max_memory_restart budgets even on nodes with hundreds
+// of thousands of rows. Env-overridable for operators tuning against their
+// own memory ceiling.
 const USER_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_USER_PAGE_SIZE || '1000', 10)
 const CAW_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_CAW_PAGE_SIZE || '500', 10)
-const NOTIFICATION_SYNC_PAGE_SIZE = parseInt(process.env.ES_SYNC_NOTIFICATION_PAGE_SIZE || '250', 10)
 
 interface CawDocument {
   id: number
@@ -34,20 +31,6 @@ interface CawDocument {
   originalCawId?: number
   createdAt: Date
   updatedAt: Date
-}
-
-interface NotificationDocument {
-  id: number
-  userId: number
-  actorId: number
-  actorUsername: string
-  actorDisplayName?: string
-  type: string
-  cawId?: number
-  cawContent?: string
-  groupKey?: string
-  isRead: boolean
-  createdAt: Date
 }
 
 interface UserDocument {
@@ -73,12 +56,11 @@ class ElasticsearchService {
 
   // Per-install index names. ES_INDEX_PREFIX isolates installs that share one
   // ES cluster (e.g. test.caw.social + test2.caw.social on one box) so their
-  // flat "caws"/"users"/"notifications" indices don't collide. install.sh
+  // flat "caws"/"users" indices don't collide. install.sh
   // derives the prefix from the domain and generate.js writes it to .env;
   // empty prefix (single-install / dev) keeps the original bare names.
   private readonly cawsIndex: string
   private readonly usersIndex: string
-  private readonly notificationsIndex: string
 
   constructor() {
     // Initialize with environment variables or defaults
@@ -95,7 +77,6 @@ class ElasticsearchService {
     const p = rawPrefix ? `${rawPrefix}_` : ''
     this.cawsIndex = `${p}caws`
     this.usersIndex = `${p}users`
-    this.notificationsIndex = `${p}notifications`
 
     this.client = new Client({
       node,
@@ -268,32 +249,6 @@ class ElasticsearchService {
       console.log('[Elasticsearch] Created caws index')
     }
 
-    // Notifications index
-    const notificationsIndexExists = await this.client.indices.exists({ index: this.notificationsIndex })
-    if (!notificationsIndexExists) {
-      await this.client.indices.create({
-        index: this.notificationsIndex,
-        body: {
-          mappings: {
-            properties: {
-              id: { type: 'integer' },
-              userId: { type: 'integer' },
-              actorId: { type: 'integer' },
-              actorUsername: { type: 'keyword' },
-              actorDisplayName: { type: 'text' },
-              type: { type: 'keyword' },
-              cawId: { type: 'integer' },
-              cawContent: { type: 'text' },
-              groupKey: { type: 'keyword' },
-              isRead: { type: 'boolean' },
-              createdAt: { type: 'date' }
-            }
-          }
-        }
-      })
-      console.log('[Elasticsearch] Created notifications index')
-    }
-
     // Users index
     const usersIndexExists = await this.client.indices.exists({ index: this.usersIndex })
     if (!usersIndexExists) {
@@ -371,37 +326,6 @@ class ElasticsearchService {
       })
     } catch (error) {
       console.error('Failed to index caw:', error)
-    }
-  }
-
-  /**
-   * Index a notification document
-   */
-  async indexNotification(notification: any): Promise<void> {
-    if (!this.isConnected) return
-
-    try {
-      const document: NotificationDocument = {
-        id: notification.id,
-        userId: notification.userId,
-        actorId: notification.actorId,
-        actorUsername: notification.actor?.username || '',
-        actorDisplayName: notification.actor?.displayName,
-        type: notification.type,
-        cawId: notification.cawId,
-        cawContent: notification.caw?.content,
-        groupKey: notification.groupKey,
-        isRead: notification.isRead,
-        createdAt: notification.createdAt
-      }
-
-      await this.client.index({
-        index: this.notificationsIndex,
-        id: notification.id.toString(),
-        body: document
-      })
-    } catch (error) {
-      console.error('Failed to index notification:', error)
     }
   }
 
@@ -525,86 +449,6 @@ class ElasticsearchService {
   }
 
   /**
-   * Get grouped notifications using aggregations
-   */
-  async getGroupedNotifications(userId: number, type?: string, limit = 50, offset = 0): Promise<any> {
-    if (!this.isConnected) return null
-
-    try {
-      const must: any[] = [{ term: { userId } }]
-      if (type && type !== 'all') {
-        must.push({ term: { type: type === 'mentions' ? 'MENTION' : type } })
-      }
-
-      // Body cast to any — @elastic/elasticsearch's `bool` typing is overly
-      // strict about `should` accepting an array, but the runtime accepts
-      // both shapes. Mirrors how the rest of this file's search calls work.
-      const response = await this.client.search({
-        index: this.notificationsIndex,
-        body: ({
-          from: offset,
-          size: 0, // We don't want individual hits, just aggregations
-          query: {
-            bool: { must }
-          },
-          aggs: {
-            grouped: {
-              terms: {
-                field: 'groupKey',
-                size: limit,
-                order: { latest: 'desc' }
-              },
-              aggs: {
-                latest: { max: { field: 'createdAt' } },
-                actors: {
-                  top_hits: {
-                    size: 5,
-                    _source: ['actorId', 'actorUsername', 'actorDisplayName'],
-                    sort: [{ createdAt: { order: 'desc' } }]
-                  }
-                },
-                notification_sample: {
-                  top_hits: {
-                    size: 1,
-                    _source: true,
-                    sort: [{ createdAt: { order: 'desc' } }]
-                  }
-                },
-                unread_count: {
-                  filter: { term: { isRead: false } },
-                  aggs: {
-                    count: { value_count: { field: 'id' } }
-                  }
-                }
-              }
-            },
-            ungrouped: {
-              filter: {
-                bool: {
-                  must_not: { exists: { field: 'groupKey' } }
-                }
-              },
-              aggs: {
-                notifications: {
-                  top_hits: {
-                    size: limit,
-                    sort: [{ createdAt: { order: 'desc' } }]
-                  }
-                }
-              }
-            }
-          }
-        } as any)
-      })
-
-      return response
-    } catch (error) {
-      console.error('Failed to get grouped notifications:', error)
-      return null
-    }
-  }
-
-  /**
    * Get trending hashtags
    */
   async getTrendingHashtags(timeRange = '24h', limit = 10): Promise<string[]> {
@@ -646,12 +490,11 @@ class ElasticsearchService {
    * Sync all existing data from PostgreSQL to Elasticsearch.
    *
    * Cursor-paginated (on `id`, never offset/skip) so peak memory is one page,
-   * not the whole table. On a populated node (~94k users, ~94k caws, ~405k
-   * notifications) an unbounded `findMany()` here exhausted the V8 heap
-   * before max_memory_restart fired, crashing mid-sync and re-triggering on
-   * every restart — a persistent crash loop where "Data sync completed"
-   * never printed. Notification rows are heaviest (actor + caw includes),
-   * hence the smaller page size.
+   * not the whole table. On a populated node (~94k users, ~94k caws) an
+   * unbounded `findMany()` here exhausted the V8 heap before
+   * max_memory_restart fired, crashing mid-sync and re-triggering on every
+   * restart — a persistent crash loop where "Data sync completed" never
+   * printed.
    */
   async syncAllData(): Promise<void> {
     if (!this.isConnected) return
@@ -664,9 +507,6 @@ class ElasticsearchService {
 
       const cawCount = await this.syncCawsPaged()
       console.log(`Synced ${cawCount} caws`)
-
-      const notificationCount = await this.syncNotificationsPaged()
-      console.log(`Synced ${notificationCount} notifications`)
 
       console.log('Data sync completed')
     } catch (error) {
@@ -732,42 +572,6 @@ class ElasticsearchService {
       console.log(`[Elasticsearch] synced ${total} caws`)
 
       if (page.length < CAW_SYNC_PAGE_SIZE) break
-    }
-
-    return total
-  }
-
-  /**
-   * Cursor-paginate through `Notification` rows (with `actor` + `caw`
-   * includes — the heaviest of the three, hence the smaller page size),
-   * indexing each page before loading the next.
-   */
-  private async syncNotificationsPaged(): Promise<number> {
-    let cursor: number | undefined
-    let total = 0
-
-    while (true) {
-      const page = await prisma.notification.findMany({
-        take: NOTIFICATION_SYNC_PAGE_SIZE,
-        ...(cursor !== undefined ? { skip: 1, cursor: { id: cursor } } : {}),
-        orderBy: { id: 'asc' },
-        include: {
-          actor: true,
-          caw: true
-        }
-      })
-
-      if (page.length === 0) break
-
-      for (const notification of page) {
-        await this.indexNotification(notification)
-      }
-
-      total += page.length
-      cursor = page[page.length - 1].id
-      console.log(`[Elasticsearch] synced ${total} notifications`)
-
-      if (page.length < NOTIFICATION_SYNC_PAGE_SIZE) break
     }
 
     return total
