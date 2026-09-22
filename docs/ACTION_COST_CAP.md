@@ -10,11 +10,11 @@ Action costs in `CawActions.sol` are currently fixed CAW amounts:
 
 | Action  | Cost (whole CAW) | Source |
 | ------- | ---------------- | ------ |
-| CAW     | 5,000            | `CawActions.sol:1089` |
-| LIKE    | 2,000            | `CawActions.sol:1099` |
-| RECAW   | 4,000            | `CawActions.sol:1103` |
-| FOLLOW  | 30,000           | `CawActions.sol:1107` |
-| UNLIKE/UNFOLLOW | 1,000    | no contract-side charge as of 86dda5e (see below) |
+| CAW     | 5,000            | `CawActions.sol:1310` |
+| LIKE    | 2,000            | `CawActions.sol:1321` |
+| RECAW   | 4,000            | `CawActions.sol:1327` |
+| FOLLOW  | 30,000           | `CawActions.sol:1333` |
+| UNLIKE/UNFOLLOW | 0        | no contract-side charge as of 86dda5e (see below) |
 
 If CAW market cap reaches X/Twitter-scale (~$44B), one CAW is ~$0.664,
 making a single post cost ~$3.32. That's a UX wall the protocol can't
@@ -82,7 +82,7 @@ From `CawActions.sol` (`_getCost` call sites at L1310, L1321, L1327, L1333, L171
 | UNLIKE | 0 | 0 | 0 | no contract-side charge (see note below) |
 | UNFOLLOW | 0 | 0 | 0 | no contract-side charge (see note below) |
 
-**UNLIKE/UNFOLLOW no longer charge CAW.** As of `86dda5e`, `CawActions.sol` L1350-1358 treats UNLIKE/UNFOLLOW as a no-op: the off-chain validator tip floor already stops the gas-griefing path the 1,000 CAW transfer used to guard against, so the contract-side charge was removed. The 1,000 CAW baseline shown above now applies to the `ActionType.OTHER` fast path instead (`_getCost(1000, 1e11)` at L1714), not to UNLIKE/UNFOLLOW. `CawCapOracle.sol` still defines `CAP_UNLIKE_UNFOLLOW`; whether anything still reads it is out of scope for this doc fix.
+**UNLIKE/UNFOLLOW no longer charge CAW.** As of `86dda5e`, `CawActions.sol` L1350-1358 treats UNLIKE/UNFOLLOW as a no-op: the off-chain validator tip floor already stops the gas-griefing path the 1,000 CAW transfer used to guard against, so the contract-side charge was removed. The 1,000 CAW baseline shown above now applies to the `ActionType.OTHER` fast path instead (`_getCost(1000, 1e11)` at L1714), not to UNLIKE/UNFOLLOW. `CawCapOracle.sol` still exposes `CAP_UNLIKE_UNFOLLOW`, `BASELINE_UNLIKE_UNFOLLOW` and the public `capUnlikeUnfollow()` view -- confirmed not called from `CawActions.sol`'s UNLIKE/UNFOLLOW branch (L1350-1358) or from anywhere else in that contract. They are a vestigial piece of the oracle's public API, not something the active charging path depends on; removing them is a contract change, out of scope for this doc fix, but worth flagging so an external integrator reading `CawCapOracle.sol` doesn't infer UNLIKE/UNFOLLOW still has a live 1,000 CAW baseline and cap.
 
 When the cap binds, each of these breakdowns is scaled by
 `scale_num/scale_den` and the percentages preserved.
@@ -95,7 +95,7 @@ derived by preserving today's baseline CAW ratios from
 
 | Action          | Baseline CAW | Ratio vs LIKE | `max_eth_per_action` (wei) | Notional at ETH=$5k |
 | --------------- | ------------ | ------------- | -------------------------- | ------------------- |
-| UNLIKE/UNFOLLOW | 1,000        | 0.5×          | 100,000,000,000 (1e11)     | $0.0005             |
+| OTHER (fast path) | 1,000        | 0.5×          | 100,000,000,000 (1e11)     | $0.0005             |
 | LIKE            | 2,000        | 1×            | 200,000,000,000 (2e11)     | $0.001              |
 | RECAW           | 4,000        | 2×            | 400,000,000,000 (4e11)     | $0.002              |
 | CAW             | 5,000        | 2.5×          | 500,000,000,000 (5e11)     | $0.0025             |
@@ -370,8 +370,15 @@ The contract-side enforcement is the source of truth; FE is UX.
 
 - **Per-action-type cap values.** Deployed as shown above, matching
   the existing baseline ratios and the UX target ($0.001 likes at
-  ETH=$5k). Changing any cap now needs a `CawCapOracle` redeploy,
-  not just a docs update.
+  ETH=$5k). Changing a cap needs more than a `CawCapOracle` redeploy:
+  the same `ethCap` values are separately hard-coded as `_getCost()`
+  arguments in `CawActions.sol` (L1310, 1321, 1327, 1333, 1714), and
+  `CawActions.capOracle` / `CawCapOracle.cawActions` are each
+  `immutable`, set once at construction and pointing at each other.
+  Changing a cap means updating the `_getCost()` arguments in
+  `CawActions.sol` and the `CAP_*` constants in `CawCapOracle.sol` so
+  they agree, then redeploying and re-wiring both contracts -- not
+  just the oracle.
 
 ## Related
 
