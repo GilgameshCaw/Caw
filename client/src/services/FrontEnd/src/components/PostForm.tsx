@@ -991,6 +991,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // replaceChunk commit path instead of setText.
   const makeChunkCompositionUpdate = (i: number) =>
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+      // Same early exit as handleCompositionUpdate: on Gecko and iOS WebKit the
+      // chunk textarea is uncontrolled while composing. Committing interim text
+      // here writes the reading into state against the FROZEN chunk boundaries,
+      // so its tail spills into the next chunk and survives the final commit.
+      if (IS_GECKO || IS_IOS) return
       const ta = e.currentTarget
       // Same iOS-only live-commit / Firefox-lag guard as handleCompositionUpdate.
       // If the composing text (e.data) isn't reflected in ta.value yet, this is
