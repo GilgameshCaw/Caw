@@ -193,6 +193,47 @@ function isActionAlreadyProcessed(s: RuntimeState, blockNumber: bigint, logIndex
 }
 
 /**
+ * True when this sender already has a committed Action in the same block,
+ * from an earlier RawEvent (found via Action/RawEvent, excluded by this
+ * action's own cawonce). A same-block, same-sender action is common (78%
+ * of multi-action groups on this node's data), and when one exists, a
+ * blockTag = blockNumber - 1n read is stale: it predates that action, not
+ * this one, so a refresh queued at blockNumber - 1n would overwrite the
+ * cache with a value one action too old. Cross-referenced against
+ * PR #97's discussion: this only covers actions already written to Action
+ * (this sender's earlier actions in the block), not ones still ahead in
+ * the backlog -- see the WITHDRAW branch's own comment for why the
+ * opposite direction (a LATER action in the same block) isn't checked the
+ * same way.
+ */
+// When this returns true and the refresh is skipped, the earlier action in
+// this block (the one this check found) did not necessarily leave a refresh
+// queued either -- but if IT was also skipped for insufficient balance, its
+// own postCommit callback already called requestOwnershipRefresh(senderId,
+// blockNumber - 1n) with the same block number, so the same read ends up
+// queued from that earlier action instead. Nothing is lost; this skip only
+// avoids re-queuing a read that would just overwrite the same pending
+// request with an equally stale one.
+async function hasEarlierActionInSameBlock(
+  tx: PrismaTransactionClient,
+  chainId: number,
+  senderId: number,
+  blockNumber: bigint,
+  excludeCawonce: number,
+): Promise<boolean> {
+  const rows: any[] = await tx.$queryRaw`
+    SELECT 1 FROM "Action" a
+    JOIN "RawEvent" r ON r.id = a."rawEventId"
+    WHERE a."chainId" = ${chainId}
+      AND a."senderId" = ${senderId}
+      AND r."blockNumber" = ${blockNumber}
+      AND a.cawonce <> ${excludeCawonce}
+    LIMIT 1
+  `
+  return rows.length > 0
+}
+
+/**
  * What step 2 of recordAction() charges the sender on top of the type-specific
  * cost: the extra recipients' amounts (the first recipient of a WITHDRAW is not
  * one) plus the validator tip, the last element of `amounts`. It sizes the
@@ -299,6 +340,7 @@ export function _pendingOwnershipRefreshForTests(): number[] {
 interface RecordParams {
   rawAction: RawAction
   validatorId: number
+  chainId: number
   blockNumber: bigint
   blockTimestamp: Date
   txHash: string
@@ -343,7 +385,7 @@ export async function recordAction(
   // resumes from lastId; we resume from (lastBlock, lastLogIndex).
   if (isActionAlreadyProcessed(s, params.blockNumber, params.logIndex)) return null
 
-  const { rawAction, validatorId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
+  const { rawAction, validatorId, chainId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
   const senderId = Number(rawAction.senderId)
 
   // Local state staging for Post-Commit Mutation pattern.
@@ -441,7 +483,18 @@ export async function recordAction(
         )
         // Skipped: nothing is applied, and nothing is queued from in here. The callback
         // queues the refresh once the transaction has committed, for the state just
-        // before this action (the ledger did not apply it).
+        // before this action (the ledger did not apply it) -- EXCEPT a
+        // blockNumber - 1n read is only "just before this action" when this
+        // sender has no earlier action already committed in this same block;
+        // otherwise it predates that earlier action too, and queuing it would
+        // overwrite the cache with a value one action too old (PR #97 review).
+        if (await hasEarlierActionInSameBlock(tx, chainId, senderId, blockNumber, rawAction.cawonce)) {
+          console.warn(
+            `[StakeLedger] Skipping the chain refresh for senderId=${senderId} at block=${blockNumber} - 1: ` +
+            `this sender has an earlier action already committed in the same block, so that read would be stale.`,
+          )
+          return () => {}
+        }
         return () => requestOwnershipRefresh(senderId, blockNumber - 1n)
       }
       throw err
@@ -509,7 +562,13 @@ export async function recordAction(
     } else {
       senderBal = amount + stepTwoChargeWei(rawAction, true)
       refreshAfterCommit.set(senderId, blockNumber)
-      console.warn(`[StakeLedger] WITHDRAW for unseen sender=${senderId}: assuming pre-withdraw balance == amount + step 2 charge (${senderBal}); ownership is refreshed from chain after commit when the RPC can serve block ${blockNumber}.`)
+      // logIndex is included so a later query against Action/RawEvent can tell
+      // whether this sender had a LATER action in the same block (same query
+      // shape as the before-side check in step 1/step 2's insufficient-balance
+      // handlers, just looking forward instead of back): that would mean this
+      // blockTag read already included that action's effect, and the ledger
+      // will still replay it -- see PR #97's discussion of this approximation.
+      console.warn(`[StakeLedger] WITHDRAW for unseen sender=${senderId}: assuming pre-withdraw balance == amount + step 2 charge (${senderBal}); ownership is refreshed from chain after commit when the RPC can serve block ${blockNumber}. logIndex=${logIndex}.`)
     }
     if (senderBal < amount) {
       // An unseen sender never reaches this branch (handled above), so a
@@ -586,7 +645,14 @@ export async function recordAction(
             `[StakeLedger] INSUFFICIENT_BALANCE_SKIP senderId=${senderId} action=${rawTypeName} (step2, tip send) ` +
             `block=${blockNumber} logIndex=${logIndex} (bal=${senderBalBefore}). Refreshing from chain and skipping this action.`,
           )
-          // Skipped: see the step 1 handler; the callback queues the refresh after the commit.
+          // Skipped: see the step 1 handler, including the same-block guard.
+          if (await hasEarlierActionInSameBlock(tx, chainId, senderId, blockNumber, rawAction.cawonce)) {
+            console.warn(
+              `[StakeLedger] Skipping the chain refresh for senderId=${senderId} at block=${blockNumber} - 1 (step2): ` +
+              `this sender has an earlier action already committed in the same block, so that read would be stale.`,
+            )
+            return () => {}
+          }
           return () => requestOwnershipRefresh(senderId, blockNumber - 1n)
         }
         throw err

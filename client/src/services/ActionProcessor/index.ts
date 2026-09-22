@@ -390,6 +390,7 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
         return await recordAction(tx, {
           rawAction,
           validatorId,
+          chainId,
           blockNumber: raw.blockNumber,
           blockTimestamp: raw.createdAt,
           txHash: raw.transactionHash,

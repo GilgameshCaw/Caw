@@ -49,10 +49,17 @@ function useChain(read: (tokenId: number) => Promise<bigint>): number[] {
   return reads
 }
 
-/** Mock Prisma transaction that records what the ledger writes. */
-function makeTx() {
+/**
+ * Mock Prisma transaction that records what the ledger writes.
+ * hasEarlierAction controls what $queryRaw (hasEarlierActionInSameBlock's
+ * probe) reports: false (default) means "no earlier action in this block",
+ * matching every existing test's scenario, so this default changes nothing
+ * for them.
+ */
+function makeTx(hasEarlierAction = false) {
   const snapshots: any[] = []
   const tx: any = {
+    $queryRaw: async () => (hasEarlierAction ? [{ '?column?': 1 }] : []),
     rewardMultiplierSnapshot: { createMany: async () => ({ count: 0 }) },
     cawOwnershipSnapshot: {
       createMany: async ({ data }: any) => {
@@ -91,6 +98,7 @@ const withdrawAction = (senderId: number, wholeCaw: string, tip = '0') => ({
 const recordParams = (rawAction: any, validatorId = 9) => ({
   rawAction,
   validatorId,
+  chainId: 1,
   blockNumber: 101n,
   blockTimestamp: new Date(0),
   txHash: '0xabc',
@@ -399,5 +407,64 @@ describe('StakeLedger / review follow-ups (post-commit queue, block-pinned refre
     // one position later both go ahead: prefetch reads the unseen tokens
     await L.prefetchOwnershipForAction({ rawAction: likeAction(5, 6) as any, validatorId: 9, blockNumber: 101n, logIndex: 4 })
     expect(reads.length).to.be.greaterThan(0)
+  })
+
+  // nyaromesama's 2026-09-21 09:08Z review, point 5: cawOwnership(id, { blockTag })
+  // gives the ledger's state after the WHOLE block, not after one action. When the
+  // same sender has another action earlier in the same block, a refresh queued at
+  // blockNumber - 1n (the skip-path's "just before this action") is stale -- it
+  // predates that earlier action too. On this node's own data, 78% of the
+  // multi-action (block, sender) groups are exactly this shape (a same-block,
+  // different-tx earlier action), so it's the common case, not an edge case.
+  it('does not queue a chain refresh when the sender has an earlier action already committed in this block', async () => {
+    L._injectStateForTests(makeState())
+    const reads = useChain(async () => W(10_000))
+    const { tx } = makeTx(true) // true: this sender has an earlier Action row in this block
+    const afterCommit = await L.recordAction(tx, recordParams(likeAction(5, 6)))
+    expect(afterCommit).to.be.a('function') // still skipped as insufficient
+    afterCommit!()
+    // No refresh queued: a block - 1 read would predate the sender's earlier
+    // action in this block, not just this one, so it would be stale either way.
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([])
+    await L.flushOwnershipRefreshes()
+    expect(reads).to.deep.equal([]) // never read from chain
+    expect(L._peekState()!.ownership.has(5)).to.equal(false) // cache left untouched
+  })
+
+  it('still queues the chain refresh when the sender has no earlier action in this block (regression guard)', async () => {
+    L._injectStateForTests(makeState())
+    const reads = useChain(async () => W(10_000))
+    const { tx } = makeTx(false) // explicit: no earlier action, same as every other test in this file
+    const afterCommit = await L.recordAction(tx, recordParams(likeAction(5, 6)))
+    expect(afterCommit).to.be.a('function')
+    afterCommit!()
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([5])
+    await L.flushOwnershipRefreshes()
+    expect(L._peekState()!.ownership.get(5)).to.equal(W(10_000))
+  })
+
+  it('does not queue a chain refresh for the step-2 (tip) insufficient-balance skip either, under the same condition', async () => {
+    // OTHER:tip, not WITHDRAW -- a WITHDRAW sender always takes the "unseen"
+    // branch in step 1 (see the WITHDRAW branch above), so it never reaches
+    // this test's scenario: a SEEN sender whose cached balance covers step 1
+    // but comes up short only once step 2's tip is added.
+    L._injectStateForTests(makeState({ ownership: new Map([[29, W(50)]]) })) // enough for the tip target, short for sender's own tip charge
+    const reads = useChain(async () => W(10_000))
+    const { tx } = makeTx(true)
+    const tipAction = {
+      actionType: 7, // OTHER
+      senderId: 29,
+      cawonce: 1,
+      text: 'tip:1',
+      recipients: [31],
+      amounts: ['50', '1000'], // recipient gets 50, validator tip 1000 -- sender can't cover both from W(50)
+    }
+    const afterCommit = await L.recordAction(tx, recordParams(tipAction))
+    expect(afterCommit).to.be.a('function') // skipped as insufficient at step 2
+    afterCommit!()
+    expect(L._pendingOwnershipRefreshForTests()).to.deep.equal([])
+    await L.flushOwnershipRefreshes()
+    expect(reads).to.deep.equal([])
+    expect(L._peekState()!.ownership.get(29)).to.equal(W(50)) // cache left untouched
   })
 })
