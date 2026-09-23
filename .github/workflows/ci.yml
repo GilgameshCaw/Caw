@@ -37,3 +37,25 @@ jobs:
           npm ci
           npx prisma generate
           npx tsc --noEmit
+
+  typecheck-frontend:
+    name: Frontend TypeCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'yarn'
+          cache-dependency-path: 'client/src/services/FrontEnd/yarn.lock'
+
+      - name: Install dependencies & TypeCheck
+        working-directory: ./client/src/services/FrontEnd
+        run: |
+          yarn install --frozen-lockfile
+          yarn typecheck
