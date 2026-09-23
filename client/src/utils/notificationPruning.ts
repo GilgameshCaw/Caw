@@ -162,36 +162,47 @@ async function deleteGroupsInBatches(
   for (let batch = 0; ; batch++) {
     if (batch >= maxBatches || Date.now() >= deadline) return { groupsDeleted: groupsTotal, notificationsDeleted: notifTotal, capped: true }
     const rows: any[] = await prisma.$queryRaw`
+      -- candidate_groups is a snapshot, but a snapshot alone is not
+      -- enough to prevent a race: del_group re-checks isRead/lastEventAt in
+      -- its own WHERE clause -- not just "id IN candidate_groups" -- so a
+      -- concurrent createNotificationWithGroup that bumps a candidate
+      -- group's lastEventAt (via the open-group upsert) and commits before
+      -- del_group's row lock is granted causes the DELETE's row recheck to
+      -- fail under READ COMMITTED, and that group is skipped rather than
+      -- deleted out from under the fresh notification. Without this
+      -- recheck, a group bumped moments before deletion could still be
+      -- removed, leaving the fresh Notification either orphaned (groupId
+      -- set, then nulled by ON DELETE SET NULL, invisible to the bell and
+      -- to every future sweep) or failing its own groupId update with a FK
+      -- violation (non-tx path: create, then a separate
+      -- notification.update({ groupId })). Reported and reproduced with
+      -- two concurrent psql sessions (nyaromesama, PR #151).
+      --
+      -- candidate_notifs now follows del_group's RETURNING ids, not
+      -- candidate_groups: a group the recheck above spares keeps every one
+      -- of its existing members, instead of losing them to del_notif while
+      -- its own row (and displayed count) survives untouched -- the second
+      -- half of the same report.
       WITH candidate_groups AS (
         SELECT "id" FROM "NotificationGroup"
         WHERE "isRead" = ${isRead}
           AND "lastEventAt" < ${cutoff}::timestamp
         LIMIT ${batchSize}
       ),
-      -- Captured before either DELETE runs (Postgres materializes a
-      -- read-only CTE referenced by a data-modifying statement before that
-      -- statement executes), so del_notif below deletes these exact row ids
-      -- regardless of which DELETE the planner happens to run first. This
-      -- matters because Notification.groupId -> NotificationGroup.id is
-      -- ON DELETE SET NULL (see schema): if del_group ran first and this CTE
-      -- searched live rows by "groupId IN (...)" instead of by id, the SET
-      -- NULL would already have cleared groupId and del_notif would match
-      -- nothing, leaving live Notification rows behind that no future sweep
-      -- could find. Matching by id sidesteps that: the row still exists (SET
-      -- NULL clears a column, not the row), so deleting by its captured id
-      -- still works either way.
+      del_group AS (
+        DELETE FROM "NotificationGroup"
+        WHERE "id" IN (SELECT "id" FROM candidate_groups)
+          AND "isRead" = ${isRead}
+          AND "lastEventAt" < ${cutoff}::timestamp
+        RETURNING "id"
+      ),
       candidate_notifs AS (
         SELECT n."id" FROM "Notification" n
-        WHERE n."groupId" IN (SELECT "id" FROM candidate_groups)
+        WHERE n."groupId" IN (SELECT "id" FROM del_group)
       ),
       del_notif AS (
         DELETE FROM "Notification"
         WHERE "id" IN (SELECT "id" FROM candidate_notifs)
-        RETURNING 1
-      ),
-      del_group AS (
-        DELETE FROM "NotificationGroup"
-        WHERE "id" IN (SELECT "id" FROM candidate_groups)
         RETURNING 1
       )
       SELECT
