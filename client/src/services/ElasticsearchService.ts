@@ -739,7 +739,29 @@ class ElasticsearchService {
         ]
       })
 
-      const bulkResponse = await this.client.bulk({ operations })
+      // Same shape as the users bulk fix in #155: the old per-caw indexCaw()
+      // caught its own error and moved on, so syncAllData() (which runs this,
+      // then syncNotificationsPaged() while #150 hasn't landed) never saw a
+      // single caw's failure. A bare bulk() call has no such wrapper, so a
+      // request-level failure (timeout, 413, ES restarting mid-sync) would
+      // throw out of this loop and into syncAllData()'s catch, ending the
+      // whole run before later pages or the notifications leg ever ran.
+      // Catching it here preserves the old log-and-continue behavior.
+      // Item-level failures are unrelated and still handled by the
+      // bulkResponse.errors check below.
+      let bulkResponse
+      try {
+        bulkResponse = await this.client.bulk({ operations })
+      } catch (error) {
+        console.error(
+          `[Elasticsearch] bulk index request failed for caws page (cursor ${cursor ?? 'start'}, ${page.length} rows):`,
+          error
+        )
+        total += page.length
+        cursor = page[page.length - 1].id
+        if (page.length < CAW_SYNC_PAGE_SIZE) break
+        continue
+      }
       if (bulkResponse.errors) {
         const failed = bulkResponse.items.filter((item: any) => item.index?.error)
         console.error(
