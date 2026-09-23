@@ -331,38 +331,46 @@ class ElasticsearchService {
   }
 
   /**
+   * Build the ES document for one caw. Shared by indexCaw() (single-row,
+   * real-time updates from action processor) and syncCawsPaged() (bulk
+   * backfill) so the two paths cannot drift apart on which fields they send.
+   */
+  private buildCawDocument(caw: any): CawDocument {
+    const hashtags = this.extractHashtags(caw.content || '')
+    const mentions = this.extractMentions(caw.content || '')
+
+    return {
+      id: caw.id,
+      userId: caw.userId,
+      username: caw.user?.username || '',
+      displayName: caw.user?.displayName,
+      content: caw.content || '',
+      hashtags,
+      mentions,
+      imageData: caw.imageData,
+      videoData: caw.videoData,
+      hasImage: caw.hasImage || false,
+      hasVideo: caw.hasVideo || false,
+      likeCount: caw.likeCount || 0,
+      repostCount: caw.repostCount || 0,
+      commentCount: caw.commentCount || 0,
+      viewCount: caw.viewCount || 0,
+      bookmarkCount: caw.bookmarkCount || 0,
+      action: caw.action,
+      originalCawId: caw.originalCawId,
+      createdAt: caw.createdAt,
+      updatedAt: caw.updatedAt
+    }
+  }
+
+  /**
    * Index a caw document
    */
   async indexCaw(caw: any): Promise<void> {
     if (!this.isConnected) return
 
     try {
-      // Extract hashtags and mentions
-      const hashtags = this.extractHashtags(caw.content || '')
-      const mentions = this.extractMentions(caw.content || '')
-
-      const document: CawDocument = {
-        id: caw.id,
-        userId: caw.userId,
-        username: caw.user?.username || '',
-        displayName: caw.user?.displayName,
-        content: caw.content || '',
-        hashtags,
-        mentions,
-        imageData: caw.imageData,
-        videoData: caw.videoData,
-        hasImage: caw.hasImage || false,
-        hasVideo: caw.hasVideo || false,
-        likeCount: caw.likeCount || 0,
-        repostCount: caw.repostCount || 0,
-        commentCount: caw.commentCount || 0,
-        viewCount: caw.viewCount || 0,
-        bookmarkCount: caw.bookmarkCount || 0,
-        action: caw.action,
-        originalCawId: caw.originalCawId,
-        createdAt: caw.createdAt,
-        updatedAt: caw.updatedAt
-      }
+      const document = this.buildCawDocument(caw)
 
       await this.client.index({
         index: this.cawsIndex,
@@ -723,8 +731,21 @@ class ElasticsearchService {
 
       if (page.length === 0) break
 
-      for (const caw of page) {
-        await this.indexCaw(caw)
+      const operations = page.flatMap((caw) => {
+        const document = this.buildCawDocument(caw)
+        return [
+          { index: { _index: this.cawsIndex, _id: caw.id.toString() } },
+          document
+        ]
+      })
+
+      const bulkResponse = await this.client.bulk({ operations })
+      if (bulkResponse.errors) {
+        const failed = bulkResponse.items.filter((item: any) => item.index?.error)
+        console.error(
+          `[Elasticsearch] ${failed.length}/${page.length} caws failed to bulk index; first error:`,
+          failed[0]?.index?.error
+        )
       }
 
       total += page.length
