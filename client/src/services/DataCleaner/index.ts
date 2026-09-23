@@ -15,6 +15,7 @@ import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '.
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
 import { NotificationService } from '../NotificationService'
+import { cleanStaleNotifications, parseRetentionDays as parseNotificationRetentionDays, DEFAULT_READ_RETENTION_DAYS, DEFAULT_UNREAD_RETENTION_DAYS } from '../../utils/notificationPruning'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -1369,6 +1370,11 @@ async function runDataCleanup() {
   // doesn't churn a readdir+stat over every cached PNG that often.
   await sweepOgCacheTask()
 
+  // Delete final Notification/NotificationGroup rows that are past their
+  // retention window (see utils/notificationPruning.ts). Throttled to once
+  // an hour.
+  await sweepNotificationsTask()
+
   logger.log('All cleanup tasks completed')
 }
 
@@ -1393,6 +1399,37 @@ async function sweepOgCacheTask() {
     }
   } catch (err: any) {
     logger.error(`OG cache sweep error: ${err?.message || err}`)
+  }
+}
+
+// Throttle: the notification retention sweep runs at most once an hour so the
+// one-minute ticks do not run a bulk delete every time. The windows come from
+// NOTIFICATION_READ_RETENTION_DAYS (default 30) and
+// NOTIFICATION_UNREAD_RETENTION_DAYS (default 90); "off" switches a group off.
+// A value that is set but not usable also switches that group off, and is
+// logged, so a typo never deletes data. One run has a batch and time budget
+// (see utils/notificationPruning.ts), so a large backlog is cleared over
+// several runs instead of holding up this loop.
+let lastNotificationSweep = 0
+const NOTIFICATION_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
+
+async function sweepNotificationsTask() {
+  const now = Date.now()
+  if (now - lastNotificationSweep < NOTIFICATION_SWEEP_INTERVAL) return
+  lastNotificationSweep = now
+  try {
+    const read = parseNotificationRetentionDays(process.env.NOTIFICATION_READ_RETENTION_DAYS, DEFAULT_READ_RETENTION_DAYS)
+    const unread = parseNotificationRetentionDays(process.env.NOTIFICATION_UNREAD_RETENTION_DAYS, DEFAULT_UNREAD_RETENTION_DAYS)
+    if (!read.valid) {
+      logger.error(`NOTIFICATION_READ_RETENTION_DAYS="${process.env.NOTIFICATION_READ_RETENTION_DAYS}" is not a whole number of days (1 or more) or "off"; read groups are NOT pruned until it is fixed`)
+    }
+    if (!unread.valid) {
+      logger.error(`NOTIFICATION_UNREAD_RETENTION_DAYS="${process.env.NOTIFICATION_UNREAD_RETENTION_DAYS}" is not a whole number of days (1 or more) or "off"; unread groups are NOT pruned until it is fixed`)
+    }
+    const res = await cleanStaleNotifications({ readDays: read.days, unreadDays: unread.days })
+    logger.log(`Notification sweep: readGroupsDeleted=${res.readGroupsDeleted} unreadGroupsDeleted=${res.unreadGroupsDeleted} notificationsDeleted=${res.notificationsDeleted}${res.capped ? ' (stopped at the per-run limit; the rest waits for the next run)' : ''}`)
+  } catch (err: any) {
+    logger.error(`Notification sweep error: ${err?.message || err}`)
   }
 }
 
