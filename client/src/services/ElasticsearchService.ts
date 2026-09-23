@@ -406,6 +406,27 @@ class ElasticsearchService {
   }
 
   /**
+   * Build the ES document for one user, given their follower/following
+   * counts. Shared by indexUser() (single-row, real-time updates) and
+   * syncUsersPaged() (bulk backfill) so the two paths cannot drift apart
+   * on which fields they send.
+   */
+  private buildUserDocument(user: any, followerCount: number, followingCount: number): UserDocument {
+    return {
+      tokenId: user.tokenId,
+      username: user.username,
+      displayName: user.displayName,
+      bio: user.bio,
+      avatarUrl: user.avatarUrl,
+      followerCount,
+      followingCount,
+      cawCount: user.cawCount || 0,
+      verified: user.verified || false,
+      createdAt: user.createdAt
+    }
+  }
+
+  /**
    * Index a user document
    */
   async indexUser(user: any): Promise<void> {
@@ -420,18 +441,7 @@ class ElasticsearchService {
         where: { followerId: user.tokenId }
       })
 
-      const document: UserDocument = {
-        tokenId: user.tokenId,
-        username: user.username,
-        displayName: user.displayName,
-        bio: user.bio,
-        avatarUrl: user.avatarUrl,
-        followerCount,
-        followingCount,
-        cawCount: user.cawCount || 0,
-        verified: user.verified || false,
-        createdAt: user.createdAt
-      }
+      const document = this.buildUserDocument(user, followerCount, followingCount)
 
       await this.client.index({
         index: this.usersIndex,
@@ -691,8 +701,59 @@ class ElasticsearchService {
 
       if (page.length === 0) break
 
-      for (const user of page) {
-        await this.indexUser(user)
+      // Follower/following counts are the same (userId, no status filter)
+      // query indexUser() already ran once per user -- batched here into two
+      // groupBy calls for the whole page instead of 2 * page.length individual
+      // prisma.follow.count() calls (tencawffee.com: verified this matches
+      // the per-user counts exactly, across all 54 of that node's users).
+      const ids = page.map((u) => u.tokenId)
+      const [followerRows, followingRows] = await Promise.all([
+        prisma.follow.groupBy({ by: ['followingId'], where: { followingId: { in: ids } }, _count: { _all: true } }),
+        prisma.follow.groupBy({ by: ['followerId'], where: { followerId: { in: ids } }, _count: { _all: true } })
+      ])
+      const followerCountByTokenId = new Map(followerRows.map((r) => [r.followingId, r._count._all]))
+      const followingCountByTokenId = new Map(followingRows.map((r) => [r.followerId, r._count._all]))
+
+      const operations = page.flatMap((user) => {
+        const document = this.buildUserDocument(
+          user,
+          followerCountByTokenId.get(user.tokenId) ?? 0,
+          followingCountByTokenId.get(user.tokenId) ?? 0
+        )
+        return [
+          { index: { _index: this.usersIndex, _id: user.tokenId.toString() } },
+          document
+        ]
+      })
+
+      // The old per-user indexUser() call had its own try/catch: a failure
+      // logged and moved on to the next user, and syncAllData() (which runs
+      // this, then syncCawsPaged()) never saw it. A bulk() call has no such
+      // wrapper by default, so a request-level failure (timeout, 413,
+      // ES restarting mid-sync) would otherwise throw out of this loop and
+      // into syncAllData()'s catch, ending the whole sync run before the
+      // caws leg ever starts. Catching it here preserves the old
+      // log-and-continue behavior. Item-level failures are unrelated and
+      // still handled by the bulkResponse.errors check below.
+      let bulkResponse
+      try {
+        bulkResponse = await this.client.bulk({ operations })
+      } catch (error) {
+        console.error(
+          `[Elasticsearch] bulk index request failed for users page (cursor ${cursor ?? 'start'}, ${page.length} rows):`,
+          error
+        )
+        total += page.length
+        cursor = page[page.length - 1].id
+        if (page.length < USER_SYNC_PAGE_SIZE) break
+        continue
+      }
+      if (bulkResponse.errors) {
+        const failed = bulkResponse.items.filter((item: any) => item.index?.error)
+        console.error(
+          `[Elasticsearch] ${failed.length}/${page.length} users failed to bulk index; first error:`,
+          failed[0]?.index?.error
+        )
       }
 
       total += page.length
