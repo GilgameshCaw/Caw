@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+# Automatically cancel out-of-date runs when a branch is updated
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: TypeScript TypeCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'client/package-lock.json'
+
+      - name: Install dependencies & TypeCheck
+        working-directory: ./client
+        run: |
+          npm ci
+          npx prisma generate
+          npx tsc --noEmit
+
+  typecheck-frontend:
+    name: Frontend TypeCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'yarn'
+          cache-dependency-path: 'client/src/services/FrontEnd/yarn.lock'
+
+      - name: Install dependencies & TypeCheck
+        working-directory: ./client/src/services/FrontEnd
+        run: |
+          yarn install --frozen-lockfile
+          yarn typecheck
