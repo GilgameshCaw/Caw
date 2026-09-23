@@ -1192,7 +1192,7 @@ router.get('/:username', async (req, res) => {
       { content: { contains: 'tenor.com', mode: 'insensitive' as const } },
     ]
 
-    const [replyCount, mediaCount] = await Promise.all([
+    const [replyCount, mediaCount, postCount] = await Promise.all([
       prisma.caw.count({
         where: {
           userId: user.tokenId,
@@ -1206,6 +1206,21 @@ router.get('/:username', async (req, res) => {
           userId: user.tokenId,
           status: 'SUCCESS',
           OR: mediaConditions,
+        }
+      }),
+      // Top-level posts and quotes, counted from the rows rather than taken
+      // from user.cawCount. The cached counter drifted on existing nodes
+      // (replies counted before isReply was passed, hides never decremented
+      // before onCawHidden), so subtracting replyCount from it was only right
+      // while every reply was still in it. A reply is told apart from a quote
+      // by its Reply row, not by originalCawId, which both set. PENDING is
+      // included to match what CountManager counts optimistically.
+      prisma.caw.count({
+        where: {
+          userId: user.tokenId,
+          action: { not: 'RECAW' },
+          status: { in: ['SUCCESS', 'PENDING'] },
+          isReplyTo: { none: {} },
         }
       }),
     ])
@@ -1260,7 +1275,7 @@ router.get('/:username', async (req, res) => {
 
     const response = {
       ...user,
-      cawCount: Math.max(0, user.cawCount - replyCount) + (user.recawCount || 0),
+      cawCount: postCount + (user.recawCount || 0),
       recawCount: user.recawCount || 0,
       followerCount: actualFollowerCount,
       followingCount: actualFollowingCount,
