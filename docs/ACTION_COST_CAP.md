@@ -14,7 +14,7 @@ Action costs in `CawActions.sol` are currently fixed CAW amounts:
 | LIKE    | 2,000            | `CawActions.sol:1321` |
 | RECAW   | 4,000            | `CawActions.sol:1327` |
 | FOLLOW  | 30,000           | `CawActions.sol:1333` |
-| UNLIKE/UNFOLLOW | 0        | no contract-side charge as of 86dda5e (see below) |
+| UNLIKE/UNFOLLOW | 0        | no contract-side charge since 087b0cfd (see below) |
 
 If CAW market cap reaches X/Twitter-scale (~$44B), one CAW is ~$0.664,
 making a single post cost ~$3.32. That's a UX wall the protocol can't
@@ -82,7 +82,7 @@ From `CawActions.sol` (`_getCost` call sites at L1310, L1321, L1327, L1333, L171
 | UNLIKE | 0 | 0 | 0 | no contract-side charge (see note below) |
 | UNFOLLOW | 0 | 0 | 0 | no contract-side charge (see note below) |
 
-**UNLIKE/UNFOLLOW no longer charge CAW.** As of `86dda5e`, `CawActions.sol` L1350-1358 treats UNLIKE/UNFOLLOW as a no-op: the off-chain validator tip floor already stops the gas-griefing path the 1,000 CAW transfer used to guard against, so the contract-side charge was removed. The 1,000 CAW baseline shown above now applies to the `ActionType.OTHER` fast path instead (`_getCost(1000, 1e11)` at L1714), not to UNLIKE/UNFOLLOW. `CawCapOracle.sol` still exposes `CAP_UNLIKE_UNFOLLOW`, `BASELINE_UNLIKE_UNFOLLOW` and the public `capUnlikeUnfollow()` view -- confirmed not called from `CawActions.sol`'s UNLIKE/UNFOLLOW branch (L1350-1358) or from anywhere else in that contract. They are a vestigial piece of the oracle's public API, not something the active charging path depends on; removing them is a contract change, out of scope for this doc fix, but worth flagging so an external integrator reading `CawCapOracle.sol` doesn't infer UNLIKE/UNFOLLOW still has a live 1,000 CAW baseline and cap.
+**UNLIKE/UNFOLLOW no longer charge CAW.** Since `087b0cfd`, `CawActions.sol` L1350-1358 treats UNLIKE/UNFOLLOW as a no-op: the off-chain validator tip floor already stops the gas-griefing path the 1,000 CAW transfer used to guard against, so the contract-side charge was removed. The 1,000 CAW baseline shown above now applies to the `ActionType.OTHER` fast path instead (`_getCost(1000, 1e11)` at L1714), not to UNLIKE/UNFOLLOW. `CawCapOracle.sol` still exposes `CAP_UNLIKE_UNFOLLOW`, `BASELINE_UNLIKE_UNFOLLOW` and the public `capUnlikeUnfollow()` view -- confirmed not called from `CawActions.sol`'s UNLIKE/UNFOLLOW branch (L1350-1358) or from anywhere else in that contract. They are a vestigial piece of the oracle's public API, not something the active charging path depends on; removing them is a contract change, out of scope for this doc fix, but worth flagging so an external integrator reading `CawCapOracle.sol` doesn't infer UNLIKE/UNFOLLOW still has a live 1,000 CAW baseline and cap.
 
 When the cap binds, each of these breakdowns is scaled by
 `scale_num/scale_den` and the percentages preserved.
