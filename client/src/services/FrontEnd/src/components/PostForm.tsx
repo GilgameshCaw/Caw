@@ -1189,6 +1189,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         if (mediaBlock) {
           if (isThreadMode && mediaPosition === 'end') {
             // Media appended after splitting.
+          } else if (isThreadMode) {
+            // 'start': lead the text with the media so the splitter keeps it in
+            // chunk 1 (the char counter reserves it there). Appending here would
+            // carry it into the last chunk.
+            finalText = mediaUrls.join('\n') + '\n' + finalText
           } else {
             finalText = finalText + mediaBlock
           }
@@ -1458,6 +1463,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     if (mediaBlock) {
       if (isThreadMode && mediaPosition === 'end') {
         // Media will be appended to the last chunk after splitting
+      } else if (isThreadMode) {
+        // 'start': lead the text with the media so the splitter keeps it in
+        // chunk 1, where getChunkInfo() reserves it (firstChunkMediaCost).
+        // Appending here would carry it into the last chunk.
+        finalText = mediaUrls.join('\n') + '\n' + finalText
       } else {
         finalText = finalText + mediaBlock
       }
