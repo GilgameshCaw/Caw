@@ -56,18 +56,24 @@ contract CawCapOracle {
   uint256 private constant BUFFER_MASK = BUFFER_SIZE - 1;
 
   /// @notice Per-action ETH-denominated cost ceilings (in wei).
-  ///         Anchored to LIKE = $0.01 at ETH = $5,000 (i.e. 2e11 wei),
+  ///         Anchored to LIKE = $0.001 at ETH = $5,000 (i.e. 2e11 wei),
   ///         other actions ratioed off LIKE using the baseline CAW
   ///         amounts defined in CawActions.
   ///
-  ///         Values are immutable. If protocol economics need to change, the
-  ///         oracle is redeployed (cap-only — the protocol works fine without
-  ///         the oracle).
-  uint256 public constant CAP_LIKE              =   2e11; //  $0.01 @ ETH=$5k
-  uint256 public constant CAP_RECAW             =   4e11; //  $0.02
-  uint256 public constant CAP_CAW               =   5e11; //  $0.025
-  uint256 public constant CAP_FOLLOW            =  30e11; //  $0.15
-  uint256 public constant CAP_UNLIKE_UNFOLLOW   =   1e11; //  $0.005
+  ///         Values are immutable. They are also hard-coded, separately, as the
+  ///         `_getCost()` ethCap arguments in CawActions.sol, and
+  ///         `CawActions.capOracle` / `CawCapOracle.cawActions` are each
+  ///         immutable. Changing a cap therefore means updating both files so
+  ///         they agree and redeploying + re-wiring both contracts, not just
+  ///         redeploying this oracle. (The protocol still works without the
+  ///         oracle: `capOracle == address(0)` leaves the cap dormant.)
+  uint256 public constant CAP_LIKE              =   2e11; //  $0.001 @ ETH=$5k
+  uint256 public constant CAP_RECAW             =   4e11; //  $0.002
+  uint256 public constant CAP_CAW               =   5e11; //  $0.0025
+  uint256 public constant CAP_FOLLOW            =  30e11; //  $0.015
+  // Not read by CawActions: UNLIKE/UNFOLLOW carry no contract-side charge
+  // since 087b0cfd. Kept for public-API compatibility (capUnlikeUnfollow()).
+  uint256 public constant CAP_UNLIKE_UNFOLLOW   =   1e11; //  $0.0005
 
   /// @notice Baseline CAW amounts per action (the manifesto numbers).
   ///         Mirrored from CawActions for the scale computation. Must remain
