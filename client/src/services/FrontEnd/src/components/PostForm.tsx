@@ -1389,12 +1389,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
-          setUploadProgress(null)
-          return
+          throw new Error('Image upload failed')
         }
       } catch (error) {
-        setUploadProgress(null)
-        return
+        // Rethrow to handleSubmit's catch, which shows a toast and whose
+        // finally clears uploadProgress. A bare return here left the user
+        // back on the Post button with no message (e.g. an image over the
+        // 1MB cap). The scheduled path already surfaces the same failure.
+        throw error
       }
     }
 
@@ -1419,12 +1421,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
-          setUploadProgress(null)
-          return
+          throw new Error('Video upload failed')
         }
       } catch (error) {
-        setUploadProgress(null)
-        return
+        // Same as the image upload above: surface it via handleSubmit's catch.
+        throw error
       }
     }
     // Clear before the signing phase begins so the button can flip to
