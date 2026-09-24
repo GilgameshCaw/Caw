@@ -673,6 +673,20 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     return () => window.removeEventListener('scroll', onScroll)
   }, [loadPage, loading, hasMore, nextCursor])
 
+  // The scroll listener above only fires when the window can scroll. A page
+  // can come back with nothing the filters let through (e.g. the 20 newest
+  // rows are all continuations of one long thread, which the home feed
+  // hides) or with too little to overflow the viewport; then no scroll event
+  // ever arrives and the next page is never requested. Keep pulling pages
+  // until the list overflows the viewport or the feed runs out. Skip on
+  // error so a failing request isn't retried in a loop.
+  useEffect(() => {
+    if (loading || error || !hasMore || nextCursor == null) return
+    const fillsViewport =
+      document.documentElement.offsetHeight > window.innerHeight + 200
+    if (filteredItems.length === 0 || !fillsViewport) loadPage()
+  }, [filteredItems.length, loading, error, hasMore, nextCursor, loadPage])
+
   // Unified polling for all pending states.
   // Uses itemsRef to avoid tearing down/recreating intervals on every items change,
   // which was causing cascading re-renders and UI flashing (e.g. SuggestedUsers).
@@ -807,7 +821,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     }
     return <div className="text-gray-400 text-center py-8">{t('feed.empty.no_posts')}</div>
   }
-  if (filteredItems.length === 0 && !hasPending) return <div className="text-gray-400 text-center py-8">{t('feed.empty.all_filtered')}</div>
+  if (filteredItems.length === 0 && !hasPending) {
+    // Everything loaded so far is hidden, but more pages exist: the effect
+    // above is fetching them, so show progress rather than "nothing here".
+    if (hasMore && !error) return <LoadingSpinner />
+    return <div className="text-gray-400 text-center py-8">{t('feed.empty.all_filtered')}</div>
+  }
 
   return (
     <div>
