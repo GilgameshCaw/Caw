@@ -193,10 +193,16 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       select: { address: true },
     })
     const dmConversationsPromise = prisma.conversation.findMany({
-      where: { participants: { some: { userId } } },
+      // leftAt: null -- a conversation the user has left is hidden from
+      // their DM list (DmService applies the same filter), so its
+      // unreadCount must not count toward this badge either: without
+      // this, a new message in a left group keeps bumping unreadCount on
+      // a conversation the user can never open to mark read, leaving a
+      // ghost badge that never clears.
+      where: { participants: { some: { userId, leftAt: null } } },
       select: {
         id: true,
-        participants: { where: { userId }, select: { unreadCount: true } },
+        participants: { where: { userId, leftAt: null }, select: { unreadCount: true } },
       },
     })
 
