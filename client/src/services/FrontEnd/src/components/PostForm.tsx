@@ -518,7 +518,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
-  const frozenChunksRef = useRef<{ chunkCount: number; chunkBoundaries: number[] } | null>(null)
+  const frozenChunksRef = useRef<{ chunkCount: number; chunkBoundaries: number[]; textLen: number } | null>(null)
+  // Which chunk the open composition is in (recorded at compositionstart).
+  const composingChunkRef = useRef(0)
   // Firefox hands us e.currentTarget.value === "" at compositionend even though
   // the composition succeeded — the composed text only appears on the `input`
   // events fired DURING composition, which React then reverts on the controlled
@@ -896,7 +898,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // IME session open — mark our own composition flag so handleTextChange
   // can defer commit reliably, without trusting e.nativeEvent.isComposing
   // (which Android WebView mis-reports for plain Latin typing).
-  const handleCompositionStart = () => {
+  const handleCompositionStart = (chunkIdx = 0) => {
+    composingChunkRef.current = chunkIdx
     // A snapshot left by an earlier non-composing keystroke (Backspace, a
     // space, punctuation) is only consumed when the chunk count grows, so it
     // can still be sitting here when a composition starts. Drop it: the
@@ -2018,9 +2021,21 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     firstChunkMediaCost + firstChunkPollCost,
     lastChunkMediaCost + lastChunkPollCost,
   )
-  if (!isComposingRef.current) frozenChunksRef.current = rawChunkInfo
-  const { chunkCount, chunkBoundaries } =
-    (isComposingRef.current && frozenChunksRef.current) ? frozenChunksRef.current : rawChunkInfo
+  if (!isComposingRef.current) frozenChunksRef.current = { ...rawChunkInfo, textLen: text.length }
+  // Freeze the layout, but let the composing chunk grow or shrink: shift every
+  // boundary after it by the change in text length. Blink stays controlled and
+  // commits each composing keystroke, so without this a composition in a
+  // middle chunk pushes its own tail into the next chunk, the slice no longer
+  // matches the DOM, and React rewrites the value mid-composition. (The last
+  // chunk has no later boundary, which is why it was unaffected.)
+  const held = isComposingRef.current ? frozenChunksRef.current : null
+  const { chunkCount, chunkBoundaries } = held
+    ? {
+        chunkCount: held.chunkCount,
+        chunkBoundaries: held.chunkBoundaries.map((b, j) =>
+          j > composingChunkRef.current ? b + (text.length - held.textLen) : b),
+      }
+    : rawChunkInfo
 
   // ---------------------------------------------------------------------------
   // Per-chunk slices (marker-stripped) for the N-textarea thread UI.
@@ -2831,7 +2846,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           setActiveChunkIndex(i)
                           setActiveChunkCursor(localCursor)
                         }}
-                        onCompositionStart={handleCompositionStart}
+                        onCompositionStart={() => handleCompositionStart(i)}
                         onCompositionEnd={makeChunkCompositionEnd(i)}
                         onCompositionUpdate={makeChunkCompositionUpdate(i)}
                         onClick={(e) => {
@@ -3418,7 +3433,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       setActiveChunkIndex(i)
                       setActiveChunkCursor(localCursor)
                     }}
-                    onCompositionStart={handleCompositionStart}
+                    onCompositionStart={() => handleCompositionStart(i)}
                     onCompositionEnd={makeChunkCompositionEnd(i)}
                     onCompositionUpdate={makeChunkCompositionUpdate(i)}
                     onClick={(e) => {
