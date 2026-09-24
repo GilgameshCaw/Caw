@@ -897,6 +897,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // can defer commit reliably, without trusting e.nativeEvent.isComposing
   // (which Android WebView mis-reports for plain Latin typing).
   const handleCompositionStart = () => {
+    // A snapshot left by an earlier non-composing keystroke (Backspace, a
+    // space, punctuation) is only consumed when the chunk count grows, so it
+    // can still be sitting here when a composition starts. Drop it: the
+    // cursor-restore guard lets a render through whenever a snapshot exists,
+    // and a restore mid-composition collapses the composing range, so the
+    // conversion inserts instead of replacing (the reading doubles).
+    preInputStateRef.current = null
     isComposingRef.current = true
     lastComposedRef.current = null
   }
@@ -2229,12 +2236,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // observed as "second time entering thread mode, focus is lost."
     const skipThisRender = cursorRestoreSkipRef.current
     cursorRestoreSkipRef.current = false
-    // While an IME composition is open the browser owns the composing
-    // range. focus() + a collapsed setSelectionRange() destroys it, so the
-    // next conversion INSERTS instead of replacing the reading (observed as
-    // duplicated text). Leave pendingMasterCursorRef intact — the render
-    // after compositionend restores the caret correctly.
-    if (isComposingRef.current) return
     if (!isThreadMode) {
       // Also drop any pending master cursor on the way out — it was set
       // for a chunk layout that no longer exists.
