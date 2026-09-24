@@ -185,6 +185,92 @@ function splitTextIntoChunks(text: string, includePageIndicators: boolean): stri
 }
 
 /**
+ * Build thread chunks for mediaPosition === 'start'. The media refs are never
+ * handed to the splitter, so a URL can't be cut at a byte boundary.
+ *
+ * - If the joined media block fits in chunk 1 (after its page indicator and
+ *   `firstChunkReserved`), chunk 1 is `media + '\n' + the first slice of body`.
+ * - Otherwise the media refs are packed whole, one ref never split, into as
+ *   many leading media-only chunks as needed, and the body follows.
+ *
+ * Page indicators are assigned only after the total is known, iterating until
+ * the total is stable (an extra digit in "(N/M) " can change the split).
+ * `firstChunkReserved` keeps room in chunk 1 for a poll marker the caller
+ * attaches afterwards. Throws if a single media ref can't fit in a post.
+ */
+function splitThreadWithLeadingMedia(
+  body: string,
+  mediaRefs: string[],
+  includePageIndicators: boolean,
+  firstChunkReserved = 0,
+): string[] {
+  const media = mediaRefs.join('\n')
+  let total = 1
+  let chunks: string[] = []
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const ind = (i: number) => (includePageIndicators && total > 1 ? `(${i + 1}/${total}) ` : '')
+    const cap = (i: number) => POST_CHAR_LIMIT - ind(i).length - (i === 0 ? firstChunkReserved : 0)
+    const parts: string[] = []
+    let remaining = body
+
+    if (byteLen(media) <= cap(0)) {
+      // Media shares chunk 1 with the start of the body.
+      if (remaining.length === 0) {
+        parts.push(media)
+      } else {
+        const room = cap(0) - byteLen(media) - 1 // -1 for the separating newline
+        const splitAt = room > 0 ? findSplitPoint(remaining, room) : 0
+        if (splitAt > 0) {
+          parts.push(media + '\n' + remaining.slice(0, splitAt))
+          remaining = remaining.slice(splitAt).trimStart()
+        } else {
+          parts.push(media)
+        }
+      }
+    } else {
+      // Pack whole refs into media-only chunks.
+      let current = ''
+      for (const ref of mediaRefs) {
+        const next = current ? current + '\n' + ref : ref
+        if (byteLen(next) <= cap(parts.length)) {
+          current = next
+          continue
+        }
+        if (!current) throw new Error('A media link is longer than a single post and cannot be placed in a thread.')
+        parts.push(current)
+        current = ref
+        if (byteLen(current) > cap(parts.length)) {
+          throw new Error('A media link is longer than a single post and cannot be placed in a thread.')
+        }
+      }
+      if (current) parts.push(current)
+    }
+
+    while (remaining.length > 0) {
+      const limit = cap(parts.length)
+      if (byteLen(remaining) <= limit) {
+        parts.push(remaining)
+        break
+      }
+      const splitAt = findSplitPoint(remaining, limit)
+      parts.push(remaining.slice(0, splitAt))
+      remaining = remaining.slice(splitAt).trimStart()
+    }
+
+    chunks = parts.map((c, i) => ind(i) + c)
+    if (parts.length === total) break
+    total = parts.length
+  }
+  // Last-line check: nothing we hand to the signer may exceed the on-chain limit.
+  // The poll marker (if any) is attached by the caller into firstChunkReserved.
+  chunks.forEach((c, i) => {
+    const limit = POST_CHAR_LIMIT - (i === 0 ? firstChunkReserved : 0)
+    if (byteLen(c) > limit) throw new Error('Could not fit this thread within the post size limit.')
+  })
+  return chunks
+}
+
+/**
  * Calculate which chunk the cursor is in, and the chunk boundaries,
  * for display purposes. When includePageIndicators is true, reserves
  * space for the "(1/N) " prefix in each chunk.
@@ -1190,10 +1276,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           if (isThreadMode && mediaPosition === 'end') {
             // Media appended after splitting.
           } else if (isThreadMode) {
-            // 'start': lead the text with the media so the splitter keeps it in
-            // chunk 1 (the char counter reserves it there). Appending here would
-            // carry it into the last chunk.
-            finalText = mediaUrls.join('\n') + '\n' + finalText
+            // 'start': placed after splitting (splitThreadWithLeadingMedia) so
+            // the splitter never sees a media URL and can't cut one in half.
           } else {
             finalText = finalText + mediaBlock
           }
@@ -1204,7 +1288,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         if (shortenUrls) finalText = await shortenUrlsInText(getOnChainText(finalText))
 
         // Split into thread chunks if needed — mirrors the immediate-post path.
-        const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+        const leadMedia = isThreadMode && mediaPosition !== 'end' && mediaUrls.length > 0
+        const chunks = leadMedia
+          ? splitThreadWithLeadingMedia(
+              finalText,
+              shortenUrls ? (await shortenUrlsInText(mediaUrls.join('\n'))).split('\n') : mediaUrls,
+              includePageIndicators,
+            )
+          : splitTextIntoChunks(finalText, includePageIndicators)
 
         // If media goes at end of thread, check if it fits in the last chunk or needs its own.
         if (isThreadMode && mediaPosition === 'end' && mediaBlock) {
@@ -1464,10 +1555,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       if (isThreadMode && mediaPosition === 'end') {
         // Media will be appended to the last chunk after splitting
       } else if (isThreadMode) {
-        // 'start': lead the text with the media so the splitter keeps it in
-        // chunk 1, where getChunkInfo() reserves it (firstChunkMediaCost).
-        // Appending here would carry it into the last chunk.
-        finalText = mediaUrls.join('\n') + '\n' + finalText
+        // 'start': placed after splitting (splitThreadWithLeadingMedia) so
+        // the splitter never sees a media URL and can't cut one in half.
       } else {
         finalText = finalText + mediaBlock
       }
@@ -1502,8 +1591,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // For replies and quotes, include the original post's info
     const parentCaw = replyTo || quote
 
-    // Split into thread chunks if text exceeds the limit
-    const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+    // Split into thread chunks if text exceeds the limit. With media at the
+    // start, the media is placed around the split rather than through it, and
+    // chunk 1 keeps room for a leading poll marker attached just below.
+    const leadMedia = isThreadMode && mediaPosition !== 'end' && mediaUrls.length > 0
+    const chunks = leadMedia
+      ? splitThreadWithLeadingMedia(
+          finalText,
+          shortenUrls ? (await shortenUrlsInText(mediaUrls.join('\n'))).split('\n') : mediaUrls,
+          includePageIndicators,
+          submitPollMarker && pollPosition === 'start' ? byteLen(submitPollMarker) + 1 : 0,
+        )
+      : splitTextIntoChunks(finalText, includePageIndicators)
 
     // Attach the poll marker to either the first or last chunk in a thread.
     // We do this AFTER splitting so the marker never gets broken apart by
