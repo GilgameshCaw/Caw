@@ -256,6 +256,7 @@ model TxQueue {
   @@index([senderId, status])
   @@index([batchId])
   @@index([signedTx])
+  @@index([status, updatedAt])
 }
 
 model Action {
