@@ -127,10 +127,20 @@ async function fetchRejectedSetFromTx(
   return { kind: 'ok', rejected }
 }
 
-// Max blocks per eth_getLogs window. Default 10K suits Infura/Alchemy, but many
-// public Base Sepolia RPCs cap eth_getLogs far lower (sepolia.base.org: 2000).
-// Operators on a capped RPC set L2_LOG_CHUNK_BLOCKS=1500 (or their RPC's limit)
-// to avoid "eth_getLogs range too large" errors + silently missed ranges.
+// Max blocks per eth_getLogs window (inclusive: a window covers exactly this
+// many blocks). Default 10K suits Infura/Alchemy, but many public Base Sepolia
+// RPCs cap eth_getLogs far lower: sepolia.base.org now rejects any range wider
+// than toBlock - fromBlock = 1000 with HTTP 413 "eth_getLogs is limited to a
+// 1,000 range" (measured 2026-09-25; it used to be 2000). Operators on a capped
+// RPC set L2_LOG_CHUNK_BLOCKS=1000 (or their RPC's limit) to avoid
+// "eth_getLogs range too large" errors + silently missed ranges.
+//
+// The limit that matters is the SMALLEST across the primary AND every
+// L2_RPC_URL_HTTP_FALLBACK URL: FallbackProvider (utils/rpcProvider.ts) gives
+// all of them equal priority, so any getLogs call may land on the fallback.
+// A window that fits the primary but not the fallback fails only on the calls
+// that happen to hit the fallback, so catch-up after a restart advances only
+// intermittently. Steady-state polling covers a few blocks and never shows it.
 // (zinsanjp / nyaromesama co-located V2 bring-up.)
 const L2_LOG_CHUNK_BLOCKS = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
 

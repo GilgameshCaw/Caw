@@ -459,7 +459,9 @@ async function backstopCawonceFromCalldata(
   const fromBlock = Math.max(0, head - targetSpan)
 
   // chunkBlocks shares the RawEventsGatherer L2_LOG_CHUNK_BLOCKS knob so a
-  // capped-RPC operator (e.g. sepolia.base.org 2000-block eth_getLogs cap)
+  // capped-RPC operator (e.g. sepolia.base.org, which now caps eth_getLogs at
+  // toBlock - fromBlock = 1000, fallback URLs included -- see the comment on
+  // L2_LOG_CHUNK_BLOCKS in listenForRawEvents.ts)
   // bounds this scan too. Default 10K suits Infura/Alchemy.
   const chunkBlocks = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
   const scanOpts = { fromBlock, toBlock: head, chunkBlocks, maxWindows: 8 }
