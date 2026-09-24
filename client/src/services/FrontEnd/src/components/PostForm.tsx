@@ -2867,7 +2867,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                         onDragOver={handleTextareaDragOver}
                         onDragLeave={handleTextareaDragLeave}
                         onDrop={handleTextareaDrop}
-                        rows={1}
+                        rows={chunkSlices.length > 1 ? 1 : (replyTo ? 3 : 1)}
                         placeholder={i === 0
                           ? (replyTo
                               ? `Reply to @${replyTo.user.username}`
@@ -2875,7 +2875,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           : ''}
                         textareaRef={getChunkRefSetter(i)}
                         fontSize="base"
-                        denser
+                        denser={chunkSlices.length > 1}
+                        compact={chunkSlices.length === 1 && (!!replyTo || hasMedia)}
                         autoResize
                       />
                       </div>
@@ -3476,7 +3477,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                           }
                         }}
                     fontSize={replyTo ? 'base' : 'xl'}
-                    denser
+                    denser={chunkSlices.length > 1}
+                    compact={chunkSlices.length === 1 && (!!replyTo || hasMedia)}
                     autoResize
                   />
                   </div>
