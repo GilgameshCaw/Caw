@@ -40,6 +40,28 @@ function requireClientId(): number {
   return n
 }
 
+// Retries a transient RPC failure (timeout, dropped connection, a public
+// endpoint's momentary 5xx) with exponential backoff. This script runs
+// unattended every 3h via cron (see cli/src/steps/install.js); one flaky
+// request shouldn't fail the whole re-anchor and skip the pm2 restart that
+// follows it.
+async function retryWithBackoff<T>(fn: () => Promise<T>, maxAttempts = 3, baseDelayMs = 500): Promise<T> {
+  let lastError: any
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err: any) {
+      lastError = err
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1)
+        console.warn(`  [seed-stake-ledger] attempt ${attempt}/${maxAttempts} transient failure: ${err?.message || err}. Retrying in ${delay}ms...`)
+        await new Promise(r => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastError
+}
+
 async function main() {
   const dryRun = process.argv.includes('--dry')
   const clientId = requireClientId()
@@ -65,11 +87,11 @@ async function main() {
   // ticks on every CawActions submission; with a long ownership scan, the
   // value would drift mid-scan and verifyMultiplier would halt on first boot).
   // Reported by Zin (2026-05-11) after hitting exactly this race.
-  const [multiplierAtStart, totalCawAtStart, nextId] = await Promise.all([
+  const [multiplierAtStart, totalCawAtStart, nextId] = await retryWithBackoff(() => Promise.all([
     l2.rewardMultiplier(),
     l2.totalCaw(),
     l1.nextId(),
-  ])
+  ]))
   const maxId = Number(nextId) - 1
   console.log(`  rewardMultiplier (at scan start) = ${multiplierAtStart}`)
   console.log(`  totalCaw         (at scan start) = ${totalCawAtStart}`)
@@ -79,41 +101,102 @@ async function main() {
     console.log('  No tokens minted — only seeding StakeLedgerState.')
   }
 
-  // Read all token ownerships in batches. A multicall would be faster
-  // but adds a dep; for the seed-once case the simple Promise.all
-  // chunking is fine. Most testnet chains have <10k tokens.
+  // Read all token ownerships in batches. Prefer Multicall3
+  // (deterministically deployed at the same address on every EVM chain via
+  // CREATE2 -- Ethereum mainnet, every L2, and their testnets all share
+  // 0xcA11...CA11 -- so this address does not need to change at mainnet
+  // cutover), which collapses up to MULTICALL_BATCH individual eth_calls
+  // into one request. Falls back to the original per-token Promise.all
+  // chunking when Multicall3 isn't deployed on the target chain (e.g. a
+  // local dev/mock network), so this never regresses below the prior
+  // behavior.
+  const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11'
+  const MULTICALL3_ABI = [
+    'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[] returnData)',
+  ]
+
   const ownership = new Map<number, bigint>()
-  const BATCH = 50
-  for (let start = 1; start <= maxId; start += BATCH) {
-    const end = Math.min(start + BATCH - 1, maxId)
-    const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i)
-    const reads = await Promise.all(ids.map(async id => {
-      try {
-        const v = await l2.cawOwnership(id)
-        return { id, v: BigInt(v) }
-      } catch (err: any) {
-        // Skip burned / non-existent slots quietly; they shouldn't appear
-        // mid-range in the current contract design but be defensive.
-        return { id, v: null as bigint | null }
-      }
-    }))
-    for (const r of reads) {
-      if (r.v !== null && r.v !== 0n) ownership.set(r.id, r.v)
+  if (maxId >= 1) {
+    let hasMulticall = false
+    try {
+      const code = await retryWithBackoff(() => l2Provider.getCode(MULTICALL3_ADDRESS))
+      hasMulticall = Boolean(code && code !== '0x')
+    } catch {
+      hasMulticall = false
     }
-    process.stdout.write(`\r  read ${end}/${maxId} (${ownership.size} non-zero owners so far)…`)
+
+    if (hasMulticall) {
+      const multicall = new Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, l2Provider)
+      const target = l2.target ? String(l2.target) : (l2 as any).address
+      const MBATCH = 100
+      for (let start = 1; start <= maxId; start += MBATCH) {
+        const end = Math.min(start + MBATCH - 1, maxId)
+        const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i)
+        const calls = ids.map(id => ({
+          target,
+          allowFailure: true,
+          callData: l2.interface.encodeFunctionData('cawOwnership', [id]),
+        }))
+        // aggregate3 is declared payable in Multicall3's ABI; calling it
+        // without .staticCall on a read-only provider makes ethers v6
+        // attempt to send a transaction and throw UNSUPPORTED_OPERATION.
+        // .staticCall forces an eth_call instead.
+        const results = await retryWithBackoff(() => (multicall as any).aggregate3.staticCall(calls))
+        for (let i = 0; i < results.length; i++) {
+          const { success, returnData } = results[i]
+          if (success && returnData && returnData !== '0x' && returnData.length >= 66) {
+            try {
+              const [v] = l2.interface.decodeFunctionResult('cawOwnership', returnData)
+              const val = BigInt(v)
+              if (val !== 0n) ownership.set(ids[i], val)
+            } catch {
+              // Skip a slot whose returnData doesn't decode as expected;
+              // defensive against an unexpected ABI mismatch.
+            }
+          }
+          // success === false is not expected in practice -- cawOwnership
+          // returns 0 rather than reverting for unminted/out-of-range ids
+          // (confirmed directly against live chain state) -- but
+          // allowFailure: true means a future revert here is skipped
+          // rather than failing the whole batch.
+        }
+        process.stdout.write(`\r  [multicall3] read ${end}/${maxId} (${ownership.size} non-zero owners so far)…`)
+      }
+      process.stdout.write('\n')
+    } else {
+      const BATCH = 50
+      for (let start = 1; start <= maxId; start += BATCH) {
+        const end = Math.min(start + BATCH - 1, maxId)
+        const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i)
+        const reads = await retryWithBackoff(() => Promise.all(ids.map(async id => {
+          try {
+            const v = await l2.cawOwnership(id)
+            return { id, v: BigInt(v) }
+          } catch (err: any) {
+            // Skip burned / non-existent slots quietly; they shouldn't appear
+            // mid-range in the current contract design but be defensive.
+            return { id, v: null as bigint | null }
+          }
+        })))
+        for (const r of reads) {
+          if (r.v !== null && r.v !== 0n) ownership.set(r.id, r.v)
+        }
+        process.stdout.write(`\r  read ${end}/${maxId} (${ownership.size} non-zero owners so far)…`)
+      }
+      process.stdout.write('\n')
+    }
   }
-  if (maxId >= 1) process.stdout.write('\n')
 
   // Re-read multiplier + totalCaw RIGHT before the DB upsert. Tightens the
   // race window between "what we seed" and "what chain reports on the next
   // verifyMultiplier check after pm2 restart." There's still a tiny gap
   // (this read → DB write → pm2 reload), but it's measured in seconds vs.
   // the 60-90s ownership scan it would otherwise span.
-  const [multiplier, totalCaw, headBlock] = await Promise.all([
+  const [multiplier, totalCaw, headBlock] = await retryWithBackoff(() => Promise.all([
     l2.rewardMultiplier(),
     l2.totalCaw(),
     l2Provider.getBlockNumber(),
-  ])
+  ]))
   if (multiplier !== multiplierAtStart) {
     console.log(`  rewardMultiplier moved during scan: ${multiplierAtStart} → ${multiplier} (using fresh value)`)
   }
