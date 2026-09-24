@@ -168,16 +168,27 @@ async function main() {
       for (let start = 1; start <= maxId; start += BATCH) {
         const end = Math.min(start + BATCH - 1, maxId)
         const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i)
-        const reads = await retryWithBackoff(() => Promise.all(ids.map(async id => {
+        // retryWithBackoff wraps each individual read, inside its own
+        // try/catch, rather than the whole Promise.all: every per-token
+        // read already catches its own error and resolves with v: null,
+        // so a Promise.all wrapped around the batch as a whole would
+        // never see a rejection to retry (reported by nyaromesama,
+        // PR #160 -- confirmed in isolation: 0 retry attempts logged
+        // across a batch with 2/5 simulated transient failures under the
+        // old wrapping). Wrapping per-id instead means a transient
+        // failure on one read gets retried without waiting on or
+        // affecting the rest of the batch.
+        const reads = await Promise.all(ids.map(async id => {
           try {
-            const v = await l2.cawOwnership(id)
+            const v = await retryWithBackoff(() => l2.cawOwnership(id))
             return { id, v: BigInt(v) }
           } catch (err: any) {
-            // Skip burned / non-existent slots quietly; they shouldn't appear
-            // mid-range in the current contract design but be defensive.
+            // Skip burned / non-existent slots quietly (or a read that
+            // exhausted its retries); they shouldn't appear mid-range in
+            // the current contract design but be defensive.
             return { id, v: null as bigint | null }
           }
-        })))
+        }))
         for (const r of reads) {
           if (r.v !== null && r.v !== 0n) ownership.set(r.id, r.v)
         }
