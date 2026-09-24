@@ -74,7 +74,7 @@ interface HighlightedTextareaProps {
  * Textarea with syntax highlighting for @mentions and #hashtags
  * Uses a mirror div technique: styled div behind transparent textarea
  */
-// Firefox (real Gecko) is the ONLY engine that aborts an IME composition when
+// Firefox (real Gecko) — and iOS WebKit, see below — abort an IME composition when
 // React re-applies the controlled `value` mid-composition — there we drop the
 // textarea to uncontrolled for the duration of a composition. WebKit/Blink
 // keep the controlled value applied, but ONLY as long as the parent commits
@@ -83,8 +83,19 @@ interface HighlightedTextareaProps {
 // resets textarea.value back to the frozen prop after EVERY composition
 // keystroke on Blink — wiping the 変換中 text and killing the IME session,
 // which made Japanese input impossible on Chrome/Edge (measured on the live
-// bundle, 2026-07-30). Going uncontrolled was long believed to break the IME
-// on WebKit and Blink; measured on an iPhone 2026-08-26, it does not on iOS.
+// bundle, 2026-07-30).
+//
+// iOS WebKit goes uncontrolled too (IS_IOS). The earlier note that this would
+// break the IME on WebKit came with the Firefox fix (56676e42), which was
+// verified on Firefox and left WebKit/Blink unchanged rather than testing them
+// uncontrolled. Measured since on an iPhone: uncontrolled composition is clean
+// once the chunk layout is frozen during composition (PostForm) —
+// compositionstart/compositionend pair 1:1 and nothing writes `value`
+// mid-composition (2026-08-26, 2026-09-24). Without that freeze, a composition
+// that crosses a chunk boundary remounts its textarea and loses
+// compositionend, which does look like a broken IME (also measured
+// 2026-08-26). Blink is not changed here: it stays controlled and relies on
+// the per-keystroke commit described above.
 // Exported because PostForm gates its composition-freeze with the same tests.
 // Firefox-for-iOS ("FxiOS") is WebKit, not Gecko, and correctly does NOT match.
 export const IS_GECKO =
