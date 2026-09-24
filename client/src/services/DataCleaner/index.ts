@@ -697,14 +697,14 @@ async function cleanupFailedTxQueue() {
           })
         }
 
-        // Optional: Delete very old failed txqueue records (e.g., older than 7 days)
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-        if (txRecord.updatedAt < sevenDaysAgo) {
-          logger.log(` Deleting old failed txqueue record ${txRecord.id}`)
-          await prisma.txQueue.delete({
-            where: { id: txRecord.id }
-          })
-        }
+        // Deletion of old failed TxQueue rows is now owned entirely by
+        // cleanStaleTxQueue() (txQueuePruning.ts, called from the main
+        // DataCleaner tick below) -- flagged by nyaromesama on PR #161:
+        // this 7-day delete ran before that PR's 90-day default could
+        // ever apply, and skipped the pending-WithdrawalRequest guard
+        // that delete has. This function keeps its own job (marking the
+        // associated Caw/Follow/etc. row FAILED above); only the
+        // txQueue.delete that used to follow it is gone.
       } catch (err) {
         logger.error(` Error processing failed txqueue record ${txRecord.id}:`, err)
       }
