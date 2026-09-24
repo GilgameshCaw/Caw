@@ -431,8 +431,13 @@ router.post('/', async (req, res) => {
       where: { id: conversationId },
       data: { lastMessageAt: messageRecord.createdAt, lastMessageId: messageRecord.id }
     })
+    // leftAt: null -- same fix as DmService.sendMessage and
+    // groupService's send path: don't bump unreadCount for a recipient
+    // who has left this conversation, since it's hidden from their DM
+    // list and from the /api/users/badges count (both filter leftAt:
+    // null too), leaving an unread badge they can never clear.
     await prisma.conversationParticipant.updateMany({
-      where: { conversationId, userId: Number(recipientId) },
+      where: { conversationId, userId: Number(recipientId), leftAt: null },
       data: { unreadCount: { increment: 1 } }
     })
 
