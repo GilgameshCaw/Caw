@@ -62,12 +62,14 @@ const HEX32_RE = /^0x[0-9a-fA-F]{64}$/
 
 /**
  * POST /api/wallet/blob
- * Store (upsert) the encrypted backup blob for an owner address, and optionally
+ * Store (create once) the encrypted backup blob for an owner address, and optionally
  * email it as the durable backstop. Body:
  *   { address, blob, email? }
- * `blob` is the BackupBlob JSON envelope (ciphertext only). No auth: the blob is
- * ciphertext and keyed by the owner's own address; storing it grants no access
- * (retrieval is passkey-gated). `username` is used only for the email copy text.
+ * `blob` is the BackupBlob JSON envelope (ciphertext only). No auth: the first
+ * write happens pre-mint, before any profile or passkey exists, and storing
+ * ciphertext grants no access (retrieval is passkey-gated). Because anyone can
+ * call it, it only ever CREATES the row; a stored blob is never replaced (see
+ * below). `username` is used only for the email copy text.
  */
 router.post('/blob', blobWriteLimit, async (req, res) => {
   try {
@@ -100,11 +102,60 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
     // We DO NOT persist the email. It is used transiently to send the backstop
     // and then discarded — "we don't store your email, it's only for backup".
     // WalletBlob.email is therefore always written null.
-    await prisma.walletBlob.upsert({
+    // Integrity of the stored recovery copy. This route is unauthenticated by
+    // design (the first write happens pre-mint, before any profile or passkey
+    // exists on-chain), so it must never replace a blob that is already stored:
+    // anyone who knows an owner address could otherwise overwrite that owner's
+    // recovery copy with garbage, and the damage would only surface when they
+    // later need to recover. Same concern as the write gate on /blob/prf.
+    //   - no row, no profile for the address (pre-mint): create it.
+    //   - no row, but the address already has a profile: refuse. The first
+    //     write is always pre-mint, so a post-mint first write would be someone
+    //     else claiming that owner's slot.
+    //   - row exists with the identical blob: idempotent, no write (the
+    //     onboarding email step re-sends the same blob together with an email).
+    //   - row exists with a different blob: refuse. No current flow replaces a
+    //     stored blob; if one is added, it should be passkey-gated like /blob/prf.
+    // Compared as the whole string: matching only `ciphertext` would still let
+    // the salt or KDF parameters be swapped, which breaks decryption just the same.
+    // One response for every refusal, so the endpoint doesn't reveal whether a
+    // given address already has a stored backup.
+    const conflict = () =>
+      res.status(409).json({ error: 'A backup cannot be stored for this address.' })
+    const existing = await prisma.walletBlob.findUnique({
       where: { address: addr },
-      create: { address: addr, blob, email: null },
-      update: { blob, email: null },
+      select: { blob: true },
     })
+    if (existing) {
+      if (existing.blob !== blob) {
+        conflict()
+        return
+      }
+    } else {
+      const profile = await prisma.user.findFirst({
+        where: { address: { equals: address, mode: 'insensitive' } },
+        select: { tokenId: true },
+      })
+      if (profile) {
+        conflict()
+        return
+      }
+      try {
+        await prisma.walletBlob.create({ data: { address: addr, blob, email: null } })
+      } catch (e: any) {
+        // Lost a race with a concurrent first write for the same address (the
+        // address is the primary key): accept only if it stored the same blob.
+        if (e?.code !== 'P2002') throw e
+        const winner = await prisma.walletBlob.findUnique({
+          where: { address: addr },
+          select: { blob: true },
+        })
+        if (!winner || winner.blob !== blob) {
+          conflict()
+          return
+        }
+      }
+    }
 
     // Durable backstop: email the ciphertext if an email was provided and a mail
     // transport exists (Resend, or the opt-in local sendmail fallback). Non-fatal
