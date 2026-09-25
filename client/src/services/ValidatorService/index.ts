@@ -4968,6 +4968,11 @@ console.log("succeededKeys", succeededKeys)
         const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending >= maxPending) {
           console.log(`[OptimisticReplication] pendingCount=${pending} >= MAX_PENDING_SUBMISSIONS=${maxPending} — waiting for existing submission(s) to finalize or slash before queueing more`)
+          // Finalizing is exactly what frees a pending slot, so it must run
+          // on this path too. It used to be reached only at the end of the
+          // loop, after this early return, so once pendingCount hit the cap
+          // nothing ever finalized and replication stayed halted for good.
+          await autoFinalizeSubmissions()
           return
         }
 
@@ -5341,7 +5346,19 @@ console.log("succeededKeys", succeededKeys)
 
               const finalizedAt = Number(sub[5])
               const now = Math.floor(Date.now() / 1000)
-              if (now < finalizedAt) continue // Challenge period still active
+              if (now < finalizedAt) {
+                // Challenge period still active. Queue it rather than skip it:
+                // the checkpoint below advances past this block regardless, so
+                // a submission skipped here was never looked at again and
+                // stayed PENDING forever (pinning pendingCount at
+                // MAX_PENDING_SUBMISSIONS and halting replication). The retry
+                // loop above already waits out the challenge period without
+                // spending a retry.
+                if (!nextRetries.some(r => r.id === submissionId)) {
+                  nextRetries.push({ id: submissionId, retries: 0 })
+                }
+                continue
+              }
 
               console.log(`[OptimisticReplication] Finalizing submission ${submissionId}...`)
               const tx = await archiveW.finalizeSubmission(submissionId)
@@ -5378,18 +5395,23 @@ console.log("succeededKeys", succeededKeys)
         // silently drop out of the retry queue forever — the exact bug this
         // whole change exists to fix, just reintroduced at a lower
         // probability. Committing them together closes that gap.
-        await prisma.$transaction([
-          prisma.chainData.upsert({
+        // Interactive form, not the array form: the shared prisma client wraps
+        // model methods (auto-reconnect) so they return plain Promises, and
+        // $transaction([...]) rejects anything that isn't a PrismaPromise
+        // ("All elements of the array need to be Prisma Client promises").
+        // `tx` here is the unwrapped client, so both writes stay atomic.
+        await prisma.$transaction(async (tx) => {
+          await tx.chainData.upsert({
             where: { key: checkpointKey },
             create: { key: checkpointKey, value: latestBlock as any },
             update: { value: latestBlock as any },
-          }),
-          prisma.chainData.upsert({
+          })
+          await tx.chainData.upsert({
             where: { key: retryKey },
             create: { key: retryKey, value: nextRetries as any },
             update: { value: nextRetries as any },
-          }),
-        ])
+          })
+        })
       } catch (err: any) {
         console.error(`[OptimisticReplication] Auto-finalize error: ${err?.shortMessage || err?.message}`)
       } finally {
