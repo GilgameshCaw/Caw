@@ -187,10 +187,13 @@ async function fetchBadges(tokenId: number) {
 
     // DM conversations with unread counts
     const dmConversations = await prisma.conversation.findMany({
-      where: { participants: { some: { userId: tokenId } } },
+      // leftAt: null -- same filter as GET /api/users/badges: a conversation
+      // the user has left is hidden from their DM list and can never be
+      // opened to mark read, so its unreadCount must not be reported here.
+      where: { participants: { some: { userId: tokenId, leftAt: null } } },
       select: {
         id: true,
-        participants: { where: { userId: tokenId }, select: { unreadCount: true } },
+        participants: { where: { userId: tokenId, leftAt: null }, select: { unreadCount: true } },
       },
     })
 
