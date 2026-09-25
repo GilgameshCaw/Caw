@@ -169,13 +169,18 @@ export async function scanLogsBackward(
     let windowLogs: Log[]
     try {
       windowLogs = await provider.getLogs({ address: addr, topics, fromBlock, toBlock })
-    } catch {
+    } catch (firstErr) {
       // Halve once and try just the upper half (forfeit the lower half
       // rather than spinning forever — backward scans are best-effort
       // by design).
       try {
         const halfStart = fromBlock + Math.floor((toBlock - fromBlock) / 2)
         windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: halfStart, toBlock })
+        // The lower half is forfeited, not scanned. Report it through
+        // onError like any other unread range, so callers that treat
+        // onError as "incomplete" (InstanceRegistryService's cold scan)
+        // don't take the partial result as complete.
+        if (halfStart > fromBlock) opts.onError?.(fromBlock, halfStart - 1, firstErr)
       } catch (err) {
         // Surface the failure so callers can tell "incomplete due to RPC
         // errors" from "genuinely empty" — otherwise we'd return whatever
