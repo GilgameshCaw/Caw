@@ -226,11 +226,17 @@ export class DmService {
       data: { lastMessageAt: message.createdAt, lastMessageId: message.id }
     })
 
-    // Increment unread count for other participants
+    // Increment unread count for other participants still in the
+    // conversation. leftAt: null matters here: without it, a participant
+    // who has left keeps accumulating unreadCount on a conversation
+    // that's hidden from their DM list (and from the /api/users/badges
+    // count, which applies the same filter) -- a ghost count they can
+    // never open the conversation to clear.
     await prisma.conversationParticipant.updateMany({
       where: {
         conversationId,
-        userId: { not: senderId }
+        userId: { not: senderId },
+        leftAt: null
       },
       data: { unreadCount: { increment: 1 } }
     })
