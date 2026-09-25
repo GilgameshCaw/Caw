@@ -59,7 +59,9 @@ export const baseSepolia = withRpc(baseSepoliaBase, L2_RPC);
 //   have succeeded (seen during a single-VPS testnet stall). 20s clears the proxy's
 //   worst case so a transient upstream blip doesn't fail the user's bootstrap.
 const transportOptions = {
-  batch: { wait: 16 },
+  // batchSize matches MAX_RPC_BATCH_SIZE in the backend RPC proxy
+  // (api/routes/rpc-proxy.ts): viem splits anything larger itself.
+  batch: { wait: 16, batchSize: 50 },
   retryCount: 3,
   retryDelay: 1_000,
   timeout: 20_000,

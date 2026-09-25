@@ -151,6 +151,10 @@ export function createApp() {
   // buffered into memory ahead of the route's 2,000-char check. 16kb comfortably
   // holds a 2,000-char text plus the small JSON envelope.
   app.use('/api/translate', express.json({ limit: '16kb' }))
+  // The RPC proxy only receives JSON-RPC bodies (at most MAX_RPC_BATCH_SIZE
+  // calls, see routes/rpc-proxy.ts), so it doesn't need the 50mb limit below,
+  // which exists for image uploads.
+  app.use('/api/rpc', express.json({ limit: '1mb' }))
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
   // Security headers for every response (HTML + JSON + everything).

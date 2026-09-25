@@ -481,8 +481,24 @@ async function handleOne(chain: Chain, call: any): Promise<any> {
   return { ...result, id }
 }
 
+// Upper bound on calls in one JSON-RPC batch. Every call in a batch is
+// forwarded upstream independently (see below), while proxyRateLimit counts
+// HTTP requests, so without a bound one request could fan out into an
+// arbitrary number of upstream calls. The frontend's viem transport uses the
+// same batchSize (FrontEnd/src/config/wagmiConfig.ts), so it splits larger
+// batches itself and never reaches this limit.
+export const MAX_RPC_BATCH_SIZE = 50
+
 async function handleBody(chain: Chain, body: any): Promise<any> {
   if (Array.isArray(body)) {
+    // JSON-RPC 2.0: an empty batch is an invalid request, answered with a
+    // single error object rather than an empty array.
+    if (body.length === 0) {
+      return jsonRpcError(null, -32600, 'Invalid Request: empty batch')
+    }
+    if (body.length > MAX_RPC_BATCH_SIZE) {
+      return jsonRpcError(null, -32600, `Invalid Request: batch of ${body.length} calls exceeds the limit of ${MAX_RPC_BATCH_SIZE}`)
+    }
     // JSON-RPC batch. Handle each call independently (so a cache hit
     // for one doesn't block the others). The upstream batch endpoint
     // would also work but we'd lose per-call caching.
