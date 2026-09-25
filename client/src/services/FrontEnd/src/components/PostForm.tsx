@@ -357,6 +357,13 @@ interface PostFormProps {
   mobileToolbarDivider?: boolean;
 }
 
+// Android's on-screen keyboards reconnect to the input when focus moves, and
+// a key pressed during that switch never reaches the page (measured: no
+// keydown between the commit and the next key). The re-split below waits for
+// the hand to stop there, as on iOS.
+const IS_ANDROID =
+  typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
 const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true, mobileToolbarDivider = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -518,6 +525,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // stays false → commit normally) from a genuine CJK session (compositionstart
   // fired first → ref is true → defer commit to compositionEnd, preserving #322).
   const isComposingRef = useRef(false)
+  // Timer id while a re-split is held after a commit (0 when none; see
+  // makeChunkCompositionEnd). The chunk layout stays frozen until it fires,
+  // and setResplitTick re-renders with the real split.
+  const pendingCommitRef = useRef(0)
+  const [, setResplitTick] = useState(0)
   const frozenChunksRef = useRef<{ chunkCount: number; chunkBoundaries: number[]; textLen: number } | null>(null)
   // Which chunk the open composition is in (recorded at compositionstart).
   const composingChunkRef = useRef(0)
@@ -907,6 +919,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // and a restore mid-composition collapses the composing range, so the
     // conversion inserts instead of replacing (the reading doubles).
     preInputStateRef.current = null
+    // The user kept typing — hold the pending split (see makeChunkCompositionEnd).
+    if (pendingCommitRef.current) {
+      clearTimeout(pendingCommitRef.current)
+      pendingCommitRef.current = 0
+    }
     isComposingRef.current = true
     lastComposedRef.current = null
   }
@@ -935,7 +952,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // compositionEnd that does the same commit path instead of setText.
   const makeChunkCompositionEnd = (i: number) =>
     (e: React.CompositionEvent<HTMLTextAreaElement>) => {
-      isComposingRef.current = false
       const ta = e.currentTarget
       // Same captured-value-wins logic as handleCompositionEnd (Firefox ta.value
       // lags one composition behind).
@@ -944,9 +960,60 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       const committed = captured?.value ?? ta.value
       const localCursor = captured?.caret ?? ta.selectionStart ?? committed.length
       pendingMasterCursorRef.current = chunkBoundaries[i] + localCursor
+      // A Japanese IME auto-commits the previous conversion when the user
+      // starts typing the next word, so compositionend does NOT mean "the
+      // user is done" — it can be mid-sentence. Committing right here lets
+      // the split mount a new textarea while the next composition is already
+      // starting, and its uncommitted romaji is stranded on the old element.
+      // Hold the re-split until the input actually settles: if another
+      // compositionstart arrives first, that start cancels this timer and
+      // re-holds, so a run of conversions splits once, at the end.
       replaceChunk(i, committed)
       setActiveChunkIndex(i)
       setActiveChunkCursor(localCursor)
+      // Only hold when this commit changes the layout: a new chunk, or a
+      // boundary that moves because the chunk overflowed into the next one
+      // (the count stays the same then). If nothing moves, release now.
+      const nextText = text.slice(0, chunkBoundaries[i]) + committed +
+        text.slice(chunkBoundaries[i + 1] ?? text.length)
+      const next = getChunkInfo(
+        nextText,
+        includePageIndicators,
+        firstChunkMediaCost + firstChunkPollCost,
+        lastChunkMediaCost + lastChunkPollCost,
+      )
+      // Compare with the layout the textareas show now: chunk i holds the
+      // committed text, so later boundaries sit shifted by its change in
+      // length (0 on Blink, which committed each keystroke already; Gecko and
+      // iOS WebKit commit only here). An overflow at the very end of a full
+      // chunk keeps the master-text offsets but moves text across the
+      // boundary, so it must hold too.
+      const oldEnd = chunkBoundaries[i + 1] ?? text.length
+      const delta = committed.length - (oldEnd - chunkBoundaries[i])
+      if (
+        next.chunkCount === chunkCount &&
+        next.chunkBoundaries.every((b, k) =>
+          b === (k > i ? chunkBoundaries[k] + delta : chunkBoundaries[k]))
+      ) {
+        isComposingRef.current = false
+        return
+      }
+      // The text is committed and the composition is over, so clear
+      // isComposingRef (non-IME edits during the hold, such as Backspace or
+      // ASCII, then reach replaceChunk). Only the LAYOUT stays frozen until
+      // the input settles.
+      isComposingRef.current = false
+      if (pendingCommitRef.current) clearTimeout(pendingCommitRef.current)
+      // On-screen keyboards lose input when focus moves mid-typing: iOS breaks
+      // the composition, and Android drops a key pressed during the switch.
+      // Wait there until the hand actually stops (Android: the gap from a
+      // commit to the next word measured 0.17-0.40 s; a key pressed right as
+      // focus moves can still be lost). With a hardware keyboard a short
+      // settle is enough and keeps the chunk from visibly overflowing.
+      pendingCommitRef.current = window.setTimeout(() => {
+        pendingCommitRef.current = 0
+        setResplitTick(t => t + 1)
+      }, IS_IOS || IS_ANDROID ? 700 : 120)
     }
 
   // iOS WebKit (reported by zinsanjp: on-screen JA IME in Chrome for iOS,
@@ -2021,14 +2088,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     firstChunkMediaCost + firstChunkPollCost,
     lastChunkMediaCost + lastChunkPollCost,
   )
-  if (!isComposingRef.current) frozenChunksRef.current = { ...rawChunkInfo, textLen: text.length }
+  const layoutHeld = isComposingRef.current || pendingCommitRef.current !== 0
+  if (!layoutHeld) frozenChunksRef.current = { ...rawChunkInfo, textLen: text.length }
   // Freeze the layout, but let the composing chunk grow or shrink: shift every
   // boundary after it by the change in text length. Blink stays controlled and
   // commits each composing keystroke, so without this a composition in a
   // middle chunk pushes its own tail into the next chunk, the slice no longer
   // matches the DOM, and React rewrites the value mid-composition. (The last
   // chunk has no later boundary, which is why it was unaffected.)
-  const held = isComposingRef.current ? frozenChunksRef.current : null
+  const held = layoutHeld ? frozenChunksRef.current : null
   const { chunkCount, chunkBoundaries } = held
     ? {
         chunkCount: held.chunkCount,
@@ -2251,6 +2319,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // observed as "second time entering thread mode, focus is lost."
     const skipThisRender = cursorRestoreSkipRef.current
     cursorRestoreSkipRef.current = false
+    // A re-split is being held after a commit: the chunk layout is still the
+    // frozen one, so the caret would be placed against stale boundaries.
+    // Leave pendingMasterCursorRef intact; the render after the hold ends
+    // restores it.
+    if (pendingCommitRef.current) return
     if (!isThreadMode) {
       // Also drop any pending master cursor on the way out — it was set
       // for a chunk layout that no longer exists.
