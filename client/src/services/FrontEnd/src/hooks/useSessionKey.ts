@@ -1186,8 +1186,9 @@ export function useRevokeSession() {
     const sessionKey = session?.privateKey
     const sessionAddress = session?.address
     const ownerAddress = activeToken?.owner
+    const expiry = session?.expiry
 
-    if (!sessionKey || !sessionAddress || !ownerAddress) {
+    if (!sessionKey || !sessionAddress || !ownerAddress || !expiry) {
       // No session or no owner info — just clear locally
       clearSession()
       return
@@ -1199,15 +1200,23 @@ export function useRevokeSession() {
       const signature = await sessionAccount.signTypedData({
         domain: SESSION_DOMAIN,
         types: {
+          // Must match REVOKE_SESSION_TYPEHASH in CawProfileLedger.sol:
+          // RevokeSession(address owner,address sessionKey,uint64 expiry).
+          // revokeSessionBySig binds the signature to the session's stored
+          // expiry, so an old revocation can't be replayed against a later
+          // registration of the same key. Without expiry here, every
+          // revocation reverted with BadSig.
           RevokeSession: [
             { name: 'owner', type: 'address' },
             { name: 'sessionKey', type: 'address' },
+            { name: 'expiry', type: 'uint64' },
           ],
         },
         primaryType: 'RevokeSession',
         message: {
           owner: ownerAddress,
           sessionKey: sessionAddress,
+          expiry: BigInt(expiry),
         },
       })
 
