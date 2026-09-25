@@ -374,7 +374,36 @@ function makeCrawlerPatch(bot) {
   }
 }
 
-const NGINX_PATCHES = [
+// Every `location /api/ { ... }` block in s, as [start, end) ranges where
+// end is just past the block's matching closing brace. A config can have
+// more than one (e.g. separate :80 / :443 server blocks, each with its own
+// /api/ location), and the burst patch has to reach all of them.
+// Braces are counted naively (no string/comment awareness), which holds
+// for the plain proxy blocks the template generates. An unbalanced block
+// stops the scan, leaving the rest of the file untouched.
+function apiLocationBlocks(s) {
+  const ranges = []
+  const re = /location \/api\/ \{/g
+  let m
+  while ((m = re.exec(s)) !== null) {
+    let depth = 0
+    let end = -1
+    for (let i = m.index + m[0].length - 1; i < s.length; i++) {
+      if (s[i] === '{') depth++
+      else if (s[i] === '}' && --depth === 0) { end = i + 1; break }
+    }
+    if (end === -1) break
+    ranges.push([m.index, end])
+    re.lastIndex = end
+  }
+  return ranges
+}
+
+function rateLimitBurstLine() {
+  return `limit_req zone=caw_general burst=${process.env.CAW_NGINX_RATE_LIMIT_BURST || 100} nodelay;`
+}
+
+export const NGINX_PATCHES = [
   // Order is preserved so the resulting config lists bots in a predictable
   // sequence; functionally the alternation is order-agnostic.
   ...[
@@ -418,13 +447,53 @@ const NGINX_PATCHES = [
     isApplied: (s) => /rewrite \^ \/__prerender\$uri last;/.test(s),
   },
   {
+    // Review finding (tentencaw, PR #48): this used to hardcode
+    // "burst=100" while renderNginxConf (fresh installs) reads
+    // CAW_NGINX_RATE_LIMIT_BURST from env, and isApplied only checked
+    // for the presence of "limit_req zone=caw_general" -- so once
+    // applied, an already-patched host could never pick up a changed
+    // burst value via a later `caw update`, no matter what env was set.
+    // Now interpolates the same env var the template uses, and
+    // isApplied checks for that specific burst value rather than just
+    // the zone name, so a changed CAW_NGINX_RATE_LIMIT_BURST re-applies
+    // the patch on the next `caw update` the same way rate already can
+    // via CAW_NGINX_RATE_LIMIT_FORCE=1.
     name: 'add nginx-level rate limiting to /api/',
     pattern: /location \/api\/ \{/,
-    apply: (s) => s.replace(
-      /location \/api\/ \{/,
-      'location /api/ {\n        limit_req zone=caw_general burst=100 nodelay;',
-    ),
-    isApplied: (s) => s.includes('limit_req zone=caw_general'),
+    apply: (s) => {
+      // Rewrite every /api/ location block, not just the first: strip any
+      // prior limit_req line for this zone *inside that block* (a different
+      // burst value from an earlier run), then insert the current one.
+      // Scoping the strip to the block matters: a file-wide strip could
+      // remove the line from some other location instead, leaving /api/
+      // with the old line plus the new one. Two limit_req lines for the
+      // same zone in one location are not silently tolerated -- nginx
+      // rejects them ([emerg] "limit_req" directive is duplicate), so
+      // nginx -t fails and patchMainNginxConfig reverts the whole batch.
+      const line = rateLimitBurstLine()
+      let out = ''
+      let cursor = 0
+      for (const [start, end] of apiLocationBlocks(s)) {
+        const block = s.slice(start, end)
+          .replace(/[ \t]*limit_req zone=caw_general[^\n]*\n/g, '')
+          .replace(/^location \/api\/ \{/, `location /api/ {\n        ${line}`)
+        out += s.slice(cursor, start) + block
+        cursor = end
+      }
+      return out + s.slice(cursor)
+    },
+    // Applied only when every /api/ block carries exactly one limit_req
+    // line for this zone, with the current burst value. Checking for the
+    // line's presence anywhere in the file would report a two-block config
+    // as done after only one block was updated, and it would never converge.
+    isApplied: (s) => {
+      const line = rateLimitBurstLine()
+      const blocks = apiLocationBlocks(s)
+      return blocks.length > 0 && blocks.every(([start, end]) => {
+        const found = s.slice(start, end).match(/limit_req zone=caw_general[^\n]*/g) || []
+        return found.length === 1 && found[0].trim() === line
+      })
+    },
   },
 ]
 
