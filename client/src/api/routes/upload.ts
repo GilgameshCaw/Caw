@@ -245,9 +245,15 @@ router.post('/variant', requireAuth({ anySession: true }), variantUpload.single(
     const ext = baseFilename.slice(dot)
     const variantName = `${stem}_${width}${ext}`
 
-    const url = await storage.putVariant(baseFilename, variantName, file.buffer, file.mimetype)
+    // Same EXIF strip + dimension check as POST / (L-1/L-2). The frontend
+    // re-encodes variants through a canvas, but the server doesn't rely on it.
+    const buf = await stripExifAndCheckDimensions(file.buffer)
+    const url = await storage.putVariant(baseFilename, variantName, buf, file.mimetype)
     res.json({ success: true, url })
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ error: error.message })
+    }
     console.error('Variant upload error:', error)
     res.status(500).json({ error: 'Failed to upload variant' })
   }
@@ -285,11 +291,18 @@ router.post('/bug-report', bugReportUpload.array('media', 4), async (req: any, r
     const storage = mediaStorage()
     const urls = await Promise.all(files.map(async file => {
       const filename = generateFilename(file.mimetype)
-      return storage.put('images', filename, file.buffer, file.mimetype)
+      // Same EXIF strip + dimension check as POST / (L-1/L-2): a phone
+      // screenshot or photo attached to a bug report is served publicly
+      // from /uploads, so it must not carry GPS or device metadata.
+      const buf = await stripExifAndCheckDimensions(file.buffer)
+      return storage.put('images', filename, buf, file.mimetype)
     }))
 
     res.json({ success: true, urls, count: files.length })
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ success: false, error: error.message })
+    }
     console.error('Bug-report upload error:', error)
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to upload bug report image' })
   }
