@@ -1214,8 +1214,8 @@ router.post('/', async (req, res) => {
             })
             await prisma.poll.upsert({
               where: { cawId: caw.id },
-              update: { options: parsedPoll.options, optionImages: sanitizedImages },
-              create: { cawId: caw.id, options: parsedPoll.options, optionImages: sanitizedImages },
+              update: { options: parsedPoll.options, optionImages: sanitizedImages, multiSelect: parsedPoll.multiSelect },
+              create: { cawId: caw.id, options: parsedPoll.options, optionImages: sanitizedImages, multiSelect: parsedPoll.multiSelect },
             })
           }
         } catch (pollErr) {
