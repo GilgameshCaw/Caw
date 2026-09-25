@@ -127,18 +127,21 @@ async function findLikeDrift(): Promise<Drift[]> {
 // confirmed by nyaromesama; forward fix in actionHandlers.ts. This reconciles
 // the accumulated inflation.
 //
-// Authoritative targets (must match CountManager.onCawCreated semantics AND the
-// /api/users display formula `max(0, cawCount - replyCount) + recawCount`):
+// Authoritative targets (must match CountManager.onCawCreated):
 //   User.cawCount   = count(Caw where userId = u AND action = 'CAW'
-//                                 AND status IN ('SUCCESS','PENDING'))
-//     ↑ Top-level posts AND replies both count — the display subtracts a LIVE
-//       replyCount (action='CAW', originalCawId not null, SUCCESS) to get the
-//       Posts tab, and users.ts:1164 computes replyCount that way. So cawCount
-//       is "all authored CAW rows"; plain recaws (action='RECAW') are NOT here.
+//                                 AND status IN ('SUCCESS','PENDING')
+//                                 AND no Reply row has replyCawId = caw.id)
+//     ↑ Top-level posts and quotes count; replies do not. onCawCreated skips
+//       the cawCount bump when isReply is set, and a CAW with a Reply row is a
+//       reply (a CAW with originalCawId but no Reply row is a quote). Counting
+//       replies here would add them to cawCount once, and since onCawCreated
+//       never adds later replies, the counter would drift again right after.
+//       Plain recaws (action='RECAW') are not here either.
 //   User.recawCount = count(Caw where userId = u AND action = 'RECAW'
 //                                 AND status IN ('SUCCESS','PENDING'))
-//     ↑ Plain recaps + quotes the user posted. onCawCreated routes action=RECAW
-//       to recawCount. FAILED/HIDDEN excluded (rolled back at transition).
+//     ↑ Plain recaws the user posted. onCawCreated routes action=RECAW to
+//       recawCount; a quote is action='CAW' and counts in cawCount above.
+//       FAILED/HIDDEN excluded (rolled back at transition).
 // ---------------------------------------------------------------------------
 interface UserDrift {
   tokenId: number
@@ -166,11 +169,12 @@ async function findUserCawCountDrift(): Promise<UserDrift[]> {
            (u."cawCount" - COALESCE(sub.actual, 0))::int AS delta
     FROM "User" u
     LEFT JOIN (
-      SELECT "userId" AS id, COUNT(*)::int AS actual
-      FROM "Caw"
-      WHERE action = 'CAW'
-        AND status IN ('SUCCESS', 'PENDING')
-      GROUP BY "userId"
+      SELECT c."userId" AS id, COUNT(*)::int AS actual
+      FROM "Caw" c
+      WHERE c.action = 'CAW'
+        AND c.status IN ('SUCCESS', 'PENDING')
+        AND NOT EXISTS (SELECT 1 FROM "Reply" r WHERE r."replyCawId" = c.id)
+      GROUP BY c."userId"
     ) sub ON sub.id = u."tokenId"
     WHERE u."cawCount" != COALESCE(sub.actual, 0)
   `
