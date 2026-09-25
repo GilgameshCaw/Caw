@@ -245,9 +245,15 @@ router.post('/variant', requireAuth({ anySession: true }), variantUpload.single(
     const ext = baseFilename.slice(dot)
     const variantName = `${stem}_${width}${ext}`
 
-    const url = await storage.putVariant(baseFilename, variantName, file.buffer, file.mimetype)
+    // Same EXIF strip + dimension check as POST / (L-1/L-2). The frontend
+    // re-encodes variants through a canvas, but the server doesn't rely on it.
+    const buf = await stripExifAndCheckDimensions(file.buffer)
+    const url = await storage.putVariant(baseFilename, variantName, buf, file.mimetype)
     res.json({ success: true, url })
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ error: error.message })
+    }
     console.error('Variant upload error:', error)
     res.status(500).json({ error: 'Failed to upload variant' })
   }
