@@ -312,12 +312,14 @@ export async function handleCawAction(
           options: parsedPoll.options,
           optionImages: reconstructedImages,
           endsAt,
+          multiSelect: parsedPoll.multiSelect,
         },
         create: {
           cawId: newCaw.id,
           options: parsedPoll.options,
           optionImages: reconstructedImages,
           endsAt,
+          multiSelect: parsedPoll.multiSelect,
         },
       })
     }
