@@ -3,27 +3,44 @@ import * as path from 'path'
 
 class DataCleanerLogger {
   private logStream: fs.WriteStream | null = null
-  private logFile: string
+  private logsDir: string
+  private logDate = ''
   private enableConsole: boolean
 
   constructor(enableConsole = false) {
     this.enableConsole = enableConsole
 
     // Create logs directory if it doesn't exist
-    const logsDir = path.join(process.cwd(), 'logs')
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir, { recursive: true })
+    this.logsDir = path.join(process.cwd(), 'logs')
+    if (!fs.existsSync(this.logsDir)) {
+      fs.mkdirSync(this.logsDir, { recursive: true })
     }
 
-    // Create log file with current date
-    const date = new Date().toISOString().split('T')[0]
-    this.logFile = path.join(logsDir, `data-cleaner-${date}.log`)
+    this.rollover()
+  }
 
-    // Create write stream with append flag
-    this.logStream = fs.createWriteStream(this.logFile, { flags: 'a' })
+  // The file is named after the UTC date of the lines it holds. The instance
+  // is a module-level singleton, so the date used to be fixed at process start
+  // and a long-running process kept appending to that one file. Reopen when
+  // the date changes instead.
+  private rollover() {
+    const date = new Date().toISOString().split('T')[0]
+    if (date === this.logDate) return
+    this.logStream?.end()
+    this.logDate = date
+    const stream = fs.createWriteStream(path.join(this.logsDir, `data-cleaner-${date}.log`), { flags: 'a' })
+    // Without a listener, a write error (disk full, permissions) surfaces as
+    // an unhandled 'error' event and takes the whole process down. Stop
+    // writing for the rest of the day instead; the next date reopens.
+    stream.on('error', (err) => {
+      console.error(`[DataCleaner] log file write failed, dropping file logging until the date changes: ${err.message}`)
+      if (this.logStream === stream) this.logStream = null
+    })
+    this.logStream = stream
   }
 
   private formatMessage(level: string, message: string): string {
+    this.rollover()
     const timestamp = new Date().toISOString()
     return `[${timestamp}] [${level}] ${message}\n`
   }
