@@ -35,37 +35,40 @@ router.get('/:userId', requireAuth({ lookup: async (req) => Number(req.params.us
     // updated by the validator in a separate step that can miss edge cases;
     // TxQueue.status is authoritative for whether the action itself settled.
     //
-    // Also — if we see an authoritative terminal TxQueue status (failed) but
-    // the WithdrawalRequest is still 'pending', self-heal: flip the row to
-    // 'failed' so the next poll returns clean data.
+    // Also — if we see an authoritative terminal TxQueue status (failed or
+    // cancelled) but the WithdrawalRequest is still 'pending', self-heal: flip
+    // the row to 'failed' so the next poll returns clean data.
     const cawonces = withdrawalRequests.map(w => w.cawonce)
+    // Look the rows up by the TxQueue.cawonce column, which every insert path
+    // stamps (the batch endpoint in actions.ts queries it the same way). A
+    // fixed window of the sender's most recent rows missed any withdrawal that
+    // had more than that many queue rows after it. Newest row per cawonce wins,
+    // so a retried withdrawal reports its latest attempt.
     const txQueueRows = cawonces.length > 0
       ? await prisma.txQueue.findMany({
-          where: {
-            senderId: userId,
-            // Match by cawonce in the signed payload's `data.cawonce`.
-            // We store payload as JSON so we can't query by a nested field portably
-            // — pull all recent queue rows for this sender and match in memory.
-          },
-          select: { id: true, status: true, reason: true, payload: true },
+          where: { senderId: userId, cawonce: { in: cawonces } },
+          select: { id: true, status: true, reason: true, cawonce: true },
           orderBy: { createdAt: 'desc' },
-          take: 200,
         })
       : []
     const txqByCawonce = new Map<number, { status: string; reason: string | null }>()
     for (const row of txQueueRows) {
-      const c = (row.payload as any)?.data?.cawonce
+      const c = row.cawonce
       if (typeof c === 'number' && !txqByCawonce.has(c)) {
         txqByCawonce.set(c, { status: row.status, reason: row.reason ?? null })
       }
     }
 
-    // Self-heal stuck pending rows whose TxQueue has failed.
+    // Self-heal stuck pending rows whose TxQueue ended without being sent:
+    // failed, or cancelled by the sender (POST /api/txqueue/:id/cancel only
+    // flips pending rows and doesn't touch WithdrawalRequest). 'underpriced'
+    // is left alone: the validator keeps it for a possible relay.
+    const unsentTerminal = new Set(['failed', 'cancelled'])
     const stuckIds: number[] = []
     for (const w of withdrawalRequests) {
       if (w.status === 'pending') {
         const txq = txqByCawonce.get(w.cawonce)
-        if (txq && txq.status === 'failed') stuckIds.push(w.id)
+        if (txq && unsentTerminal.has(txq.status)) stuckIds.push(w.id)
       }
     }
     if (stuckIds.length > 0) {
