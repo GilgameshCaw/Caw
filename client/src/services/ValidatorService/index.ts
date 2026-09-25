@@ -4547,7 +4547,15 @@ console.log("succeededKeys", succeededKeys)
         ? new Contract(CAW_ACTIONS_ERC1271_ADDRESS, cawActionsAbi as any, httpProvider)
         : null
 
-      const CHUNK = 50_000
+      // Same knob as RawEventsGatherer: operators on a capped RPC set
+      // L2_LOG_CHUNK_BLOCKS to its eth_getLogs range limit. This scan used a
+      // hard-coded 50,000-block window, so on such an RPC every
+      // reconstruction threw and replication never submitted. Unset or
+      // invalid keeps the previous 50,000, so nodes that don't set it see no
+      // change. A failed window still throws and aborts the cycle: skipping
+      // a range would build the submission from incomplete data.
+      const envChunk = Number(process.env.L2_LOG_CHUNK_BLOCKS)
+      const CHUNK = Number.isInteger(envChunk) && envChunk > 0 ? envChunk : 50_000
       // processedEvents items carry .address so the decode dispatch can branch on
       // which contract emitted the event (ECDSA vs ERC-1271 calldata shape).
       let processedEvents: any[] = []
