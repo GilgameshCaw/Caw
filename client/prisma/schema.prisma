@@ -601,6 +601,10 @@ model Tip {
   id          Int      @id @default(autoincrement())
   senderId    Int
   recipientId Int
+  // Whole CAW. Postgres int4 tops out at 2,147,483,647, while the on-chain
+  // amount is a uint64, so a larger tip fails tx.tip.create in
+  // handleTipAction and the tip never gets a row or a notification.
+  // See the Draft PR that adds this note for the options.
   amount      Int
   cawId       Int?
   cawonce     Int
