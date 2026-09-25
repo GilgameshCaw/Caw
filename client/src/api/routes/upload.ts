@@ -285,11 +285,18 @@ router.post('/bug-report', bugReportUpload.array('media', 4), async (req: any, r
     const storage = mediaStorage()
     const urls = await Promise.all(files.map(async file => {
       const filename = generateFilename(file.mimetype)
-      return storage.put('images', filename, file.buffer, file.mimetype)
+      // Same EXIF strip + dimension check as POST / (L-1/L-2): a phone
+      // screenshot or photo attached to a bug report is served publicly
+      // from /uploads, so it must not carry GPS or device metadata.
+      const buf = await stripExifAndCheckDimensions(file.buffer)
+      return storage.put('images', filename, buf, file.mimetype)
     }))
 
     res.json({ success: true, urls, count: files.length })
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ success: false, error: error.message })
+    }
     console.error('Bug-report upload error:', error)
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to upload bug report image' })
   }
