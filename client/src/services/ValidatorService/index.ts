@@ -5208,10 +5208,22 @@ console.log("succeededKeys", succeededKeys)
       toBlock: number,
     ) {
       const target = await filter
+      // ethers v6: contract.filters.X(...) returns a PreparedTopicFilter
+      // ({ fragment, getTopicFilter() }), not a { address, topics } object.
+      // Reading target.topics gave undefined, so every scan ran with no
+      // topic filter at all: it fetched every event the archive emitted, and
+      // every one this ABI can decode (SubmissionCreated and ActionsArchived)
+      // reached the caller whichever event it asked for, with the indexed-arg
+      // filters (submitter, submissionId) silently dropped.
+      const topics: (string | string[] | null)[] =
+        typeof target?.getTopicFilter === 'function'
+          ? await target.getTopicFilter()
+          : (target?.topics ?? [])
+      const wantedEvent: string | undefined = target?.fragment?.name
       const rawLogs = await scanLogsForward(
         provider,
         target.address ?? archive.target,
-        target.topics ?? [],
+        topics,
         fromBlock,
         toBlock,
       )
@@ -5220,6 +5232,8 @@ console.log("succeededKeys", succeededKeys)
           try {
             const parsed = archive.interface.parseLog({ topics: log.topics as string[], data: log.data })
             if (!parsed) return null
+            // Belt and braces: never hand a caller an event it didn't ask for.
+            if (wantedEvent && parsed.name !== wantedEvent) return null
             return {
               args: parsed.args,
               blockNumber: log.blockNumber,
