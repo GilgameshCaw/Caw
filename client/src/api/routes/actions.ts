@@ -1336,10 +1336,14 @@ router.post('/', async (req, res) => {
           })
 
           if (existingLike) {
-            // Only apply optimistic-undo when the row is currently a
-            // confirmed LIKE — skipping pending rows avoids double
-            // decrements if the user double-taps mid-flight.
-            const wasConfirmedLike = !existingLike.pending && existingLike.action === 'LIKE'
+            // A row counts toward likeCount iff action === 'LIKE', pending
+            // or confirmed (the indexer's LIKE handler relies on this: it
+            // +1s when it meets a pending UNLIKE). So decrement whenever the
+            // row is a LIKE, including a still-pending one; skip only an
+            // already-pending UNLIKE (double-tap mid-flight). Decrementing
+            // only confirmed LIKEs left likeCount +1 when an unlike was sent
+            // before the indexer confirmed the like.
+            const wasConfirmedLike = existingLike.action === 'LIKE'
             await prisma.like.update({
               where: { userId_cawId: { userId: data.senderId, cawId: targetCaw.id } },
               data: { pending: true, action: 'UNLIKE' }
@@ -1401,8 +1405,10 @@ router.post('/', async (req, res) => {
               pending: true
             }
           })
-          // Optimistically increment likeCount if this is a new pending like
-          if (!existingLike) {
+          // Optimistically increment likeCount if the row wasn't counted: a
+          // new row, or a pending UNLIKE being re-liked (the unlike already
+          // decremented it).
+          if (!existingLike || existingLike.action === 'UNLIKE') {
             await countManager.onLikeCreated(prisma, {
               cawId: targetCaw.id,
               userId: data.senderId,
