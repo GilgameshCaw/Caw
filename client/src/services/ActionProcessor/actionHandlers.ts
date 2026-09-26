@@ -1603,7 +1603,7 @@ async function handleHideAction(
     // orphanedMedia.ts) so revertable hides don't lose data.
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { id: true, action: true, imageData: true },
+      select: { id: true, action: true, originalCawId: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1649,11 +1649,16 @@ async function handleHideAction(
         // table's replyCawId is the only reliable signal, same as the
         // recawCount-exclusion fix (#68) established for the reply-vs-quote
         // distinction elsewhere in this file.
-        const isReply = (await tx.reply.findFirst({
+        const replyRow = await tx.reply.findFirst({
           where: { replyCawId: target.id },
-          select: { id: true },
-        })) !== null
-        await countManager.onCawHidden(tx, { userId: senderId, action: target.action, isReply })
+          select: { cawId: true },
+        })
+        await countManager.onCawHidden(tx, {
+          userId: senderId,
+          action: target.action,
+          isReply: replyRow !== null,
+          parentCawId: replyRow?.cawId ?? target.originalCawId,
+        })
       }
     } else {
       console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)

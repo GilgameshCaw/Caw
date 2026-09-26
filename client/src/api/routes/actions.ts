@@ -927,7 +927,7 @@ router.post('/', async (req, res) => {
             // inside the same transaction as the write it accompanies.
             const target = await prisma.caw.findFirst({
               where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
-              select: { id: true, action: true },
+              select: { id: true, action: true, originalCawId: true },
             })
             // The status flip and the decrement commit together. If the
             // decrement fails the flip rolls back too (the caw stays visible
@@ -939,11 +939,16 @@ router.post('/', async (req, res) => {
                 data: { status: 'HIDDEN' }
               })
               if (result.count > 0 && target?.id) {
-                const isReply = (await tx.reply.findFirst({
+                const replyRow = await tx.reply.findFirst({
                   where: { replyCawId: target.id },
-                  select: { id: true },
-                })) !== null
-                await countManager.onCawHidden(tx, { userId: data.senderId, action: target.action, isReply })
+                  select: { cawId: true },
+                })
+                await countManager.onCawHidden(tx, {
+                  userId: data.senderId,
+                  action: target.action,
+                  isReply: replyRow !== null,
+                  parentCawId: replyRow?.cawId ?? target.originalCawId,
+                })
               }
             })
             console.log(`[Actions] Optimistic hide: user=${data.senderId} cawonce=${cawonce}`)

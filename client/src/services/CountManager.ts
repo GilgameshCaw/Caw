@@ -193,15 +193,20 @@ const countManager = {
 
   // =========================================================================
   // onCawHidden
-  // Called when a top-level post or quote is hidden (author's own delete,
-  // hide:caw: on-chain action). Mirrors onCawCreated's cawCount bump in
-  // reverse: a plain RECAW never bumped cawCount to begin with (it bumps
-  // recawCount instead), and neither did a reply (see onCawCreated's isReply
-  // branch) -- so this must ONLY decrement for the same "top-level post or
-  // quote" case onCawCreated increments for, using the same isReply signal
-  // the caller determines via the Reply table (replyCawId match), not a
-  // Caw-table column (originalCawId alone can't distinguish a reply from a
-  // quote -- both set it).
+  // Called when a caw is hidden (author's own delete, hide:caw: on-chain
+  // action). Reverses the bumps made at creation time:
+  //   - top-level post / quote: user.cawCount (onCawCreated)
+  //   - quote:  parent Caw.recawCount (onCawCreated's quote branch)
+  //   - reply:  parent Caw.commentCount (onReplyCreated)
+  // The parent-side reversals mirror the PENDING -> FAILED rollback in
+  // onStatusChanged; without them a hidden reply/quote leaves its parent's
+  // badge permanently one higher than the SUCCESS-filtered thread it opens.
+  // A plain RECAW never bumped cawCount; its recawCount rollback belongs to
+  // recaw-undo (onRecawRemoved), so nothing is done for it here.
+  // isReply comes from the Reply table (replyCawId match), not a Caw-table
+  // column (originalCawId alone can't distinguish a reply from a quote --
+  // both set it). parentCawId is the reply's Reply.cawId for replies and
+  // the caw's originalCawId for quotes.
   // =========================================================================
   async onCawHidden(
     tx: TxClient,
@@ -209,6 +214,7 @@ const countManager = {
       userId: number
       action: string
       isReply?: boolean
+      parentCawId?: number | null
     }
   ): Promise<void> {
     const isPlainRecaw = caw.action === 'RECAW'
@@ -219,12 +225,20 @@ const countManager = {
       return
     }
     if (caw.isReply) {
-      // Replies never bumped user.cawCount either (see onCawCreated) --
-      // nothing to decrement.
+      // Replies never bumped user.cawCount (see onCawCreated), but they did
+      // bump the parent's commentCount (onReplyCreated).
+      if (caw.parentCawId) {
+        await safeDecrement(tx, 'Caw', 'commentCount', 'id', caw.parentCawId)
+        log(`commentCount -1 on caw ${caw.parentCawId} (reply hidden)`)
+      }
       return
     }
     await safeDecrement(tx, 'User', 'cawCount', 'tokenId', caw.userId)
     log(`cawCount -1 on user ${caw.userId} (caw hidden)`)
+    if (caw.action === 'CAW' && caw.parentCawId) {
+      await safeDecrement(tx, 'Caw', 'recawCount', 'id', caw.parentCawId)
+      log(`recawCount -1 on caw ${caw.parentCawId} (quote hidden)`)
+    }
   },
 
   // =========================================================================
