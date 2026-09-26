@@ -661,7 +661,19 @@ export function useDmClient(tokenId?: number, username?: string) {
       // both auth AND identity registration in one signature. Otherwise we'd
       // prompt them for the generic auth message ("Verify wallet ownership
       // for CAW") which is the wrong message for this flow.
-      const identityCheck = await fetch(`${API_HOST}/api/dm/identity/${tokenId}`).then(r => r.json())
+      //
+      // Only a successful answer may declare the keys stale. On an error the
+      // endpoint answers { error } with no hasIdentity (a 500 on a DB blip),
+      // which would otherwise read as "no identity" and wipe keys the server
+      // still has registered, forcing a needless re-sign. Stop instead, so
+      // the user can retry.
+      const identityRes = await fetch(`${API_HOST}/api/dm/identity/${tokenId}`)
+      if (!identityRes.ok) {
+        const err = new Error(`Could not check your DM identity with the server (HTTP ${identityRes.status}). Please try again.`)
+        setError(err)
+        throw err
+      }
+      const identityCheck = await identityRes.json()
       if (!identityCheck.hasIdentity) {
         console.log('[DM] Server has no identity — treating cached keys as stale and re-deriving')
         clearKeyCache(tokenId)
