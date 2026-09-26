@@ -2537,20 +2537,44 @@ export const validatorService: Service = {
       const anyNewRejections = reSimRejections.some((m: string) => m && m.length > 0)
 
       if (anyNewRejections) {
-        // Mirror race (or stale state). Mark rejected entries failed; reset
-        // the rest to pending so they get a fresh batch on the next poll.
-        let failed = 0, pending = 0
-        entries.forEach((entry, i) => {
+        // Mirror race (or stale state). A "Cawonce already used" here usually
+        // means a peer mirror landed this same signed action first -- our
+        // tx reverted because theirs won. Run it through resolveCawonceUsed,
+        // the same rescue the bisect terminal branch and updateQueueStatuses
+        // use: validated_by_peer when the Action row matches, pending while
+        // it isn't indexed yet, failed only for a genuinely different action.
+        // Other rejections are marked failed; the rest reset to pending so
+        // they get a fresh batch on the next poll.
+        let failed = 0, pending = 0, byPeer = 0
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i]
           const reason = reSimRejections[i]
-          if (reason && reason.length > 0) {
-            verdictByEntryId.set(entry.id, { succeeded: false, reason })
-            failed++
-          } else {
+          if (!reason || reason.length === 0) {
             verdictByEntryId.set(entry.id, { pending: true })
             pending++
+            continue
           }
-        })
-        console.log(`[Validator/recovery] Re-sim flagged ${failed} entries — marked failed, ${pending} reset to pending`)
+          if (reason.includes('Cawonce already used')) {
+            const data = (entry.payload as any).data
+            const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
+            if (resolution === 'done') {
+              await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
+              verdictByEntryId.set(entry.id, { succeeded: true })
+              console.log(`[Validator/recovery] ↺ TxQueue #${entry.id} already landed via peer — validated_by_peer`)
+              byPeer++
+              continue
+            }
+            if (resolution === 'awaiting_indexer') {
+              verdictByEntryId.set(entry.id, { pending: true })
+              console.log(`[Validator/recovery] … TxQueue #${entry.id} cawonce used but Action not yet indexed — deferring`)
+              pending++
+              continue
+            }
+          }
+          verdictByEntryId.set(entry.id, { succeeded: false, reason })
+          failed++
+        }
+        console.log(`[Validator/recovery] Re-sim flagged ${failed + byPeer} entries — ${byPeer} landed via peer, ${failed} marked failed, ${pending} reset to pending`)
         return true
       }
 
