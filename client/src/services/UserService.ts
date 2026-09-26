@@ -416,6 +416,15 @@ export function isPlaceholderUser(u: { tokenId: number; username: string; addres
  * but tokenIds are 1-indexed, hence `tokenId - 1`. Same convention here.
  */
 export async function refreshUserFromChain(tokenId: number): Promise<{ tokenId: number; username: string; address: string }> {
+  // tokenIds start at 1, so 0 (or anything that is not a positive integer)
+  // cannot exist on L1. It cannot even be asked: for 0, `usernames(tokenId - 1)`
+  // is usernames(-1), which ethers rejects with INVALID_ARGUMENT before any
+  // RPC call. That does not match the stale check below, so the placeholder
+  // sweep would log it as a transient failure and retry it every tick
+  // instead of marking the row stale.
+  if (!Number.isSafeInteger(tokenId) || tokenId < 1) {
+    throw new StaleTokenError(`Token ${tokenId} is not a valid tokenId (tokenIds start at 1)`)
+  }
   const { contract: l1Contract } = await getL1Provider()
   let owner: string
   let username: string
