@@ -171,6 +171,35 @@ async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authe
 }
 
 /**
+ * Reserve one slot of a GLOBAL daily cap with a single INCR, so concurrent
+ * requests can't all pass a peek and then overshoot the cap together.
+ * Returns 'ok' (slot held), 'full' (over the cap; the slot is already given
+ * back) or 'error' (Redis failed; the caller keeps its own fail-open or
+ * fail-closed choice). A held slot must be released with releaseGlobalSlot()
+ * when the op does not succeed, so the cap still counts successes only.
+ */
+async function reserveGlobalSlot(key: string, cap: number): Promise<'ok' | 'full' | 'error'> {
+  let n: number
+  try {
+    n = await redis.incr(key)
+  } catch {
+    return 'error'
+  }
+  if (n === 1) {
+    try { await redis.expire(key, RATE_WINDOW_SECONDS) } catch { /* best-effort */ }
+  }
+  if (n > cap) {
+    await releaseGlobalSlot(key)
+    return 'full'
+  }
+  return 'ok'
+}
+
+async function releaseGlobalSlot(key: string): Promise<void> {
+  try { await redis.decr(key) } catch { /* best-effort */ }
+}
+
+/**
  * Per-IP rate limit for GET /api/sponsor/code/:code.
  * Returns true if allowed. Always does the DB lookup regardless (timing uniformity).
  * On exceed returns false — caller responds { valid: false } (200, not 429) so
@@ -683,7 +712,8 @@ router.post('/delegate-l2', async (req, res) => {
   // ceiling on TOTAL successful delegations/day across ALL IPs, sized to legit
   // signup volume (DELEGATE_L2_GLOBAL_DAILY, default 500). The treasury-low guard
   // in sponsorDelegateL2 remains the ultimate backstop; this caps the blast
-  // radius long before funds run low. Peek-only here (incremented on success).
+  // radius long before funds run low. This peek only rejects early and cheaply;
+  // the slot itself is reserved atomically right before the op, further down.
   try {
     const globalRaw = await redis.get(DELEGATE_L2_GLOBAL_KEY)
     const globalCount = globalRaw ? parseInt(globalRaw, 10) : 0
@@ -707,8 +737,25 @@ router.post('/delegate-l2', async (req, res) => {
     return res.status(400).json({ error: 'VALIDATION', detail })
   }
 
-  const result = await service.sponsorDelegateL2(params)
+  // Reserve the global slot atomically right before the op, so concurrent
+  // requests that all passed the peek above can't overshoot the cap together.
+  // Given back if the op fails, so the cap still counts successes only.
+  // Fails OPEN on a Redis error, as the peek does.
+  const gSlot = await reserveGlobalSlot(DELEGATE_L2_GLOBAL_KEY, DELEGATE_L2_GLOBAL_DAILY)
+  if (gSlot === 'full') {
+    console.warn(`[sponsor/delegate-l2] GLOBAL daily cap hit (${DELEGATE_L2_GLOBAL_DAILY}) — possible griefing`)
+    return res.status(429).json({
+      error: 'RATE_LIMITED',
+      detail: 'L2-delegation is temporarily at capacity. Quick Sign still works; try again later.',
+    })
+  }
+  const slotHeld = gSlot === 'ok'
+  const result = await service.sponsorDelegateL2(params).catch(async (e) => {
+    if (slotHeld) await releaseGlobalSlot(DELEGATE_L2_GLOBAL_KEY)
+    throw e
+  })
   if (isSponsorError(result)) {
+    if (slotHeld) await releaseGlobalSlot(DELEGATE_L2_GLOBAL_KEY)
     const status = result.error === 'TREASURY_LOW' ? 503
       : result.error === 'L2_DISABLED' ? 503
       : result.error === 'ALREADY_DELEGATED_ELSEWHERE' ? 409
@@ -716,13 +763,6 @@ router.post('/delegate-l2', async (req, res) => {
     return res.status(status).json(result)
   }
   void recordSponsorUse(ip, 'delegate-l2')   // per-IP count; fire-and-forget
-  // Bump the global daily counter on success (24h TTL on first use).
-  void (async () => {
-    try {
-      const n = await redis.incr(DELEGATE_L2_GLOBAL_KEY)
-      if (n === 1) await redis.expire(DELEGATE_L2_GLOBAL_KEY, RATE_WINDOW_SECONDS)
-    } catch { /* non-fatal — op already succeeded */ }
-  })()
   return res.status(200).json(result)
 })
 
@@ -1721,17 +1761,18 @@ router.post('/execute', async (req, res) => {
     if (!faucetOk) {
       return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'Faucet limit reached for this wallet. Try again later.' })
     }
-    // Global daily cap (EOA-creation defense) — peek here, incremented on success.
+    // Global daily cap (EOA-creation defense). The slot is reserved atomically
+    // before the relay and given back if the relay fails, so the cap still
+    // counts successes only, but concurrent requests can't all pass a peek and
+    // overshoot it.
     // Fails CLOSED on a Redis error (no economic backstop; relayer eats the gas).
-    try {
-      const gRaw = await redis.get(FAUCET_GLOBAL_KEY)
-      const gCount = gRaw ? parseInt(gRaw, 10) : 0
-      if (gCount >= FAUCET_GLOBAL_DAILY) {
-        console.warn(`[sponsor/faucet] GLOBAL daily cap hit (${gCount}/${FAUCET_GLOBAL_DAILY}) — possible griefing`)
-        return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'The faucet is temporarily at capacity. Try again later.' })
-      }
-    } catch {
+    const gSlot = await reserveGlobalSlot(FAUCET_GLOBAL_KEY, FAUCET_GLOBAL_DAILY)
+    if (gSlot === 'error') {
       return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'The faucet is temporarily unavailable. Try again later.' })
+    }
+    if (gSlot === 'full') {
+      console.warn(`[sponsor/faucet] GLOBAL daily cap hit (${FAUCET_GLOBAL_DAILY}) — possible griefing`)
+      return res.status(429).json({ error: 'FAUCET_RATE_LIMIT', detail: 'The faucet is temporarily at capacity. Try again later.' })
     }
     // Skip the fee-repay invariant below — relay the mint gas-free.
     const result = await service.relayExecuteBatch(
@@ -1741,8 +1782,12 @@ router.post('/execute', async (req, res) => {
       body.sig,
       0n,    // forwardedTotalValue: a mint carries no value
       false, // forwardValue
-    )
+    ).catch(async (e) => {
+      await releaseGlobalSlot(FAUCET_GLOBAL_KEY)
+      throw e
+    })
     if (isSponsorError(result)) {
+      await releaseGlobalSlot(FAUCET_GLOBAL_KEY)
       const status = result.error === 'TREASURY_LOW' ? 503 : 400
       return res.status(status).json(result)
     }
@@ -1750,13 +1795,6 @@ router.post('/execute', async (req, res) => {
     // limit actually decrements. Keyed by the EOA, not IP — a faucet mint proves
     // control of that wallet, and IP would over-restrict shared networks.
     void recordSponsorUse(smartEoaLc, 'faucet')
-    // Bump the global daily counter on success (mirrors delegate-l2).
-    void (async () => {
-      try {
-        const n = await redis.incr(FAUCET_GLOBAL_KEY)
-        if (n === 1) await redis.expire(FAUCET_GLOBAL_KEY, RATE_WINDOW_SECONDS)
-      } catch { /* best-effort; the peek above already gated */ }
-    })()
     return res.json(result)
   }
 
