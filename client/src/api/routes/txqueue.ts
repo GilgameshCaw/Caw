@@ -325,14 +325,18 @@ router.post(
           await prisma.$transaction(async (tx: any) => {
             const existing = await tx.like.findUnique({
               where: { userId_cawId: { userId: entry.senderId, cawId: targetCaw.id } },
-              select: { id: true, pending: true },
+              select: { id: true, pending: true, action: true },
             })
             // Only undo if the row is still pending — a confirmed like
             // for the same (user, caw) means the indexer raced ahead
-            // and we should leave it alone.
+            // and we should leave it alone. A pending UNLIKE (a later
+            // unlike already flipped and decremented it) isn't counted,
+            // so remove it without decrementing again.
             if (existing && existing.pending) {
               await tx.like.delete({ where: { id: existing.id } })
-              await countManager.onLikeRemoved(tx, { cawId: targetCaw.id, userId: entry.senderId })
+              if (existing.action === 'LIKE') {
+                await countManager.onLikeRemoved(tx, { cawId: targetCaw.id, userId: entry.senderId })
+              }
             }
           })
         }

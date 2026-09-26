@@ -58,10 +58,13 @@ async function cleanupPendingLikes() {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
 
+    // Age by updatedAt, not createdAt: /api/actions flips an existing
+    // confirmed row to a pending UNLIKE in place, so an old row's
+    // createdAt says nothing about how long it has been pending.
     const stalePendingLikes = await prisma.like.findMany({
       where: {
         pending: true,
-        createdAt: {
+        updatedAt: {
           lt: fiveMinutesAgo  // Check after just 5 minutes
         }
       },
@@ -81,9 +84,13 @@ async function cleanupPendingLikes() {
         const action = await prisma.action.findFirst({
           where: {
             senderId: pendingLike.userId,
-            actionType: {
-              in: ['LIKE', 'UNLIKE']
-            },
+            // Only the action this pending row stands for, indexed after the
+            // row entered that state. Matching the latest LIKE-or-UNLIKE
+            // "confirmed" a pending UNLIKE as a LIKE using the previous,
+            // older LIKE action, with no count change; the indexer's UNLIKE
+            // then removed a confirmed LIKE and decremented a second time.
+            actionType: pendingLike.action,
+            createdAt: { gte: pendingLike.updatedAt },
             AND: [
               {
                 data: {
@@ -104,7 +111,13 @@ async function cleanupPendingLikes() {
           }
         })
 
-        if (action) {
+        if (action && pendingLike.action === 'UNLIKE') {
+          // The unlike landed but the indexer didn't remove the row. The
+          // count was already decremented at submit time; just drop it.
+          await prisma.like.deleteMany({
+            where: { userId: pendingLike.userId, cawId: pendingLike.cawId, pending: true, action: 'UNLIKE' },
+          })
+        } else if (action) {
           // Action exists on-chain, mark like as confirmed
           logger.log(` Confirming like for user ${pendingLike.userId} on caw ${pendingLike.cawId} (cawonce: ${pendingLike.caw.cawonce})`)
 
@@ -124,7 +137,7 @@ async function cleanupPendingLikes() {
 
           // Note: count was incremented at /api/actions optimistic write time;
           // PENDING→SUCCESS is a no-op so we only flip pending here.
-        } else if (pendingLike.createdAt < thirtyMinutesAgo) {
+        } else if (pendingLike.action === 'LIKE' && pendingLike.updatedAt < thirtyMinutesAgo) {
           // No action found after 30 minutes, delete the optimistic like.
           //
           // Previously this deleted the row and recalculated Caw.likeCount
