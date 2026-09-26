@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
-import { useSignAndSubmitAction } from '~/api/actions'
+import { useSignAndSubmitAction, wasBroadcastToPeers } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { buildVoteText } from '~/../../../tools/pollMarker'
 import type { CawItem } from '~/types'
@@ -448,14 +448,15 @@ const PollDisplay: React.FC<Props> = ({ caw, optionLabelsOverride }) => {
     // run anyway).
     if (txIdsToCancel.length > 0) {
       await Promise.allSettled(
-        txIdsToCancel.map(id =>
-          apiFetch(`/api/txqueue/${id}/cancel`, { method: 'POST' })
+        txIdsToCancel.map(id => {
+          if (wasBroadcastToPeers(id)) console.warn(`[cancel] TxQueue ${id} was already broadcast to peers; a local cancel may not stop it landing`)
+          return apiFetch(`/api/txqueue/${id}/cancel`, { method: 'POST' })
             .catch((err: any) => {
               if (!String(err?.message || '').includes('409')) {
                 console.warn(`[PollDisplay] cancel txQueueId=${id} failed:`, err)
               }
             })
-        )
+        })
       )
     }
 
