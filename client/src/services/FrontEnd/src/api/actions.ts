@@ -52,6 +52,15 @@ const clientAuthCache = new Map<number, boolean>()
  * safest default — a too-low baseline means the clearing rule needs the
  * absolute stake to reach the deposit amount before firing, which is correct).
  */
+// TxQueue ids whose signed payload has been sent to peer instances. After
+// that, /api/txqueue/:id/cancel only stops the local row: a peer's validator
+// can still submit its copy, so a cancel that returns 200 may not cancel.
+// Recorded so cancel callsites can at least tell; see the 20s broadcast below.
+const broadcastToPeers = new Set<number>()
+export function wasBroadcastToPeers(txQueueId: number | null | undefined): boolean {
+  return txQueueId != null && broadcastToPeers.has(txQueueId)
+}
+
 export async function readOnChainStakeForHint(tokenId: number): Promise<bigint> {
   try {
     const result = await readContract(wagmiConfig, {
@@ -1941,6 +1950,7 @@ export function useSignAndSubmitAction() {
               .catch(() => verify.recordFailure(host))
           }
           if (otherHosts.length > 0) {
+            if (broadcastTxQueueId) broadcastToPeers.add(broadcastTxQueueId)
             console.log(`[Actions] Broadcast to ${otherHosts.length} redundant instance(s)`)
           }
         } catch {}

@@ -6,7 +6,7 @@ import { getJSON, setJSON } from "~/utils/safeStorage"
 import React, { useState, useRef, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import { useSignAndSubmitAction } from '~/api/actions'
+import { useSignAndSubmitAction, wasBroadcastToPeers } from '~/api/actions'
 import { useAccount, useChainId } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import {
@@ -543,6 +543,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // pending UI right now — the ProfileChooser "−X CAW pending" line
     // updates instantly instead of after the cancel POST roundtrip.
     const cancelledTxQueueId = pendingLikeTxQueueId
+    if (wasBroadcastToPeers(cancelledTxQueueId)) console.warn(`[cancel] TxQueue ${cancelledTxQueueId} was already broadcast to peers; a local cancel may not stop it landing`)
     const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
     // If we're cancelling an UNLIKE (server already decremented likeCount and
     // shows hasLiked=false), the cancel will eventually restore the row to
@@ -1810,6 +1811,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           if (pendingRecawTxQueueId) {
                             setBusyRecaw(true)
                             const cancelledTxQueueId = pendingRecawTxQueueId
+                            if (wasBroadcastToPeers(cancelledTxQueueId)) console.warn(`[cancel] TxQueue ${cancelledTxQueueId} was already broadcast to peers; a local cancel may not stop it landing`)
                             const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
                             setRecawPending(false)
                             setRecawCountAdj(0)
