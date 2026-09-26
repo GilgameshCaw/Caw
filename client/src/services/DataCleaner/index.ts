@@ -867,6 +867,136 @@ const ORPHAN_ACTION_LOOKBACK_MS = 60 * 60 * 1000  // 1 hour
 const ORPHAN_ACTION_DEBOUNCE_MS = 2 * 60 * 1000   // wait 2m so we don't race with normal processing
 const ORPHAN_ACTION_MAX_PER_TICK = 100
 
+/**
+ * True when a later Action from the same sender on the same chain targets
+ * the same object as `action` — a like later undone, a recaw later removed
+ * with hide:recaw, a follow later reversed (or any of those later redone).
+ *
+ * Only the latest action on a target describes the state the chain intends.
+ * An earlier one that "looks orphaned" is usually not orphaned at all: its
+ * domain row was removed on purpose by the later action (UNLIKE deletes the
+ * Like row, hide:recaw deletes the RECAW row, UNFOLLOW flips the Follow).
+ * Re-running it recreates the row, the later action's own replay removes it
+ * again, and the pair repeats every tick for the whole lookback window.
+ * For a quote (RECAW with text) each recreation also takes the confirmed-new
+ * path and bumps user.cawCount, which nothing ever gives back.
+ *
+ * Same feedback-loop class as the hide:caw fix in checkOtherExists, which
+ * closed it for hide actions but not for the actions they undo.
+ */
+async function isSupersededByLaterAction(action: {
+  chainId: number
+  senderId: number
+  cawonce: number
+  actionType: string
+}, rawAction: RawAction): Promise<boolean> {
+  const later = {
+    chainId: action.chainId,
+    senderId: action.senderId,
+    cawonce: { gt: action.cawonce },
+  }
+  const sameCaw = (receiverId: number, receiverCawonce: number) => [
+    { data: { path: ['receiverId'], equals: receiverId } },
+    { data: { path: ['receiverCawonce'], equals: receiverCawonce } },
+  ]
+
+  let recawTarget: [number, number] | null = null
+  switch (action.actionType) {
+    case 'LIKE':
+    case 'UNLIKE': {
+      if (!rawAction.receiverId) return false
+      const hit = await prisma.action.findFirst({
+        where: {
+          ...later,
+          actionType: { in: ['LIKE', 'UNLIKE'] },
+          AND: sameCaw(rawAction.receiverId, rawAction.receiverCawonce || 0),
+        },
+        select: { id: true },
+      })
+      return hit !== null
+    }
+    case 'FOLLOW':
+    case 'UNFOLLOW': {
+      if (!rawAction.receiverId) return false
+      const hit = await prisma.action.findFirst({
+        where: {
+          ...later,
+          actionType: { in: ['FOLLOW', 'UNFOLLOW'] },
+          data: { path: ['receiverId'], equals: rawAction.receiverId },
+        },
+        select: { id: true },
+      })
+      return hit !== null
+    }
+    case 'RECAW':
+      if (!rawAction.receiverId) return false
+      recawTarget = [rawAction.receiverId, rawAction.receiverCawonce || 0]
+      break
+    case 'OTHER': {
+      if (!rawAction.text?.startsWith('hide:recaw:')) return false
+      const parts = rawAction.text.replace('hide:recaw:', '').split(':')
+      const receiverId = parseInt(parts[0], 10)
+      const receiverCawonce = parseInt(parts[1], 10)
+      if (Number.isNaN(receiverId) || Number.isNaN(receiverCawonce)) return false
+      recawTarget = [receiverId, receiverCawonce]
+      break
+    }
+    default:
+      return false
+  }
+
+  const [receiverId, receiverCawonce] = recawTarget
+  const hit = await prisma.action.findFirst({
+    where: {
+      ...later,
+      OR: [
+        { actionType: 'RECAW', AND: sameCaw(receiverId, receiverCawonce) },
+        { actionType: 'OTHER', data: { path: ['text'], equals: `hide:recaw:${receiverId}:${receiverCawonce}` } },
+      ],
+    },
+    select: { id: true },
+  })
+  return hit !== null
+}
+
+/**
+ * True when the same sender has a later submission (higher cawonce) that is
+ * still on its way to becoming an Action row: queued, submitted, or on chain
+ * but not yet indexed. isSupersededByLaterAction can only see a later action
+ * once its Action row exists, so an undo in that window (typically a minute
+ * or two) doesn't protect the action it undoes yet. The optimistic submit
+ * path has already removed the domain row by then, and recovering the
+ * earlier action would put it back until the undo is indexed.
+ *
+ * Deferring costs a real orphan a tick or two at most; it is recovered once
+ * the sender's queue has drained. Only recent rows count, so a TxQueue row
+ * stuck in a non-terminal state can't hold recovery back indefinitely.
+ */
+const IN_FLIGHT_LOOKBACK_MS = 10 * 60 * 1000  // 10 minutes
+const IN_FLIGHT_DEAD_STATUSES = ['failed', 'cancelled']
+
+async function hasInFlightLaterSubmission(action: {
+  chainId: number
+  senderId: number
+  cawonce: number
+}): Promise<boolean> {
+  const queued = await prisma.txQueue.findMany({
+    where: {
+      senderId: action.senderId,
+      cawonce: { gt: action.cawonce },
+      status: { notIn: IN_FLIGHT_DEAD_STATUSES },
+      createdAt: { gt: new Date(Date.now() - IN_FLIGHT_LOOKBACK_MS) },
+    },
+    select: { cawonce: true },
+  })
+  const cawonces = [...new Set(queued.map(q => q.cawonce).filter((c): c is number => c != null))]
+  if (cawonces.length === 0) return false
+  const indexed = await prisma.action.count({
+    where: { chainId: action.chainId, senderId: action.senderId, cawonce: { in: cawonces } },
+  })
+  return indexed < cawonces.length
+}
+
 async function cleanupOrphanActions() {
   logger.log('Reconciling Action rows missing their domain side-effects...')
   try {
@@ -883,13 +1013,31 @@ async function cleanupOrphanActions() {
     })
 
     let recovered = 0
+    let superseded = 0
+    let deferred = 0
     for (const action of candidates) {
       const rawAction = action.data as unknown as RawAction
       try {
+        // A later action on the same target decides the final state; an
+        // earlier one whose row it removed is not an orphan (see
+        // isSupersededByLaterAction).
+        if (await isSupersededByLaterAction(action, rawAction)) {
+          superseded++
+          continue
+        }
+
         // Cheap domain-object check — uses the same predicate the live
         // path uses (domainObjectChecks.ts). True means done, skip.
         const exists = await checkDomainObjectExists(prisma, action as any, rawAction, action.actionType)
         if (exists) continue
+
+        // Looks orphaned -- but a later submission from the same sender may
+        // be the undo that removed the row, not yet indexed (see
+        // hasInFlightLaterSubmission). Wait for it.
+        if (await hasInFlightLaterSubmission(action)) {
+          deferred++
+          continue
+        }
 
         // Side-effects never landed. Pre-resolve users (same hazard
         // mitigation as the live path: keeps L1 RPC reads out of the
@@ -911,8 +1059,8 @@ async function cleanupOrphanActions() {
       }
     }
 
-    if (recovered > 0) {
-      logger.log(`Orphan reconciliation: recovered ${recovered}/${candidates.length} action(s)`)
+    if (recovered > 0 || superseded > 0 || deferred > 0) {
+      logger.log(`Orphan reconciliation: recovered ${recovered}/${candidates.length} action(s), skipped ${superseded} superseded by a later action, deferred ${deferred} behind an unindexed later submission`)
     }
   } catch (err) {
     logger.error('Fatal error during orphan-action reconciliation:', err)
