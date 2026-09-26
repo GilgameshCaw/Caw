@@ -28,8 +28,8 @@ function decompressActionText(textField: unknown): string {
 import { pokeIndexTokenId } from '../util/indexerPoke'
 import { countManager } from '../../services/CountManager'
 import { parsePoll, parseVoteText } from '../../tools/pollMarker'
-import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
+import { addAuthorization, createSession } from '../sessionStore'
+import { SESSION_COOKIE_NAME, sessionCookieOptions, extractSession } from '../middleware/auth'
 import { cawProfileLedgerAbi, cawActionsAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { packActions, getPackedActionSlices } from '../../utils/packActions'
@@ -623,9 +623,18 @@ router.post('/', async (req, res) => {
     // Without this, Quick-Sign-only users never get an HTTP session and see
     // "Verify Wallet" on pages like Notifications despite actively using the app.
     let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
-    let sessionToken = req.headers['x-session-token'] as string | undefined
+    // Resolve the caller's existing session the same way every other route
+    // does (extractSession: HttpOnly cookie first, x-session-token header as
+    // fallback, plus the stale-cookie → header fallback). Reading only the
+    // header here meant that after a page reload — the FE no longer persists
+    // sessionToken, so the header is absent — a user with a perfectly valid
+    // cookie session got a brand-new 1-year session minted on their first
+    // action, and the old one was never used again. Those accumulate in
+    // caw:session / caw:tokenAuth for the full SESSION_TTL.
+    if (req.sessionData === undefined) await extractSession(req)
+    let sessionToken = req.sessionToken ?? undefined
     try {
-      let session = sessionToken ? await getSession(sessionToken) : null
+      let session = req.sessionData ?? null
       const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
 
       if (!alreadyAuthorized) {
