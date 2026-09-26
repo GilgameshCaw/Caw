@@ -143,12 +143,14 @@ export interface ShapedCaw {
 
 export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
-  // Find recaws or quotes (exclude plain replies which are CAW with content but have a Reply record)
-  // A RECAW is always a repost. A CAW with content is a quote IF it has no Reply record.
-  // Since repliesOnThis tracks Reply records, we can cross-check.
-  const replyIds = new Set((raw.repliesOnThis || []).map((r: any) => r.replyCawId).filter(Boolean))
+  // The viewer's plain recaw of this caw, if any. Quotes are stored as
+  // RECAW + text (PostForm sends them as 'recaw'), but a quote is a post of
+  // its own, not a repost: counting it here turned the viewer's recaw button
+  // into "Undo repost", and that undo (hide:recaw) removed the quote. Only a
+  // RECAW with empty content is a repost -- same predicate as the feed's
+  // NOT { action: 'RECAW', content: '' } in routes/caws.ts.
   const userRecawOrQuote = raw.recaws?.find((r: any) =>
-    r.action === 'RECAW' || (r.action === 'CAW' && r.content && !replyIds.has(r.id))
+    r.action === 'RECAW' && !r.content
   )
   const userReply = raw.repliesOnThis && raw.repliesOnThis[0]
 

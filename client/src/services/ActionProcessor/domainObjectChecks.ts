@@ -230,7 +230,7 @@ async function checkOtherExists(
     if (!originalCaw) return false  // not yet indexed locally; let handler run
     const senderUserId = await findOrCreateUser(action.senderId)
     const existingRecaw = await tx.caw.findFirst({
-      where: { userId: senderUserId, originalCawId: originalCaw.id, action: 'RECAW' },
+      where: { userId: senderUserId, originalCawId: originalCaw.id, action: 'RECAW', content: '' },
       select: { id: true },
     })
     return existingRecaw === null

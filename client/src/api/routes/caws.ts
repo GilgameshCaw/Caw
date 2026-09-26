@@ -753,7 +753,8 @@ router.delete('/:originalCawId/recaw', requireAuth({
 
     // Find the user's recaw of this caw (confirmed or pending)
     const recaw = await prisma.caw.findFirst({
-      where: { originalCawId, userId, action: 'RECAW' },
+      // Plain recaw only -- a quote is also RECAW (with text).
+      where: { originalCawId, userId, action: 'RECAW', content: '' },
       select: { id: true, cawonce: true }
     })
 
@@ -854,7 +855,7 @@ router.delete('/:originalCawId/recaw', requireAuth({
         // onCawCreated fires at submit time for RECAW, so if we delete this row
         // we must undo the optimistic recawCount increment on the parent.
         const cawResult = await tx.caw.deleteMany({
-          where: { originalCawId, userId, action: 'RECAW', status: 'PENDING' }
+          where: { originalCawId, userId, action: 'RECAW', content: '', status: 'PENDING' }
         })
         pendingCawDeleted = cawResult.count
         if (cawResult.count > 0) {
