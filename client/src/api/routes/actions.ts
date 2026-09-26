@@ -960,7 +960,9 @@ router.post('/', async (req, res) => {
             if (originalCaw) {
               await prisma.$transaction(async (tx) => {
                 const deleted = await tx.caw.deleteMany({
-                  where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
+                  // Plain recaws only: a quote is also RECAW (with text) and
+                  // is removed through hide:caw, not by undoing a repost.
+                  where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW', content: '' }
                 })
                 if (deleted.count > 0) {
                   await countManager.onRecawRemoved(tx, { originalCawId: originalCaw.id, senderId: data.senderId, amount: deleted.count })

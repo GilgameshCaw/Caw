@@ -1679,8 +1679,10 @@ async function handleHideAction(
     }
 
     // Delete the sender's recaw of that post
+    // Plain recaws only: a quote is also RECAW (with text) and is removed
+    // through hide:caw, not by undoing a repost.
     const deleted = await tx.caw.deleteMany({
-      where: { userId: senderId, originalCawId: originalCaw.id, action: 'RECAW' }
+      where: { userId: senderId, originalCawId: originalCaw.id, action: 'RECAW', content: '' }
     })
 
     if (deleted.count > 0) {
