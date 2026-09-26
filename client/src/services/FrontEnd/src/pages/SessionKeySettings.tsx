@@ -199,12 +199,13 @@ const SessionKeySettings: React.FC = () => {
       console.error('[SessionKey] Revoke failed:', err)
       if (err instanceof RevokeNotConfirmedError) setRevokeFailed(true)
       else setError(t('quick_sign.error.generic'))
-      // The key is still here (a failed revoke no longer clears it). If this ran
-      // from the toggle, drop its OFF intent so the display follows the session
-      // again and the error is visible instead of collapsed away.
-      setRevealIntent(null)
     } finally {
       setLoading(false)
+      // Let the toggle follow the actual state again, whichever way the revoke
+      // went. An earlier toggle-ON (to open the activate panel) would otherwise
+      // keep it showing ON after a successful revoke from the card's button, and
+      // a toggle-OFF would hide the card, and its error, after a failed one.
+      setRevealIntent(null)
     }
   }
 
