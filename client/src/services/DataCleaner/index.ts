@@ -959,6 +959,44 @@ async function isSupersededByLaterAction(action: {
   return hit !== null
 }
 
+/**
+ * True when the same sender has a later submission (higher cawonce) that is
+ * still on its way to becoming an Action row: queued, submitted, or on chain
+ * but not yet indexed. isSupersededByLaterAction can only see a later action
+ * once its Action row exists, so an undo in that window (typically a minute
+ * or two) doesn't protect the action it undoes yet. The optimistic submit
+ * path has already removed the domain row by then, and recovering the
+ * earlier action would put it back until the undo is indexed.
+ *
+ * Deferring costs a real orphan a tick or two at most; it is recovered once
+ * the sender's queue has drained. Only recent rows count, so a TxQueue row
+ * stuck in a non-terminal state can't hold recovery back indefinitely.
+ */
+const IN_FLIGHT_LOOKBACK_MS = 10 * 60 * 1000  // 10 minutes
+const IN_FLIGHT_DEAD_STATUSES = ['failed', 'cancelled']
+
+async function hasInFlightLaterSubmission(action: {
+  chainId: number
+  senderId: number
+  cawonce: number
+}): Promise<boolean> {
+  const queued = await prisma.txQueue.findMany({
+    where: {
+      senderId: action.senderId,
+      cawonce: { gt: action.cawonce },
+      status: { notIn: IN_FLIGHT_DEAD_STATUSES },
+      createdAt: { gt: new Date(Date.now() - IN_FLIGHT_LOOKBACK_MS) },
+    },
+    select: { cawonce: true },
+  })
+  const cawonces = [...new Set(queued.map(q => q.cawonce).filter((c): c is number => c != null))]
+  if (cawonces.length === 0) return false
+  const indexed = await prisma.action.count({
+    where: { chainId: action.chainId, senderId: action.senderId, cawonce: { in: cawonces } },
+  })
+  return indexed < cawonces.length
+}
+
 async function cleanupOrphanActions() {
   logger.log('Reconciling Action rows missing their domain side-effects...')
   try {
@@ -976,6 +1014,7 @@ async function cleanupOrphanActions() {
 
     let recovered = 0
     let superseded = 0
+    let deferred = 0
     for (const action of candidates) {
       const rawAction = action.data as unknown as RawAction
       try {
@@ -991,6 +1030,14 @@ async function cleanupOrphanActions() {
         // path uses (domainObjectChecks.ts). True means done, skip.
         const exists = await checkDomainObjectExists(prisma, action as any, rawAction, action.actionType)
         if (exists) continue
+
+        // Looks orphaned -- but a later submission from the same sender may
+        // be the undo that removed the row, not yet indexed (see
+        // hasInFlightLaterSubmission). Wait for it.
+        if (await hasInFlightLaterSubmission(action)) {
+          deferred++
+          continue
+        }
 
         // Side-effects never landed. Pre-resolve users (same hazard
         // mitigation as the live path: keeps L1 RPC reads out of the
@@ -1012,8 +1059,8 @@ async function cleanupOrphanActions() {
       }
     }
 
-    if (recovered > 0 || superseded > 0) {
-      logger.log(`Orphan reconciliation: recovered ${recovered}/${candidates.length} action(s), skipped ${superseded} superseded by a later action`)
+    if (recovered > 0 || superseded > 0 || deferred > 0) {
+      logger.log(`Orphan reconciliation: recovered ${recovered}/${candidates.length} action(s), skipped ${superseded} superseded by a later action, deferred ${deferred} behind an unindexed later submission`)
     }
   } catch (err) {
     logger.error('Fatal error during orphan-action reconciliation:', err)
