@@ -939,11 +939,16 @@ router.post('/', async (req, res) => {
                 data: { status: 'HIDDEN' }
               })
               if (result.count > 0 && target?.id) {
-                const isReply = (await tx.reply.findFirst({
+                const replyRow = await tx.reply.findFirst({
                   where: { replyCawId: target.id },
-                  select: { id: true },
-                })) !== null
-                await countManager.onCawHidden(tx, { userId: data.senderId, action: target.action, isReply })
+                  select: { cawId: true },
+                })
+                await countManager.onCawHidden(tx, {
+                  userId: data.senderId,
+                  action: target.action,
+                  isReply: replyRow !== null,
+                  parentCawId: replyRow?.cawId ?? null,
+                })
               }
             })
             console.log(`[Actions] Optimistic hide: user=${data.senderId} cawonce=${cawonce}`)
