@@ -144,7 +144,10 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
     tFd.append('baseFilename', baseFilename)
     tFd.append('width', '96')
     tFd.append('tokenId', String(tokenId))
-    await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
+    const tRes = await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
+    if (!tRes.ok) {
+      console.warn(`[uploadAvatar] thumb upload rejected (${tRes.status}), will fall back to main`)
+    }
   } catch (err) {
     console.warn('[uploadAvatar] thumb generation failed, will fall back to main:', err)
   }
@@ -160,9 +163,10 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
  *     640 — both ~5–10× smaller than the 1024 they replace at those slots.
  *   - 2048: lightbox/click-to-expand only.
  *
- * Variants are uploaded sequentially so an early failure (auth, quota,
- * network) doesn't pile follow-ups on top. Each variant is best-effort —
- * a missing inline variant just means the renderer drops to the next-up
+ * Variants are uploaded sequentially and each one is best-effort: an HTTP
+ * rejection (e.g. 413 over the image cap) is logged and the next variant is
+ * still attempted, and a network error is caught the same way. A missing
+ * inline variant just means the renderer drops to the next-up
  * size; a missing lightbox means click-to-expand serves the 1024 main.
  */
 export async function uploadFeedImage(file: File, tokenId: number): Promise<string> {
@@ -192,7 +196,10 @@ export async function uploadFeedImage(file: File, tokenId: number): Promise<stri
       fd.append('baseFilename', baseFilename)
       fd.append('width', String(width))
       fd.append('tokenId', String(tokenId))
-      await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: fd })
+      const vRes = await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: fd })
+      if (!vRes.ok) {
+        console.warn(`[uploadFeedImage] ${preset} variant rejected (${vRes.status}), will fall back at render time`)
+      }
     } catch (err) {
       console.warn(`[uploadFeedImage] ${preset} variant failed, will fall back at render time:`, err)
     }

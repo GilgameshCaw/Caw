@@ -153,7 +153,7 @@ router.post('/', requireAuth({ anySession: true }), upload.array('media', 10), r
     // Multer's fileSize limit is set to VIDEO_MAX_BYTES (the larger of the
     // two), so it doesn't reject oversized images on its own. Enforce the
     // tighter image cap here, and re-check the video cap explicitly so the
-    // route's contract is "videos ≤25MB, images ≤2MB" regardless of how
+    // route's contract is "videos ≤10MB, images ≤1MB" regardless of how
     // multer is configured upstream.
     const oversizedImage = files.find(f => f.mimetype.startsWith('image/') && f.size > IMAGE_MAX_BYTES)
     if (oversizedImage) {

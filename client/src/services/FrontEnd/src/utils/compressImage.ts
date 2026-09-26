@@ -38,7 +38,7 @@ const PRESETS = {
    *  upscale at the highest-density viewports. */
   feedMedium:   { maxSizeMB: 0.4,  maxWidthOrHeight: 640,  quality: 0.8 },
   /** Lightbox/click-to-expand version of a feed image. */
-  feedLarge:    { maxSizeMB: 2,    maxWidthOrHeight: 2048, quality: 0.8 },
+  feedLarge:    { maxSizeMB: 1,    maxWidthOrHeight: 2048, quality: 0.8 },
   /** Bug-report screenshots, moderator evidence — small but readable. */
   report:       { maxSizeMB: 0.5,  maxWidthOrHeight: 1280, quality: 0.75 },
   /** DM attachments — encrypted, so we can't recompress server-side.
