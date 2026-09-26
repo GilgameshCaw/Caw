@@ -82,10 +82,15 @@ async function persistCapState(ratio: bigint, lastUpdatedAt: bigint): Promise<vo
   }
 }
 
-/** One RPC read of capState. Returns null (never throws) when the read fails. */
-async function fetchCapState(): Promise<{ ratio: bigint; lastUpdatedAt: bigint } | null> {
+/**
+ * One RPC read of capState, at HEAD or (with blockTag) at a historical block.
+ * Returns null (never throws) when the read fails.
+ */
+async function fetchCapState(blockTag?: number): Promise<{ ratio: bigint; lastUpdatedAt: bigint } | null> {
   try {
-    const cs = await getCawActions().capState()
+    const cs = blockTag === undefined
+      ? await getCawActions().capState()
+      : await getCawActions().capState({ blockTag })
     if (cs && cs[0] !== undefined && cs[1] !== undefined) {
       return { lastUpdatedAt: BigInt(cs[0]), ratio: BigInt(cs[1]) }
     }
@@ -236,6 +241,41 @@ interface RecordParams {
  * memory diverged from the chain). Returns null when no memory update is
  * due (halted, or action already processed).
  */
+// Block whose capState is currently loaded into s.capRatio/capLastUpdatedAt
+// by refreshCapStateAtBlock. -1n = not refreshed since boot.
+let _capStateBlock = -1n
+
+/**
+ * Load capState as of the block an action lands in, so the cost computed in
+ * recordAction matches what CawActions._getCost charged on chain.
+ *
+ * Without this the in-memory sample is only refreshed in verifyMultiplier(),
+ * i.e. after an event. After a quiet period the first action is then costed
+ * against the sample from the previous event: if that sample is older than
+ * CAP_STALE_THRESHOLD at the new block while the oracle has pushed since,
+ * the ledger charges the baseline and the chain charges the capped cost, and
+ * the next verifyMultiplier() halts on DIVERGENCE. A ratio change pushed
+ * between two events has the same shape.
+ *
+ * Reads at the END of the block (same convention as verifyMultiplier). An
+ * oracle push landing later in the same block than the action is the one
+ * case this does not cover. Non-archive RPC: falls back to HEAD, which is
+ * still at least as fresh as the previous sample. On any read failure the
+ * previous sample is kept (today's behaviour). Called outside any DB
+ * transaction — RPC reads must not extend a Prisma tx.
+ */
+export async function refreshCapStateAtBlock(blockNumber: bigint): Promise<void> {
+  const s = await ensureBooted()
+  if (s.halted || blockNumber === _capStateBlock) return
+  const cs = (await fetchCapState(Number(blockNumber))) ?? (await fetchCapState())
+  if (!cs) return
+  _capStateBlock = blockNumber
+  const changed = cs.ratio !== s.capRatio || cs.lastUpdatedAt !== s.capLastUpdatedAt
+  s.capRatio = cs.ratio
+  s.capLastUpdatedAt = cs.lastUpdatedAt
+  if (changed) await persistCapState(cs.ratio, cs.lastUpdatedAt)
+}
+
 export async function recordAction(
   tx: PrismaTransactionClient,
   params: RecordParams,
