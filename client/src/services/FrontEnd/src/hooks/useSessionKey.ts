@@ -1177,68 +1177,153 @@ export function useNetworkTipTargetAsCAW(networkId: number = CLIENT_ID): {
   return { tipCeilingCaw, tipCeilingUsd, tipCeilingFallbackCaw }
 }
 
+/**
+ * Thrown by useRevokeSession when the revocation couldn't be confirmed and the
+ * session is, or may still be, live on-chain. The local key is KEPT: it is the
+ * only thing that can sign revokeSessionBySig, so clearing it would leave no
+ * way to retry from the UI.
+ */
+export class RevokeNotConfirmedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RevokeNotConfirmedError'
+  }
+}
+
+// Each submission is polled like the registration flow, but without its L2-sync
+// wait, so a shorter budget. Two submissions per click: DELETE /api/sessions is
+// rate-limited to 10 per owner per day.
+const REVOKE_SUBMISSIONS = 2
+const REVOKE_RETRY_DELAY_MS = 10_000
+const REVOKE_POLL_INTERVAL_MS = 3_000
+const REVOKE_POLL_ROUNDS = 20
+
+/**
+ * Whether (owner, sessionKey) is still a live session on-chain. Same read as
+ * clearSessionIfOnChainDead: validSession returns a zero/expired struct for a
+ * revoked, expired or epoch-bumped session. Returns null if the read fails;
+ * callers must treat that as possibly live.
+ */
+async function isSessionLiveOnChain(owner: string, sessionKey: `0x${string}`): Promise<boolean | null> {
+  try {
+    const raw = await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS, abi: cawProfileLedgerAbi, chainId: baseSepolia.id,
+      functionName: 'validSession', args: [owner as `0x${string}`, sessionKey],
+    }) as any
+    const expiry = Number(BigInt((raw?.expiry ?? raw?.[0]) ?? 0))
+    return expiry > Math.floor(Date.now() / 1000)
+  } catch {
+    return null
+  }
+}
+
+/** One submission: DELETE /api/sessions, then poll the request until it settles. */
+async function submitRevocation(
+  owner: string,
+  sessionKey: string,
+  signature: string,
+): Promise<{ confirmed: boolean; error?: string }> {
+  try {
+    const { requestId } = await apiFetch<{ requestId: string; status: string }>('/api/sessions', {
+      method: 'DELETE',
+      body: JSON.stringify({ owner, sessionKey, signature }),
+    })
+    for (let i = 0; i < REVOKE_POLL_ROUNDS; i++) {
+      await new Promise(r => setTimeout(r, REVOKE_POLL_INTERVAL_MS))
+      let status: { status: string; error?: string }
+      try {
+        status = await apiFetch<{ status: string; error?: string }>(`/api/sessions/status/${requestId}`)
+      } catch {
+        continue // transient polling error
+      }
+      if (status.status === 'confirmed') return { confirmed: true }
+      if (status.status === 'failed') return { confirmed: false, error: status.error }
+    }
+    return { confirmed: false, error: 'Timed out waiting for the revocation to confirm' }
+  } catch (err: any) {
+    return { confirmed: false, error: err?.message }
+  }
+}
+
 export function useRevokeSession() {
-  const clearSession = useSessionKeyStore(s => s.clearSession)
-  const session = useSessionKeyStore(s => s.getSession())
   const activeToken = useActiveToken()
 
   return useCallback(async () => {
+    const ownerAddress = activeToken?.owner
+    const store = useSessionKeyStore.getState()
+    if (!ownerAddress) {
+      // No owner to resolve a session for, so nothing on-chain to target.
+      store.clearSession()
+      return
+    }
+    // Resolve the session by the profile owner: the one the settings card shows
+    // and the owner revokeSessionBySig is keyed on. getSession() follows the
+    // connected wallet instead, which can differ from the owner, and
+    // clearSession() does nothing when no wallet is connected.
+    // getActiveSessionForAddress decrypts an unlocked encrypted key and skips
+    // pending and expired entries, as getSession() does.
+    const session = store.getActiveSessionForAddress(ownerAddress)
+    const clearLocal = () => store.clearSessionForAddress(ownerAddress)
     const sessionKey = session?.privateKey
     const sessionAddress = session?.address
-    const ownerAddress = activeToken?.owner
     const expiry = session?.expiry
 
-    if (!sessionKey || !sessionAddress || !ownerAddress || !expiry) {
-      // No session or no owner info — just clear locally
-      clearSession()
+    if (!sessionKey || !sessionAddress || !expiry) {
+      // No usable session (none, pending, expired, or locked): just clear locally
+      clearLocal()
       return
     }
 
     // Sign a revocation message with the session key
-    try {
-      const sessionAccount = privateKeyToAccount(sessionKey)
-      const signature = await sessionAccount.signTypedData({
-        domain: SESSION_DOMAIN,
-        types: {
-          // Must match REVOKE_SESSION_TYPEHASH in CawProfileLedger.sol:
-          // RevokeSession(address owner,address sessionKey,uint64 expiry).
-          // revokeSessionBySig binds the signature to the session's stored
-          // expiry, so an old revocation can't be replayed against a later
-          // registration of the same key. Without expiry here, every
-          // revocation reverted with BadSig.
-          RevokeSession: [
-            { name: 'owner', type: 'address' },
-            { name: 'sessionKey', type: 'address' },
-            { name: 'expiry', type: 'uint64' },
-          ],
-        },
-        primaryType: 'RevokeSession',
-        message: {
-          owner: ownerAddress,
-          sessionKey: sessionAddress,
-          expiry: BigInt(expiry),
-        },
-      })
+    const sessionAccount = privateKeyToAccount(sessionKey)
+    const signature = await sessionAccount.signTypedData({
+      domain: SESSION_DOMAIN,
+      types: {
+        // Must match REVOKE_SESSION_TYPEHASH in CawProfileLedger.sol:
+        // RevokeSession(address owner,address sessionKey,uint64 expiry).
+        // revokeSessionBySig binds the signature to the session's stored
+        // expiry, so an old revocation can't be replayed against a later
+        // registration of the same key. Without expiry here, every
+        // revocation reverted with BadSig.
+        RevokeSession: [
+          { name: 'owner', type: 'address' },
+          { name: 'sessionKey', type: 'address' },
+          { name: 'expiry', type: 'uint64' },
+        ],
+      },
+      primaryType: 'RevokeSession',
+      message: {
+        owner: ownerAddress,
+        sessionKey: sessionAddress,
+        expiry: BigInt(expiry),
+      },
+    })
 
-      // Send to API — validator submits on-chain
-      await apiFetch('/api/sessions', {
-        method: 'DELETE',
-        body: JSON.stringify({
-          owner: ownerAddress,
-          sessionKey: sessionAddress,
-          signature,
-        }),
-      })
-      console.log('[QuickSign] Session revoked on-chain via API')
-    } catch (err: any) {
-      // On-chain revocation failed — still clear locally
-      // Session will expire naturally on-chain
-      console.warn('[QuickSign] On-chain revocation failed, clearing locally:', err?.message)
+    // The validator submits revokeSessionBySig. Wait for the outcome instead of
+    // treating the 202 as success, and only clear the key once the session is
+    // actually dead: the key is the only thing that can sign a revocation, so
+    // clearing it after a failure would leave no way to retry.
+    let lastError: string | undefined
+    for (let attempt = 0; attempt < REVOKE_SUBMISSIONS; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, REVOKE_RETRY_DELAY_MS))
+      const result = await submitRevocation(ownerAddress, sessionAddress, signature)
+      if (result.confirmed) {
+        console.log('[QuickSign] Session revoked on-chain')
+        clearLocal()
+        return
+      }
+      lastError = result.error
+      // An earlier submission may have landed late, or the session may have died
+      // another way (expired, epoch-bumped); then there is nothing left to revoke.
+      if (await isSessionLiveOnChain(ownerAddress, sessionAddress) === false) {
+        console.log('[QuickSign] Session already dead on-chain')
+        clearLocal()
+        return
+      }
     }
-
-    // Always clear the local session (destroys the private key from this browser)
-    clearSession()
-  }, [session, activeToken, clearSession])
+    console.warn('[QuickSign] On-chain revocation not confirmed; keeping the local key so it can be retried:', lastError)
+    throw new RevokeNotConfirmedError(lastError || 'Revocation not confirmed')
+  }, [activeToken])
 }
 
 /**
