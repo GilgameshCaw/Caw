@@ -96,5 +96,8 @@
     "web3": "^4.16.0",
     "web3-utils": "^4.3.3",
     "workbox-window": "^7.4.1"
+  },
+  "resolutions": {
+    "ws": "^8.21.0"
   }
 }
