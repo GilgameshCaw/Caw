@@ -195,18 +195,17 @@ const countManager = {
   // onCawHidden
   // Called when a caw is hidden (author's own delete, hide:caw: on-chain
   // action). Reverses the bumps made at creation time:
-  //   - top-level post / quote: user.cawCount (onCawCreated)
-  //   - quote:  parent Caw.recawCount (onCawCreated's quote branch)
-  //   - reply:  parent Caw.commentCount (onReplyCreated)
-  // The parent-side reversals mirror the PENDING -> FAILED rollback in
-  // onStatusChanged; without them a hidden reply/quote leaves its parent's
-  // badge permanently one higher than the SUCCESS-filtered thread it opens.
-  // A plain RECAW never bumped cawCount; its recawCount rollback belongs to
-  // recaw-undo (onRecawRemoved), so nothing is done for it here.
+  //   - top-level post: user.cawCount (onCawCreated)
+  //   - reply: parent Caw.commentCount (onReplyCreated) -- mirrors the
+  //     PENDING -> FAILED reply rollback in onStatusChanged; without it a
+  //     hidden reply leaves its parent's badge permanently one higher than
+  //     the SUCCESS-filtered thread it opens.
+  // Rows stored as action RECAW (plain recaws, and quotes, which are stored
+  // as RECAW with text) return early, as before; plain-recaw undo is
+  // hide:recaw: (onRecawRemoved).
   // isReply comes from the Reply table (replyCawId match), not a Caw-table
   // column (originalCawId alone can't distinguish a reply from a quote --
-  // both set it). parentCawId is the reply's Reply.cawId for replies and
-  // the caw's originalCawId for quotes.
+  // both set it). parentCawId is the reply's Reply.cawId.
   // =========================================================================
   async onCawHidden(
     tx: TxClient,
@@ -235,10 +234,6 @@ const countManager = {
     }
     await safeDecrement(tx, 'User', 'cawCount', 'tokenId', caw.userId)
     log(`cawCount -1 on user ${caw.userId} (caw hidden)`)
-    if (caw.action === 'CAW' && caw.parentCawId) {
-      await safeDecrement(tx, 'Caw', 'recawCount', 'id', caw.parentCawId)
-      log(`recawCount -1 on caw ${caw.parentCawId} (quote hidden)`)
-    }
   },
 
   // =========================================================================

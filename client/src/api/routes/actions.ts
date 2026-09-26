@@ -927,7 +927,7 @@ router.post('/', async (req, res) => {
             // inside the same transaction as the write it accompanies.
             const target = await prisma.caw.findFirst({
               where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
-              select: { id: true, action: true, originalCawId: true },
+              select: { id: true, action: true },
             })
             // The status flip and the decrement commit together. If the
             // decrement fails the flip rolls back too (the caw stays visible
@@ -947,7 +947,7 @@ router.post('/', async (req, res) => {
                   userId: data.senderId,
                   action: target.action,
                   isReply: replyRow !== null,
-                  parentCawId: replyRow?.cawId ?? target.originalCawId,
+                  parentCawId: replyRow?.cawId ?? null,
                 })
               }
             })

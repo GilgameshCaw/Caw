@@ -1603,7 +1603,7 @@ async function handleHideAction(
     // orphanedMedia.ts) so revertable hides don't lose data.
     const target = await tx.caw.findFirst({
       where:  { userId: senderId, cawonce, status: 'SUCCESS' },
-      select: { id: true, action: true, originalCawId: true, imageData: true },
+      select: { id: true, action: true, imageData: true },
     })
 
     const result = await tx.caw.updateMany({
@@ -1657,7 +1657,7 @@ async function handleHideAction(
           userId: senderId,
           action: target.action,
           isReply: replyRow !== null,
-          parentCawId: replyRow?.cawId ?? target.originalCawId,
+          parentCawId: replyRow?.cawId ?? null,
         })
       }
     } else {
