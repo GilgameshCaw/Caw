@@ -597,18 +597,18 @@ router.delete('/', async (req: any, res: any) => {
       return res.status(409).json({ error: 'A revocation is already in progress for this owner' })
     }
 
-    // TODO(FE): the FE currently awaits a sync response from DELETE /api/sessions.
-    // It should be updated to poll /api/sessions/status/:requestId for confirmed
-    // status, matching the POST flow. Until then the FE will observe 202 and
-    // the session will be revoked asynchronously; on-chain event via ChainSyncService
-    // will prune the DB row when the tx confirms.
+    // The FE polls /api/sessions/status/:requestId for the outcome, as it does for
+    // registration; the on-chain SessionRevoked event (ChainSyncService) marks the
+    // DB row revoked when the tx confirms. Answer 200 like POST does on accept: the
+    // FE's apiFetch reserves 202 for "still indexing" and throws IndexingError on it,
+    // which would drop the requestId and hide the outcome from the FE.
     const requestId = randomUUID()
     await setSessionRequest(requestId, { status: 'submitting' })
     inFlight.add(owner.toLowerCase())
 
     processRevokeRequest(requestId, owner, sessionKey, signature)
 
-    return res.status(202).json({ requestId, status: 'pending' })
+    return res.json({ requestId, status: 'pending' })
   } catch (err: any) {
     console.error('[Sessions] Revocation error:', err.message)
     return res.status(500).json({ error: 'Failed to revoke session' })

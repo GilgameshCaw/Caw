@@ -8,7 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { useCreateSession, useRevokeSession, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, useRevokeSession, RevokeNotConfirmedError, getDefaultTipCeiling, useNetworkTipTargetAsCAW, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { getTipTiers } from '~/api/actions'
 import { HiArrowLeft } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -41,6 +41,10 @@ const SessionKeySettings: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Set when an on-chain revocation couldn't be confirmed: the key is kept so
+  // the user can retry, and a local-only removal is offered as a fallback.
+  const [revokeFailed, setRevokeFailed] = useState(false)
+  const clearSessionForAddress = useSessionKeyStore(s => s.clearSessionForAddress)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   // Default to $10 worth of CAW. If price isn't loaded yet, fall back to a placeholder
   // and reactively update once the price arrives (see useEffect below).
@@ -188,14 +192,31 @@ const SessionKeySettings: React.FC = () => {
   const handleRevoke = async () => {
     setLoading(true)
     setError(null)
+    setRevokeFailed(false)
     try {
       await revokeSession()
     } catch (err: any) {
       console.error('[SessionKey] Revoke failed:', err)
-      setError(t('quick_sign.error.generic'))
+      if (err instanceof RevokeNotConfirmedError) setRevokeFailed(true)
+      else setError(t('quick_sign.error.generic'))
     } finally {
       setLoading(false)
+      // Let the toggle follow the actual state again, whichever way the revoke
+      // went. An earlier toggle-ON (to open the activate panel) would otherwise
+      // keep it showing ON after a successful revoke from the card's button, and
+      // a toggle-OFF would hide the card, and its error, after a failed one.
+      setRevealIntent(null)
     }
+  }
+
+  // Fallback after a failed revocation: stop using the key on this device only.
+  // The session stays valid on-chain until it expires, so confirm first.
+  const handleRemoveLocalOnly = () => {
+    const date = session ? new Date(session.expiry * 1000).toLocaleDateString() : ''
+    if (!window.confirm(t('session_key.remove_local_confirm', { date }))) return
+    // Clear THIS owner's session (the one on the card), like useRevokeSession.
+    if (ownerAddr) clearSessionForAddress(ownerAddr)
+    setRevokeFailed(false)
   }
 
   const formatExpiry = (timestamp: number) => {
@@ -349,6 +370,20 @@ const SessionKeySettings: React.FC = () => {
                     {loading ? t('session_key.btn.revoking') : t('session_key.btn.revoke')}
                   </button>
                 </div>
+                {(revokeFailed || error) && (
+                  <div className="mt-3 px-4 py-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400">
+                    <p>{revokeFailed ? t('session_key.revoke_failed') : error}</p>
+                    {revokeFailed && (
+                      <button
+                        onClick={handleRemoveLocalOnly}
+                        disabled={loading}
+                        className="mt-2 text-xs underline opacity-80 hover:opacity-100 disabled:opacity-50 cursor-pointer"
+                      >
+                        {t('session_key.btn.remove_local')}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div>
