@@ -418,7 +418,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     return () => document.removeEventListener('click', onClickOutside, true)
   }, [showRecawMenu, showOptionsMenu])
 
-  const handleLike = async (event: React.MouseEvent) => {
+  // What the heart currently shows. Same resolution order as the render
+  // below; the toggle direction is taken from here rather than from
+  // useItem.hasLiked, which can still be the pre-confirmation value for a
+  // moment after a like/unlike lands (tapping then sent the same direction
+  // twice — a second 'unlike' on an already-unliked post).
+  const displayedHasLiked = (): boolean => {
+    if (likeOverride !== null && likeOverride !== useItem.hasLiked) return likeOverride
+    if (useItem.likePending && useItem.likePendingAction) return useItem.likePendingAction === 'LIKE'
+    return !!useItem.hasLiked
+  }
+
+  const handleLike = async (event: React.MouseEvent, forceLiking?: boolean, baseCountHint?: number) => {
     event.preventDefault()
     event.stopPropagation()
 
@@ -440,7 +451,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setPendingLikeAction({
         receiverId: useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
-        actionType: useItem.hasLiked ? 'unlike' : 'like'
+        actionType: displayedHasLiked() ? 'unlike' : 'like'
       });
       if (openConnectModal) {
         openConnectModal();
@@ -477,7 +488,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     // If no active token selected, return
     const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
-    if (!effectiveTokenId || busyLike || likePending) {
+    // forceLiking comes from handleCancelLike's 409 path, whose closure still
+    // sees the pre-cancel busyLike/likePending; it has already cleared both.
+    if (!effectiveTokenId || (forceLiking === undefined && (busyLike || likePending))) {
       return
     }
 
@@ -487,9 +500,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
     const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
 
-    const isLiking = !useItem.hasLiked
+    const isLiking = forceLiking ?? !displayedHasLiked()
     setLikeCountAdj(isLiking ? 1 : -1)
-    setLikeCountBase(useItem.likeCount)
+    setLikeCountBase(baseCountHint ?? useItem.likeCount)
     setLikePending(true)
     setLikeOverride(isLiking)
     if (isLiking) {
@@ -499,7 +512,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     try {
       const response = await signAndSubmit({
-        actionType:      useItem.hasLiked ? 'unlike' : 'like',
+        actionType:      isLiking ? 'like' : 'unlike',
         senderId:        effectiveTokenId,
         receiverId:      useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
@@ -549,6 +562,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // LIKE/SUCCESS. Hold an optimistic +1 / liked override until the refetch
     // catches up so the UI doesn't briefly show the unliked state.
     const cancellingUnlike = !useItem.hasLiked && likeOverride === false
+    // Direction of the action being cancelled, captured before we reset the
+    // override below. Needed on a 409 to send the reverse.
+    const cancelledWasLike = likeOverride !== null
+      ? likeOverride
+      : useItem.likePendingAction === 'LIKE'
+    let reverseAfter409: boolean | null = null
+    // Count after the cancelled action lands. useItem can still be the
+    // pre-confirmation row here; without this the reverse action's -1 was
+    // applied to the stale count (a like that landed showed as "-1").
+    const landedCount = !!useItem.hasLiked === cancelledWasLike
+      ? useItem.likeCount
+      : (useItem.likeCount ?? 0) + (cancelledWasLike ? 1 : -1)
     setLikePending(false)
     if (cancellingUnlike) {
       setLikeCountAdj(1)
@@ -574,18 +599,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         if (snapshotSpend && snapshotSpend > 0n) {
           usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend, effectiveTokenId)
         }
-        // The action landed on chain — our optimistic restore was wrong.
-        // Snap back to the pre-cancel pending state so the UI matches.
-        if (cancellingUnlike) {
-          setLikeCountAdj(-1)
-          setLikeCountBase(useItem.likeCount)
-          setLikeOverride(false)
-        }
+        // The action landed on chain, so the tap can't cancel it. The user
+        // still asked to undo it: send the reverse action, the same way the
+        // recaw cancel falls through to hide:recaw on a 409. Before this, a
+        // cancelled LIKE left the heart showing "not liked" with nothing sent
+        // (reload showed it liked again).
+        reverseAfter409 = !cancelledWasLike
       } else {
         console.error('Cancel like failed', err)
       }
     } finally {
       setBusyLike(false)
+    }
+    if (reverseAfter409 !== null) {
+      const noopEvt = { preventDefault() {}, stopPropagation() {} } as unknown as React.MouseEvent
+      await handleLike(noopEvt, reverseAfter409, landedCount)
     }
   }
 
