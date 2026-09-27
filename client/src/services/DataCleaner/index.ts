@@ -748,57 +748,83 @@ async function cleanupPendingFollows() {
       try {
         const fId = pendingFollow.followerId
         const tId = pendingFollow.followingId
-        const uniqueWhere = { followerId_followingId: { followerId: fId, followingId: tId } }
 
-        // 1. Check the Action table — the most recent FOLLOW/UNFOLLOW for this pair
+        // 1. Check the Action table for the action this pending row stands
+        //    for, indexed after the row entered that state. Matching the
+        //    latest FOLLOW-or-UNFOLLOW "confirmed" a pending UNFOLLOW as a
+        //    FOLLOW using the older FOLLOW action from when the pair first
+        //    followed, with no count change; the indexer's UNFOLLOW then
+        //    removed a confirmed FOLLOW and decremented a second time.
+        //    Same fix as cleanupPendingLikes.
+        const isPendingUnfollow = pendingFollow.action === 'UNFOLLOW'
         const action = await prisma.action.findFirst({
           where: {
             senderId: fId,
-            actionType: { in: ['FOLLOW', 'UNFOLLOW'] },
+            actionType: pendingFollow.action,
+            createdAt: { gte: pendingFollow.updatedAt },
             AND: [{ data: { path: ['receiverId'], equals: tId } }]
           },
           orderBy: { createdAt: 'desc' }
         })
 
         if (action) {
-          // The most recent on-chain action is the source of truth
-          if (action.actionType === 'UNFOLLOW') {
-            logger.log(` Most recent action is UNFOLLOW — deleting follow: ${fId} -> ${tId}`)
-            await prisma.follow.delete({ where: uniqueWhere })
+          if (isPendingUnfollow) {
+            // The unfollow landed but the indexer didn't remove the row. The
+            // counts were already decremented at submit time; just drop it.
+            logger.log(` UNFOLLOW action found — deleting follow: ${fId} -> ${tId}`)
+            await prisma.follow.deleteMany({
+              where: { followerId: fId, followingId: tId, status: 'PENDING', action: 'UNFOLLOW' }
+            })
           } else {
-            logger.log(` Most recent action is FOLLOW — confirming: ${fId} -> ${tId}`)
-            await prisma.follow.update({ where: uniqueWhere, data: { status: 'SUCCESS', action: 'FOLLOW' } })
+            logger.log(` FOLLOW action found — confirming: ${fId} -> ${tId}`)
+            await prisma.follow.updateMany({
+              where: { followerId: fId, followingId: tId, status: 'PENDING', action: 'FOLLOW' },
+              data: { status: 'SUCCESS' }
+            })
           }
           continue
         }
 
         // 2. No Action record — check if the most recent txqueue for this pair completed
         //    (ActionProcessor may have missed the on-chain event)
-        const completedTx = await prisma.txQueue.findFirst({
+        //    Only a tx of the same kind, queued for this pending state: the
+        //    receiverId filter alone also matches likes/tips to the same user
+        //    and older follow/unfollow txs. The TxQueue row is written just
+        //    before the optimistic Follow update in the same request, so
+        //    allow a small margin before updatedAt.
+        const wantedTypes = isPendingUnfollow ? [5, 'unfollow'] : [4, 'follow']
+        const recentTxs = await prisma.txQueue.findMany({
           where: {
             senderId: fId,
             status: { in: ['done', 'validated_by_peer'] },
+            createdAt: { gte: new Date(pendingFollow.updatedAt.getTime() - 60 * 1000) },
             payload: { path: ['data', 'receiverId'], equals: tId }
           },
           orderBy: { createdAt: 'desc' }
         })
+        const completedTx = recentTxs.find(t => wantedTypes.includes((t.payload as any)?.data?.actionType))
 
         if (completedTx) {
-          const txData = (completedTx.payload as any)?.data
-          const isUnfollow = txData?.actionType === 5 || txData?.actionType === 'unfollow'
-
-          if (isUnfollow) {
+          if (isPendingUnfollow) {
             logger.log(` TxQueue confirms unfollow (event missed): ${fId} -> ${tId}`)
-            await prisma.follow.delete({ where: uniqueWhere })
+            await prisma.follow.deleteMany({
+              where: { followerId: fId, followingId: tId, status: 'PENDING', action: 'UNFOLLOW' }
+            })
           } else {
             logger.log(` TxQueue confirms follow (event missed): ${fId} -> ${tId}`)
-            await prisma.follow.update({ where: uniqueWhere, data: { status: 'SUCCESS', action: 'FOLLOW' } })
+            await prisma.follow.updateMany({
+              where: { followerId: fId, followingId: tId, status: 'PENDING', action: 'FOLLOW' },
+              data: { status: 'SUCCESS' }
+            })
           }
           continue
         }
 
         // 3. No Action, no completed TxQueue — wait or clean up
-        if (pendingFollow.updatedAt < thirtyMinutesAgo) {
+        // A pending UNFOLLOW is left alone here: deleting it would drop a
+        // follow that is still live on chain. Its tx either lands (indexer or
+        // step 1 removes the row) or fails (txQueueFailure restores it).
+        if (!isPendingUnfollow && pendingFollow.updatedAt < thirtyMinutesAgo) {
           // Same rationale as the like cleanup above: this delete used to
           // run with zero count handling, permanently inflating
           // follower.followingCount / target.followerCount for every
@@ -816,6 +842,7 @@ async function cleanupPendingFollows() {
                 followerId: fId,
                 followingId: tId,
                 status: 'PENDING',
+                action: 'FOLLOW',
               }
             })
 
@@ -834,7 +861,7 @@ async function cleanupPendingFollows() {
             logger.log(` Pending follow ${fId} -> ${tId} was already resolved concurrently -- skipping`)
           }
         } else {
-          logger.log(` Follow still pending (${Math.floor((Date.now() - pendingFollow.updatedAt.getTime()) / 60000)} min): ${fId} -> ${tId}`)
+          logger.log(` ${isPendingUnfollow ? 'Unfollow' : 'Follow'} still pending (${Math.floor((Date.now() - pendingFollow.updatedAt.getTime()) / 60000)} min): ${fId} -> ${tId}`)
         }
       } catch (err) {
         logger.error(` Error processing pending follow ${pendingFollow.followerId}->${pendingFollow.followingId}:`, err)
