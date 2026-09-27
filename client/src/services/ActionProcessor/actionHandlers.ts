@@ -1178,7 +1178,25 @@ export async function handleWithdrawAction(
         userId: action.senderId,
         amount: withdrawalAmount,
         cawonce: rawAction.cawonce,
-        status: 'pending'
+        status: 'completed',
+        completedAt: new Date()
+      }
+    })
+    // An ingested WITHDRAW action means it landed on chain, whichever
+    // validator submitted it. Mark the request completed here too: the
+    // ValidatorService only does that for its own successful submits, so a
+    // withdrawal landed by a peer, or one this node only mirrors, would
+    // otherwise stay pending. This also overrides 'failed' (a local submit
+    // that reported failure, or a self-healed cancelled row, while the
+    // action landed anyway). The status filter keeps an earlier completedAt.
+    await tx.withdrawalRequest.updateMany({
+      where: {
+        id: withdrawalRequest.id,
+        status: { not: 'completed' }
+      },
+      data: {
+        status: 'completed',
+        completedAt: new Date()
       }
     })
     console.log('[handleWithdrawAction] Upserted withdrawal request:', withdrawalRequest.id)

@@ -3897,22 +3897,21 @@ console.log("succeededKeys", succeededKeys)
               // Continue even if withdrawal update fails
             }
           } else {
-            // Mark withdrawal request as failed
+            // Mark withdrawal request as failed, but only while it is still
+            // pending: if the action was already ingested, handleWithdrawAction
+            // marked it completed and that is the stronger signal.
             try {
-              const withdrawalRequest = await prisma.withdrawalRequest.findFirst({
+              const failedResult = await prisma.withdrawalRequest.updateMany({
                 where: {
                   userId: data.senderId,
-                  cawonce: data.cawonce
+                  cawonce: data.cawonce,
+                  status: 'pending'
+                },
+                data: {
+                  status: 'failed'
                 }
               })
-
-              if (withdrawalRequest) {
-                await prisma.withdrawalRequest.update({
-                  where: { id: withdrawalRequest.id },
-                  data: {
-                    status: 'failed'
-                  }
-                })
+              if (failedResult.count > 0) {
                 console.log(`[ValidatorService] Marked withdrawal request as failed for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
               }
             } catch (withdrawalUpdateErr) {
