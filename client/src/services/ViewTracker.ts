@@ -15,6 +15,20 @@ interface ViewData {
   ipHash: string
 }
 
+const VIEWERS_TTL_SECONDS = 86400 // 24 hours
+
+/**
+ * Give a caw's viewer set its 24-hour lifetime once, when it is created.
+ * Re-applying the expiry on every new viewer kept a busy set alive
+ * indefinitely, so it never cleared. The de-dup window is now 24 hours from
+ * the set's first viewer rather than sliding.
+ */
+async function setViewersExpiry(cawViewKey: string): Promise<void> {
+  if ((await redis.ttl(cawViewKey)) < 0) {
+    await redis.expire(cawViewKey, VIEWERS_TTL_SECONDS)
+  }
+}
+
 /**
  * Track a single view for a caw
  */
@@ -23,13 +37,12 @@ export async function trackView({ cawId, userId, ipHash }: ViewData): Promise<vo
   const viewKey = userId ? `user:${userId}` : `ip:${ipHash}`
   const cawViewKey = `caw:${cawId}:viewers`
 
-  // Check if this viewer has already viewed this caw in the last 24 hours
-  const alreadyViewed = await redis.sIsMember(cawViewKey, viewKey)
+  // sAdd returns 1 only for a new member, so the check and the add are one
+  // step and two concurrent requests from the same viewer count once.
+  const added = await redis.sAdd(cawViewKey, viewKey)
 
-  if (!alreadyViewed) {
-    // Add viewer to the set with 24-hour expiry
-    await redis.sAdd(cawViewKey, viewKey)
-    await redis.expire(cawViewKey, 86400) // 24 hours
+  if (added === 1) {
+    await setViewersExpiry(cawViewKey)
 
     // Increment view count in database
     await prisma.caw.update({
@@ -54,13 +67,11 @@ export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?:
   const promises = cawIds.map(async (cawId) => {
     const cawViewKey = `caw:${cawId}:viewers`
 
-    // Check if already viewed
-    const alreadyViewed = await redis.sIsMember(cawViewKey, viewKey)
+    // sAdd returns 1 only for a new member (atomic check-and-add).
+    const added = await redis.sAdd(cawViewKey, viewKey)
 
-    if (!alreadyViewed) {
-      // Add to viewers set
-      await redis.sAdd(cawViewKey, viewKey)
-      await redis.expire(cawViewKey, 86400) // 24 hours
+    if (added === 1) {
+      await setViewersExpiry(cawViewKey)
 
       // Increment in Redis
       await redis.incr(`caw:${cawId}:viewcount`)
