@@ -515,10 +515,18 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
         // hasn't been processed yet (its own RawEvent is later in the
         // backlog or also failed domain processing on a prior pass).
         // Action row is recorded; the side-effect didn't land. Quiet warn.
+        //
+        // Still fall through to Tx3, like the generic failure below does. The
+        // chain charged this action's cost whether or not we have the target
+        // caw, and recordAction costs it from rawAction alone, so skipping the
+        // ledger here leaves the mirror short by exactly that cost and the
+        // next per-event checksum halts on DIVERGENCE. A later re-feed of this
+        // rawId can't double-count: recordAction skips anything at or before
+        // its (lastBlock, lastLogIndex) cursor before touching any state.
         console.warn(`[ActionProcessor] Domain processing skipped for unknown caw (user=${err.userId} cawonce=${err.cawonce}, type=${getActionType(Number(rawAction.actionType))})`)
-        return
+      } else {
+        console.error('[ActionProcessor] Domain processing failed (Action row persisted):', err)
       }
-      console.error('[ActionProcessor] Domain processing failed (Action row persisted):', err)
     }
 
     // Tx3: StakeLedger snapshot. Independent commit per
