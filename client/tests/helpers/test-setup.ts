@@ -11,8 +11,6 @@ export async function cleanDatabase() {
   // Clean in reverse order of dependencies
   await prisma.scheduledCaw.deleteMany()
   await prisma.bookmark.deleteMany()
-  await prisma.view.deleteMany()
-  await prisma.hashtagUsage.deleteMany()
   await prisma.hashtag.deleteMany()
   await prisma.caw.deleteMany()
   await prisma.user.deleteMany()
@@ -20,21 +18,25 @@ export async function cleanDatabase() {
 
 // Create test data helpers
 export async function createTestUser(data?: Partial<any>) {
+  // User.id has no @default(autoincrement()) in the schema — it must be
+  // supplied explicitly. Reuse the (already-random, effectively-unique
+  // within a test run) tokenId rather than introducing a separate counter.
+  const tokenId = data?.tokenId || Math.floor(Math.random() * 100000)
   return await prisma.user.create({
     data: {
-      tokenId: data?.tokenId || Math.floor(Math.random() * 100000),
+      id: data?.id || tokenId,
+      tokenId,
       username: data?.username || `testuser_${Math.random().toString(36).substring(7)}`,
-      userBio: data?.userBio || 'Test bio',
+      bio: data?.bio || 'Test bio',
       displayName: data?.displayName || 'Test User',
-      isVerified: data?.isVerified || false,
-      profilePicture: data?.profilePicture || 'https://example.com/avatar.png',
-      coverPicture: data?.coverPicture || 'https://example.com/cover.png',
-      isOfficial: data?.isOfficial || false,
-      followersCount: data?.followersCount || 0,
+      avatarUrl: data?.avatarUrl || 'https://example.com/avatar.png',
+      coverPhotoUrl: data?.coverPhotoUrl || 'https://example.com/cover.png',
+      followerCount: data?.followerCount || 0,
       followingCount: data?.followingCount || 0,
-      likesCount: data?.likesCount || 0,
-      recawsCount: data?.recawsCount || 0,
-      cawsCount: data?.cawsCount || 0,
+      likedCount: data?.likedCount || 0,
+      likesReceivedCount: data?.likesReceivedCount || 0,
+      recawCount: data?.recawCount || 0,
+      cawCount: data?.cawCount || 0,
       ...data
     }
   })
@@ -45,20 +47,17 @@ export async function createTestCaw(userId: number, data?: Partial<any>) {
     data: {
       userId,
       content: data?.content || 'Test caw content',
+      // Required, no schema default: a normal post is ActionType.CAW.
+      action: data?.action || 'CAW',
+      // Required, unique per (userId, cawonce) — random is fine for tests.
+      cawonce: data?.cawonce ?? Math.floor(Math.random() * 1_000_000_000),
       hasImage: data?.hasImage || false,
       imageData: data?.imageData || null,
-      imageUrl: data?.imageUrl || null,
       likeCount: data?.likeCount || 0,
       recawCount: data?.recawCount || 0,
-      quoteCount: data?.quoteCount || 0,
-      replyCount: data?.replyCount || 0,
+      commentCount: data?.commentCount || 0,
       viewCount: data?.viewCount || 0,
-      isReply: data?.isReply || false,
-      isQuote: data?.isQuote || false,
-      isRecaw: data?.isRecaw || false,
-      replyToId: data?.replyToId || null,
-      quoteOfId: data?.quoteOfId || null,
-      recawOfId: data?.recawOfId || null,
+      originalCawId: data?.originalCawId || null,
       ...data
     }
   })
@@ -67,8 +66,8 @@ export async function createTestCaw(userId: number, data?: Partial<any>) {
 export async function createTestHashtag(name: string) {
   return await prisma.hashtag.create({
     data: {
-      hashtag: name,
-      count: 0
+      name,
+      usageCount: 0
     }
   })
 }
