@@ -343,9 +343,15 @@ export function useFollowButton({
     //
     // Optimistic teardown: drop the pending spend + UI synchronously at
     // click time so the "−X CAW pending" line snaps back without waiting
-    // for the cancel POST roundtrip. On a 409 we restore.
+    // for the cancel POST roundtrip. On a 409 we restore the spend and send
+    // the reverse action.
     if (isPending && pendingTxQueueId) {
       const cancelledTxQueueId = pendingTxQueueId
+      // Direction of the action being cancelled (isFollowing is the
+      // anticipated end state while pending). Needed on a 409 to send the
+      // reverse.
+      const cancelledWasFollow = isFollowing
+      let reverseAfter409 = false
       const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
       usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
       useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
@@ -366,16 +372,24 @@ export function useFollowButton({
         await apiFetch(`/api/txqueue/${cancelledTxQueueId}/cancel`, { method: 'POST' })
       } catch (err: any) {
         // 409 = validator already picked it up. Restore the pending spend
-        // so the user's "−X CAW pending" reflects reality. The polling loop
-        // (which we just stopped) won't restart — that's fine, the action
-        // will confirm via TxQueueMonitor and clear normally.
+        // so the user's "−X CAW pending" reflects reality; the action will
+        // confirm via TxQueueMonitor and clear normally.
         if (String(err?.message || '').includes('409')) {
           if (snapshotSpend && snapshotSpend > 0n) {
             usePendingSpendStore.getState().addPendingSpend(cancelledTxQueueId, snapshotSpend, effectiveTokenId)
           }
+          // The action landed on chain, so the click can't cancel it. The
+          // user still asked to undo it: send the reverse action, as the like
+          // button does. Before this, a cancelled FOLLOW left the button on
+          // "Follow" with nothing sent and polling stopped, while the follow
+          // confirmed (reload showed "Following").
+          reverseAfter409 = true
         } else {
           console.error('Cancel follow failed', err)
         }
+      }
+      if (reverseAfter409 && effectiveTokenId && activeToken) {
+        await submitFollow(!cancelledWasFollow, effectiveTokenId)
       }
       return
     }
@@ -423,20 +437,28 @@ export function useFollowButton({
     // to a number past this point.
     if (!effectiveTokenId || !activeToken) return
 
+    await submitFollow(!isFollowing, effectiveTokenId)
+  }
+
+  // Sign and submit one follow/unfollow, with the optimistic update and its
+  // revert on rejection. Used by a normal click and by the cancel path's 409
+  // fallback, which has to send an explicit direction.
+  const submitFollow = async (follow: boolean, effectiveTokenId: number) => {
     // Mark that user has taken action (prevents prop sync from overriding)
     setHasUserAction(true)
 
     // Optimistic update
-    const newFollowingState = !isFollowing
+    const newFollowingState = follow
+    const prevFollowing = !follow
     setIsFollowing(newFollowingState)
     setPending(true)
     setIsSigning(true)
     onFollowStateChange?.(newFollowingState)
 
     try {
-      console.log('[FollowButton] calling signAndSubmit', { actionType: isFollowing ? 'unfollow' : 'follow', senderId: effectiveTokenId, receiverId: targetUserId })
+      console.log('[FollowButton] calling signAndSubmit', { actionType: follow ? 'follow' : 'unfollow', senderId: effectiveTokenId, receiverId: targetUserId })
       const result = await signAndSubmit({
-        actionType: isFollowing ? 'unfollow' : 'follow',
+        actionType: follow ? 'follow' : 'unfollow',
         senderId: effectiveTokenId,
         receiverId: targetUserId
       })
@@ -445,11 +467,11 @@ export function useFollowButton({
       // signAndSubmit returns null if insufficient stake (modal shown automatically)
       if (!result) {
         // Revert optimistic update
-        setIsFollowing(isFollowing)
+        setIsFollowing(prevFollowing)
         setPending(false)
         setIsSigning(false)
         setHasUserAction(false)
-        onFollowStateChange?.(isFollowing)
+        onFollowStateChange?.(prevFollowing)
         return
       }
 
@@ -474,23 +496,23 @@ export function useFollowButton({
                            errorMsg.toLowerCase().includes('invalid')
 
       if (isUserRejection) {
-        setIsFollowing(isFollowing)
+        setIsFollowing(prevFollowing)
         setPending(false)
         setIsSigning(false)
         setHasUserAction(false) // Allow prop sync again
         setAwaitingConnection(false)
         pendingActionRef.current = null
-        onFollowStateChange?.(isFollowing)
+        onFollowStateChange?.(prevFollowing)
       } else if (isServerError) {
         // Server validation error - show to user and revert state
         setError(errorMsg)
-        setIsFollowing(isFollowing)
+        setIsFollowing(prevFollowing)
         setPending(false)
         setIsSigning(false)
         setHasUserAction(false)
         setAwaitingConnection(false)
         pendingActionRef.current = null
-        onFollowStateChange?.(isFollowing)
+        onFollowStateChange?.(prevFollowing)
       } else {
         // For non-user-rejection errors, also start polling in case the record was created
         setIsSigning(false)
