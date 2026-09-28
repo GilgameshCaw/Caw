@@ -10,6 +10,7 @@ process.env.CLIENT_ID = '1'
 
 import {
   verifyMultiplier,
+  verifyMultiplierAtBoot,
   _peekState,
   _resetForTests,
   _setContractForTests,
@@ -335,5 +336,101 @@ describe('StakeLedger / verifyMultiplier', () => {
       expect(_peekState()!.halted).to.equal(false)
       expect(warns.some(w => w.includes('RPC read failed') && w.includes('skipping check'))).to.equal(true)
     })
+  })
+})
+
+describe('StakeLedger / verifyMultiplierAtBoot', () => {
+  beforeEach(() => {
+    _resetForTests()
+  })
+
+  afterEach(() => {
+    _resetForTests()
+  })
+
+  function captureError(): { logs: string[]; restore: () => void } {
+    const logs: string[] = []
+    const orig = console.error
+    console.error = (...args: any[]) => { logs.push(args.join(' ')) }
+    return { logs, restore: () => { console.error = orig } }
+  }
+
+  function captureWarn(): { logs: string[]; restore: () => void } {
+    const logs: string[] = []
+    const orig = console.warn
+    console.warn = (...args: any[]) => { logs.push(args.join(' ')) }
+    return { logs, restore: () => { console.warn = orig } }
+  }
+
+  it('halts at boot when the persisted multiplier differs from the chain at lastBlock', async () => {
+    // Regression: a 3-wei divergence halted the ledger, a restart cleared the
+    // in-memory flag, and writes resumed on the wrong multiplier.
+    const s = makeState({ multiplier: 1000048315127375623n, lastBlock: 47361280n })
+    _setContractForTests(mockContract({ blockTagValue: 1000048315127375620n }))
+    const cap = captureError()
+    try {
+      await verifyMultiplierAtBoot(s)
+    } finally {
+      cap.restore()
+    }
+    expect(s.halted).to.equal(true)
+    expect(cap.logs.some(l => l.includes('DIVERGENCE at boot') && l.includes('block 47361280'))).to.equal(true)
+  })
+
+  it('does not halt, and logs one ok line, when the multiplier matches at lastBlock', async () => {
+    const s = makeState({ multiplier: PRECISION + 5n, lastBlock: 9n })
+    _setContractForTests(mockContract({ blockTagValue: PRECISION + 5n }))
+    const logs: string[] = []
+    const orig = console.log
+    console.log = (...args: any[]) => { logs.push(args.join(' ')) }
+    try {
+      await verifyMultiplierAtBoot(s)
+    } finally {
+      console.log = orig
+    }
+    expect(s.halted).to.equal(false)
+    const ok = logs.filter(l => l.includes('boot multiplier check ok'))
+    expect(ok.length).to.equal(1)
+    expect(ok[0]).to.include('block 9')
+    expect(ok[0]).to.include((PRECISION + 5n).toString())
+  })
+
+  it('reads at the persisted lastBlock, never HEAD', async () => {
+    const tags: any[] = []
+    _setContractForTests({
+      rewardMultiplier: async (...args: any[]) => { tags.push(args[0]?.blockTag); return PRECISION },
+    })
+    await verifyMultiplierAtBoot(makeState({ multiplier: PRECISION, lastBlock: 123n }))
+    expect(tags).to.deep.equal([123])
+  })
+
+  it('skips without halting (and without a HEAD fallback) when the historical read fails', async () => {
+    let headCalls = 0
+    _setContractForTests({
+      rewardMultiplier: async (...args: any[]) => {
+        if (args[0]?.blockTag !== undefined) throw new Error('missing trie node')
+        headCalls++
+        return PRECISION * 9n
+      },
+    })
+    const s = makeState({ multiplier: PRECISION, lastBlock: 50n })
+    const cap = captureWarn()
+    try {
+      await verifyMultiplierAtBoot(s)
+    } finally {
+      cap.restore()
+    }
+    expect(s.halted).to.equal(false)
+    expect(headCalls).to.equal(0)
+    expect(cap.logs.some(l => l.includes('boot multiplier check skipped'))).to.equal(true)
+  })
+
+  it('does nothing when nothing has been consumed yet (lastBlock=0)', async () => {
+    let calls = 0
+    _setContractForTests({ rewardMultiplier: async () => { calls++; return PRECISION * 2n } })
+    const s = makeState({ multiplier: PRECISION, lastBlock: 0n })
+    await verifyMultiplierAtBoot(s)
+    expect(s.halted).to.equal(false)
+    expect(calls).to.equal(0)
   })
 })

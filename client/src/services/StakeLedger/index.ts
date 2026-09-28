@@ -121,8 +121,10 @@ export interface RuntimeState {
   // actions on warm restart.
   lastBlock: bigint
   lastLogIndex: number
-  // Halts writes after a multiplier-checksum mismatch. Cleared by the
-  // operator once they reseed.
+  // Halts writes after a multiplier-checksum mismatch. Held in memory only:
+  // a restart re-derives it from the persisted state via
+  // verifyMultiplierAtBoot() (a restart alone must not clear it — the
+  // operator clears it by reseeding).
   halted: boolean
 }
 
@@ -189,6 +191,10 @@ export async function ensureBooted(): Promise<RuntimeState> {
           lastLogIndex: -1,
           halted: false,
         }
+    // Re-check before publishing `state`: once `state` is set, ActionProcessor
+    // starts recording, so a check that awaited after that could let an
+    // action through on a ledger that should be halted.
+    if (persisted) await verifyMultiplierAtBoot(next)
     state = next
     return next
   })()
@@ -837,6 +843,40 @@ export async function verifyMultiplier(): Promise<void> {
         `Halting writes — operator must reseed (read CawProfileLedger state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
     )
     s.halted = true
+  }
+}
+
+/**
+ * Boot-time multiplier check. `halted` lives only in memory, so without this a
+ * restart silently un-halts a diverged ledger: it resumes writing from the
+ * persisted (wrong) multiplier, and any actions it skipped while halted are
+ * never replayed — the gap becomes permanent.
+ *
+ * Reads the chain at the persisted lastBlock (not HEAD: the network has
+ * usually moved on while the process was down, so a HEAD comparison would
+ * halt on every restart). A failed read — non-archive RPC included — skips the
+ * check without halting, like verifyMultiplier()'s transient-error path; there
+ * is deliberately no HEAD fallback here.
+ */
+export async function verifyMultiplierAtBoot(s: RuntimeState): Promise<void> {
+  if (s.lastBlock === 0n) return
+  const lastBlock = Number(s.lastBlock)
+  let onChain: bigint
+  try {
+    onChain = BigInt(await getCawProfileLedger().rewardMultiplier({ blockTag: lastBlock }))
+  } catch (err: any) {
+    console.warn(`[StakeLedger] boot multiplier check skipped (read at block ${lastBlock} failed): ${err?.message ?? err}`)
+    return
+  }
+  if (onChain !== s.multiplier) {
+    console.error(
+      `[StakeLedger] DIVERGENCE at boot: chain rewardMultiplier=${onChain}, ledger=${s.multiplier} ` +
+        `(checked at block ${lastBlock}). ` +
+        `Halting writes — operator must reseed (read CawProfileLedger state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
+    )
+    s.halted = true
+  } else {
+    console.log(`[StakeLedger] boot multiplier check ok at block ${lastBlock} (multiplier=${onChain})`)
   }
 }
 
