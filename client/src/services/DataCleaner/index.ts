@@ -5,6 +5,7 @@ import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cleanStaleOgCache } from '../../api/routes/og'
+import { cleanStalePriceSnapshots, parseDaysParam, DEFAULT_THIN_AGE_DAYS } from '../../utils/priceSnapshotPruning'
 import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
@@ -1369,6 +1370,10 @@ async function runDataCleanup() {
   // doesn't churn a readdir+stat over every cached PNG that often.
   await sweepOgCacheTask()
 
+  // Thin old PriceSnapshot rows (ChainSync writes two every 5 minutes and
+  // nothing else ever prunes them). Throttled to once per hour (below).
+  await sweepPriceSnapshotsTask()
+
   logger.log('All cleanup tasks completed')
 }
 
@@ -1393,6 +1398,40 @@ async function sweepOgCacheTask() {
     }
   } catch (err: any) {
     logger.error(`OG cache sweep error: ${err?.message || err}`)
+  }
+}
+
+// Throttle: pruning PriceSnapshot rows needs no more than an hourly pass.
+// Once the initial backlog is gone each run removes about 22 rows (24 written
+// per hour, one kept per token). By default rows older than 7 days are thinned
+// to one per hour and kept indefinitely; set PRICE_SNAPSHOT_MAX_AGE_DAYS to
+// delete rows older than that many days as well.
+let lastPriceSnapshotSweep = 0
+const PRICE_SNAPSHOT_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
+
+async function sweepPriceSnapshotsTask() {
+  const now = Date.now()
+  if (now - lastPriceSnapshotSweep < PRICE_SNAPSHOT_SWEEP_INTERVAL) return
+  lastPriceSnapshotSweep = now
+  try {
+    let maxAgeDays: number | null = null
+    try {
+      maxAgeDays = parseDaysParam(process.env.PRICE_SNAPSHOT_MAX_AGE_DAYS, 'PRICE_SNAPSHOT_MAX_AGE_DAYS')
+      if (maxAgeDays !== null && maxAgeDays <= DEFAULT_THIN_AGE_DAYS) {
+        throw new RangeError(`PRICE_SNAPSHOT_MAX_AGE_DAYS must be greater than ${DEFAULT_THIN_AGE_DAYS}`)
+      }
+    } catch (err: any) {
+      maxAgeDays = null
+      logger.error(`${err?.message || err}; ignoring it (thinning only)`)
+    }
+    const res = await cleanStalePriceSnapshots({ maxAgeDays })
+    if (res.deleted > 0) {
+      logger.log(
+        `Price snapshot sweep: thinned=${res.thinned} hardDeleted=${res.hardDeleted}`
+      )
+    }
+  } catch (err: any) {
+    logger.error(`Price snapshot sweep error: ${err?.message || err}`)
   }
 }
 

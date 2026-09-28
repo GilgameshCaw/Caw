@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { getCawPriceCache, getEthPriceCache, getSepoliaCawPriceCache } from '../../services/ChainSyncService'
 import { prisma } from '../../prismaClient'
 import { requireAdmin } from '../middleware/auth'
+import { cleanStalePriceSnapshots, parseDaysParam } from '../../utils/priceSnapshotPruning'
 
 const router = Router()
 
@@ -122,23 +123,26 @@ router.get('/history', async (req, res) => {
 
 /**
  * DELETE /api/prices/history/cleanup
- * Prune old price snapshots to save disk space.
- * Keeps 5-min granularity for 7 days, then thins to ~1 per hour.
+ * Prune old price snapshots to save disk space. Also run hourly by DataCleaner.
+ * Keeps 5-min granularity for 7 days, then thins to one row per token per hour
+ * (the earliest row of each hour, so no hour is ever emptied).
+ * Optional query params: thinAgeDays (default 7), maxAgeDays (hard-delete
+ * horizon, default none).
  */
-router.delete('/history/cleanup', requireAdmin, async (_req, res) => {
+router.delete('/history/cleanup', requireAdmin, async (req, res) => {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-
-    // For data older than 7 days, keep only one snapshot per hour per token
-    // Delete rows where minute != 0 and createdAt < 7 days ago
-    const deleted = await prisma.$executeRaw`
-      DELETE FROM "PriceSnapshot"
-      WHERE "createdAt" < ${sevenDaysAgo}
-      AND EXTRACT(MINUTE FROM "createdAt") != 0
-    `
-
-    res.json({ deleted })
+    const thinAgeDays = parseDaysParam(req.query.thinAgeDays, 'thinAgeDays')
+    const maxAgeDays = parseDaysParam(req.query.maxAgeDays, 'maxAgeDays')
+    const result = await cleanStalePriceSnapshots({
+      thinAgeDays: thinAgeDays ?? undefined,
+      maxAgeDays,
+    })
+    res.json(result)
   } catch (err) {
+    if (err instanceof RangeError) {
+      res.status(400).json({ error: err.message })
+      return
+    }
     console.error('[Prices] Failed to cleanup history:', err)
     res.status(500).json({ error: 'Failed to cleanup price history' })
   }
