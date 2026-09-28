@@ -516,6 +516,18 @@ export const marketplaceIndexerService: Service = {
                 data: { status: 'WON' },
               })
 
+              // Idempotency: this event handler can be re-run over the
+              // same on-chain event on a checkpoint re-scan or a manual
+              // resync (same pattern as the OUTBID handler above).
+              // @@unique([listingId]) on MarketplaceSale makes the upsert
+              // below a no-op on a retry; `saleWasNew` gates the AUCTION_WON
+              // notification so a retry doesn't re-notify the winner.
+              const beforeSale = await prisma.marketplaceSale.findUnique({
+                where: { listingId: listing.id },
+                select: { id: true },
+              })
+              const saleWasNew = !beforeSale
+
               await prisma.marketplaceSale.upsert({
                 where: { listingId: listing.id },
                 update: {},
@@ -531,34 +543,36 @@ export const marketplaceIndexerService: Service = {
                 },
               })
 
-              // Notify the auction winner
-              try {
-                const winnerUser = await prisma.user.findFirst({
-                  where: { address: { equals: winner, mode: 'insensitive' } },
-                  select: { tokenId: true },
-                })
-                // Find seller's profile for actorId
-                const sellerUser = await prisma.user.findFirst({
-                  where: { address: { equals: listing.seller, mode: 'insensitive' } },
-                  select: { tokenId: true },
-                })
-                if (winnerUser) {
-                  await createNotificationWithGroup(prisma, {
-                    userId: winnerUser.tokenId,
-                    actorId: sellerUser?.tokenId ?? winnerUser.tokenId,
-                    type: 'AUCTION_WON',
-                    actionPayload: {
-                      listingId: listing.listingId,
-                      username: listing.username,
-                      tokenId: listing.tokenId,
-                      winningBid: price,
-                      paymentToken: listing.paymentToken,
-                    },
+              // Notify the auction winner (only on a genuinely new sale row).
+              if (saleWasNew) {
+                try {
+                  const winnerUser = await prisma.user.findFirst({
+                    where: { address: { equals: winner, mode: 'insensitive' } },
+                    select: { tokenId: true },
                   })
-                  console.log(`[Marketplace] Sent AUCTION_WON notification to tokenId=${winnerUser.tokenId} for listing ${listing.listingId}`)
+                  // Find seller's profile for actorId
+                  const sellerUser = await prisma.user.findFirst({
+                    where: { address: { equals: listing.seller, mode: 'insensitive' } },
+                    select: { tokenId: true },
+                  })
+                  if (winnerUser) {
+                    await createNotificationWithGroup(prisma, {
+                      userId: winnerUser.tokenId,
+                      actorId: sellerUser?.tokenId ?? winnerUser.tokenId,
+                      type: 'AUCTION_WON',
+                      actionPayload: {
+                        listingId: listing.listingId,
+                        username: listing.username,
+                        tokenId: listing.tokenId,
+                        winningBid: price,
+                        paymentToken: listing.paymentToken,
+                      },
+                    })
+                    console.log(`[Marketplace] Sent AUCTION_WON notification to tokenId=${winnerUser.tokenId} for listing ${listing.listingId}`)
+                  }
+                } catch (err) {
+                  console.warn('[Marketplace] Failed to create AUCTION_WON notification:', err)
                 }
-              } catch (err) {
-                console.warn('[Marketplace] Failed to create AUCTION_WON notification:', err)
               }
             }
           }
