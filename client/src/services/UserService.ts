@@ -253,8 +253,13 @@ export async function findOrCreateUser(
   }
 
   // Skip cache when caller has onboarding semantics (fresh mint flow needs a
-  // fresh write, not a shared promise from a prior request).
-  if (!opts.onboardingStep) {
+  // fresh write, not a shared promise from a prior request). Fresh mints
+  // start at onboardingStep=0 (see NftTransferWatcher), so this must check
+  // for "was onboardingStep passed at all", not truthiness -- `!0` is
+  // `true` in JS, which used to silently defeat this bypass on the very
+  // first onboarding step (same class of bug as the cawonce===0 trap fixed
+  // in PR #81).
+  if (opts.onboardingStep === undefined) {
     const cached = getCachedUser(tokenId)
     if (cached) return cached
   }
@@ -266,7 +271,7 @@ export async function findOrCreateUser(
     throw err
   })
 
-  if (!opts.onboardingStep) {
+  if (opts.onboardingStep === undefined) {
     userCache.set(tokenId, {
       tokenId,
       promise,
