@@ -19,7 +19,7 @@ import getActionType from '../../abi/getActionType'
 // rewriter does for static imports. No circular-import risk: StakeLedger
 // only `type`-imports from ActionProcessor/types (erased at compile time).
 // Reported by Zin running the standard .nvmrc environment.
-import { verifyMultiplier, recordAction } from '../StakeLedger'
+import { verifyMultiplier, recordAction, refreshCapStateAtBlock } from '../StakeLedger'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -530,6 +530,10 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // checksum in handleRawEvent will halt the writer if state has
     // drifted.
     try {
+      // Cost the action with the capState that was live at its block, not
+      // whatever sample the last verifyMultiplier() left in memory. Outside
+      // the tx: RPC reads must not extend a Prisma tx timeout.
+      await refreshCapStateAtBlock(raw.blockNumber)
       const postCommit = await prisma.$transaction(async (tx) => {
         return await recordAction(tx, {
           rawAction,
