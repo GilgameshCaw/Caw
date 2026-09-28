@@ -297,7 +297,11 @@ export class DmService {
     let shaped: any[] = messages
     if (isGroup) {
       shaped = messages.map((m: any) => {
-        const payload = m.recipientPayloads?.[0]?.encryptedPayload ?? null
+        // A tombstoned message must never re-surface its ciphertext, even
+        // if the deleteMany above raced (or predates) this read.
+        const payload = m.contentType === 'deleted'
+          ? null
+          : (m.recipientPayloads?.[0]?.encryptedPayload ?? null)
         const { recipientPayloads, ...rest } = m
         return { ...rest, encryptedPayload: payload }
       })
@@ -407,7 +411,9 @@ export class DmService {
       const last = p.conversation.messages[0] || null
       let shapedLast = last
       if (last && p.conversation.type === 'GROUP') {
-        const payload = last.recipientPayloads?.[0]?.encryptedPayload ?? null
+        const payload = last.contentType === 'deleted'
+          ? null
+          : (last.recipientPayloads?.[0]?.encryptedPayload ?? null)
         const { recipientPayloads, ...rest } = last
         shapedLast = { ...rest, encryptedPayload: payload }
       }

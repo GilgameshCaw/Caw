@@ -835,14 +835,20 @@ router.delete('/messages/:messageId',
         return res.status(403).json({ error: 'Delete window has expired (5 minutes)' })
       }
 
-      // Tombstone: wipe payload and edit history, set contentType to deleted
-      await prisma.message.update({
-        where: { id: messageId },
-        data: {
-          encryptedPayload: null,
-          editHistory: null,
-          contentType: 'deleted',
-        }
+      // Tombstone: wipe payload, delete group recipient ciphertexts, and
+      // set contentType to deleted. 1:1 DMs have no messageRecipientPayload
+      // rows, so the deleteMany is a 0-row no-op for them (same pattern as
+      // the PATCH /messages/:messageId edit handler above).
+      await prisma.$transaction(async tx => {
+        await tx.messageRecipientPayload.deleteMany({ where: { messageId } })
+        await tx.message.update({
+          where: { id: messageId },
+          data: {
+            encryptedPayload: null,
+            editHistory: null,
+            contentType: 'deleted',
+          }
+        })
       })
 
       // Notify via WebSocket
