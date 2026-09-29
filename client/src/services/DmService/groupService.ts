@@ -666,12 +666,10 @@ export class GroupService {
       const me = await requireParticipant(tx, conversationId, senderId)
 
       // The participant lookup proved sender is active — but we still
-      // need the full active set to validate the keyset.
-      const active = await tx.conversationParticipant.findMany({
-        where: { conversationId, leftAt: null },
-        select: { userId: true },
-      })
-      const activeIds = active.map(a => a.userId).sort((a, b) => a - b)
+      // need the recipient set to validate the keyset: active members with
+      // a DM key (see recipientIdsWithKey). Unread counts below still go to
+      // every active member.
+      const activeIds = await recipientIdsWithKey(tx, conversationId)
 
       const submittedIds = Object.keys(recipientPayloads).map(k => Number(k)).sort((a, b) => a - b)
       if (
@@ -746,6 +744,26 @@ export class GroupService {
       select: { allowGroupInvites: true },
     })
   }
+}
+
+/**
+ * The members a group message is encrypted to: active (not left) and with a
+ * DM key. A member without one — never enabled, or cleared after their name
+ * changed hands (clearStaleDmKeys) — can't be encrypted to, so they are left
+ * out of the keyset instead of every send to the group being rejected. A
+ * sender still can't drop a member who has a key, and a payload for a member
+ * without one (a client encrypting to a key it cached before the clear) is
+ * rejected. Used by both sendGroupMessage and the group edit route.
+ */
+export async function recipientIdsWithKey(
+  db: Pick<Prisma.TransactionClient, 'conversationParticipant'>,
+  conversationId: string,
+): Promise<number[]> {
+  const rows = await db.conversationParticipant.findMany({
+    where: { conversationId, leftAt: null, identity: { is: { publicKey: { not: '' } } } },
+    select: { userId: true },
+  })
+  return rows.map(r => r.userId).sort((a, b) => a - b)
 }
 
 export default new GroupService()

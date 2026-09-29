@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express'
 import { prisma } from '../../prismaClient'
 import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
-import groupService, { GroupServiceError } from '../../services/DmService/groupService'
+import groupService, { GroupServiceError, recipientIdsWithKey } from '../../services/DmService/groupService'
 import { requireAuth } from '../middleware/auth'
 import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
 import {
@@ -44,7 +44,10 @@ router.post('/identity',
         return res.status(403).json({ error: 'Wallet address does not match the owner of this token' })
       }
 
-      const identity = await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
+      const identity = await dmService.registerIdentityForOwner(Number(userId), walletAddress, publicKey)
+      if (!identity) {
+        return res.status(409).json({ error: 'ownership changed during registration' })
+      }
 
       // Fan out to peer instances so other nodes' DmIdentity tables stay
       // in sync. Mirrors are otherwise blind to a user's DM-enable until
@@ -719,11 +722,8 @@ router.patch('/messages/:messageId',
         if (!recipientPayloads || typeof recipientPayloads !== 'object' || Array.isArray(recipientPayloads)) {
           return res.status(400).json({ error: 'recipientPayloads object required for group edit' })
         }
-        const active = await prisma.conversationParticipant.findMany({
-          where: { conversationId: message.conversationId, leftAt: null },
-          select: { userId: true },
-        })
-        const activeIds = active.map(a => a.userId).sort((a, b) => a - b)
+        // Same recipient set as sendGroupMessage: active members with a DM key.
+        const activeIds = await recipientIdsWithKey(prisma, message.conversationId)
         const submittedIds = Object.keys(recipientPayloads).map(k => Number(k)).sort((a, b) => a - b)
         if (
           submittedIds.length !== activeIds.length ||

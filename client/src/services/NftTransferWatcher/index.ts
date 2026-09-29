@@ -14,7 +14,7 @@ import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL1HttpRpcUrls, makeRes
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
-import { findOrCreateUser, StaleTokenError } from '../UserService'
+import { findOrCreateUser, StaleTokenError, clearStaleDmKeys } from '../UserService'
 import { pruneTokenIdFromAllSessions } from '../../api/sessionStore'
 import dmWebSocketService from '../DmService/websocket'
 
@@ -341,12 +341,14 @@ export const nftTransferWatcherService: Service = {
             }
 
             let anyFailed = false
+            const transferred = new Set<number>()
             for (const ev of events) {
               const args = (ev as ethers.EventLog).args
               if (!args) continue
               const fromAddr = (args[0] as string).toLowerCase()
               const toAddr = (args[1] as string).toLowerCase()
               const tokenId = Number(args[2])
+              transferred.add(tokenId)
 
               // Tier 3 of the "RPC out of API request handlers" refactor:
               // /api/users/by-token, /api/auth/verify, etc. now return 202 on
@@ -431,6 +433,16 @@ export const nftTransferWatcherService: Service = {
                 console.warn(`[NftTransferWatcher] Failed to apply transfer for tokenId=${tokenId}:`, err?.message)
               }
             }
+
+            // A name that changed hands must not keep serving the previous
+            // owner's DM key (see clearStaleDmKeys). The owner is read on this
+            // poll's provider at the head it just saw, so a lagging backend
+            // errors instead of answering with a pre-transfer owner, and a
+            // replayed or held batch never mistakes a past owner for the
+            // current one. A failure holds the checkpoint like any other
+            // event that didn't apply.
+            const ownerReader = new ethers.Contract(contractAddress, ['function ownerOf(uint256) view returns (address)'], provider)
+            if (!(await clearStaleDmKeys([...transferred], id => ownerReader.ownerOf(id, { blockTag: currentBlock })))) anyFailed = true
 
             if (anyFailed) {
               console.warn(`[NftTransferWatcher] Holding checkpoint at block ${fromBlock - 1} — event(s) failed to apply, will retry`)

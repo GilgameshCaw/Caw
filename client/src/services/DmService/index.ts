@@ -14,6 +14,28 @@ export class DmService {
   }
 
   /**
+   * registerIdentity for a caller whose ownership was checked against
+   * User.address before this call. NftTransferWatcher can move the token in
+   * between: it updates User.address and then runs clearStaleDmKeys, which may
+   * already have passed by the time this write lands. Re-reading the owner
+   * after the write closes that gap without a lock: either this read sees the
+   * new owner and undoes the write here, or the watcher's address update comes
+   * after this read, so its clear comes after the write and removes the key.
+   * Returns null when the write was undone.
+   */
+  async registerIdentityForOwner(userId: number, walletAddress: string, publicKey: string) {
+    const identity = await this.registerIdentity(userId, walletAddress, publicKey)
+    const user = await prisma.user.findUnique({ where: { tokenId: userId }, select: { address: true } })
+    if (user && user.address.toLowerCase() === walletAddress.toLowerCase()) return identity
+    await prisma.dmIdentity.updateMany({
+      where: { userId, publicKey, walletAddress: { equals: walletAddress, mode: 'insensitive' } },
+      data: { publicKey: '' },
+    })
+    console.warn(`[DM] identity for tokenId=${userId} undone: owner changed during registration`)
+    return null
+  }
+
+  /**
    * Get a user's DM public key
    */
   async getPublicKey(userId: number): Promise<string | null> {

@@ -364,7 +364,9 @@ router.post('/verify-dm', async (req, res) => {
     // around the findOrCreateUser fallback) is now redundant and removed.
 
     // Register DM identity
-    await dmService.registerIdentity(tokenId, recoveredAddress, publicKey)
+    if (!(await dmService.registerIdentityForOwner(tokenId, recoveredAddress, publicKey))) {
+      return res.status(409).json({ error: 'ownership changed during registration' })
+    }
 
     res.json({
       sessionToken,

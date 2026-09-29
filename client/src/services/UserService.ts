@@ -538,10 +538,82 @@ export async function reconcileUsernameDrift(batchSize: number): Promise<{ check
       data: { ...(d.newName ? { username: d.newName } : {}), ...(d.newOwner ? { address: d.newOwner } : {}) },
     }).catch((e: any) => console.warn(`[UserService] reconcileUsernameDrift: token ${d.tokenId} update failed:`, e?.message))
     userCache.delete(d.tokenId)
+    if (d.newOwner) await clearStaleDmKeys([d.tokenId], async () => d.newOwner!)
   }
   console.log(`[UserService] reconcileUsernameDrift: corrected ${drift.length}/${rows.length} — ` +
     drift.map(d => `#${d.tokenId}${d.newName ? `→"${d.newName}"` : ''}`).join(', '))
   return { checked: rows.length, corrected: drift.length }
+}
+
+/**
+ * Clear DM keys that no longer belong to their token's owner.
+ *
+ * A DM key is only usable by the wallet it was registered for. When a name
+ * changes hands the row keeps the previous owner's key, so senders keep
+ * encrypting to it and the previous owner can read messages meant for the new
+ * one. Setting publicKey to '' (the placeholder every reader treats as "no
+ * key") stops that: 1:1 sends stop with "key not available", groups skip the
+ * member, and the new owner's registration is accepted as a first key.
+ *
+ * Called with the tokenIds of each NftTransferWatcher batch, and by the drift
+ * sweep when it corrects an owner the watcher missed, so the work scales with
+ * transfers, not with the number of users.
+ *
+ * - Only rows with a non-empty key are read (one query).
+ * - A row whose wallet is the owner this node has on record is skipped without
+ *   an RPC call; the record is at least as new as the batch, and any later
+ *   transfer brings the token back here.
+ * - Otherwise the owner comes from `readOwner`, not from the event, because the
+ *   watcher can replay history (no checkpoint + startBlock, or a held batch).
+ * - The clear is one conditional UPDATE, so a key the current owner registers
+ *   at the same moment is never touched.
+ * - A revert with "invalid token ID" (the token does not exist on this
+ *   contract; CawProfile has no burn) leaves the row as is. Any other failure,
+ *   including a CALL_EXCEPTION without revert data from a misbehaving RPC,
+ *   returns false so the caller holds the checkpoint and retries.
+ */
+export async function clearStaleDmKeys(
+  tokenIds: number[],
+  readOwner: (tokenId: number) => Promise<string>,
+): Promise<boolean> {
+  if (tokenIds.length === 0) return true
+  try {
+    const rows = await prisma.dmIdentity.findMany({
+      where: { userId: { in: tokenIds }, publicKey: { not: '' } },
+      select: { userId: true, walletAddress: true, user: { select: { address: true } } },
+    })
+    let ok = true
+    for (const row of rows) {
+      const wallet = row.walletAddress.toLowerCase()
+      if (wallet === (row.user?.address || '').toLowerCase()) continue
+      let owner: string
+      try {
+        owner = String(await readOwner(row.userId)).toLowerCase()
+      } catch (err: any) {
+        if (err?.code === 'CALL_EXCEPTION' && String(err?.reason ?? '').includes('invalid token ID')) {
+          console.warn(`[UserService] clearStaleDmKeys: ownerOf(${row.userId}) reverted — leaving the key`)
+          continue
+        }
+        console.warn(`[UserService] clearStaleDmKeys: ownerOf(${row.userId}) failed:`, err?.message)
+        ok = false
+        continue
+      }
+      if (wallet === owner) continue
+      const { count } = await prisma.dmIdentity.updateMany({
+        where: {
+          userId: row.userId,
+          publicKey: { not: '' },
+          NOT: { walletAddress: { equals: owner, mode: 'insensitive' } },
+        },
+        data: { publicKey: '' },
+      })
+      if (count > 0) console.warn(`[UserService] cleared DM key for tokenId=${row.userId}: registered for a wallet that no longer owns it`)
+    }
+    return ok
+  } catch (err: any) {
+    console.warn('[UserService] clearStaleDmKeys failed:', err?.message)
+    return false
+  }
 }
 
 /**
