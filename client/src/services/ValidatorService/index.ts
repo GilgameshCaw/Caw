@@ -16,7 +16,7 @@ import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
-import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl, blocksForDuration } from '../../utils/rpcProvider'
 import { getIndexerStats } from '../../utils/indexerHealth'
 import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
@@ -5208,12 +5208,22 @@ console.log("succeededKeys", succeededKeys)
       toBlock: number,
     ) {
       const target = await filter
+      // Size maxWindows to the actual range requested instead of relying on
+      // scanLogsForward's default (100 windows x 10k blocks = a 1M-block
+      // ceiling). A correctly-sized cold-start scan (see blocksForDuration
+      // callers in this file) can be well over 1M blocks on a fast chain
+      // like Arbitrum, so a fixed default here would throw on exactly the
+      // range it's supposed to cover. +1 window of headroom for rounding.
+      const chunkBlocks = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
+      const blockCount = Math.max(0, toBlock - fromBlock + 1)
+      const maxWindows = Math.ceil(blockCount / chunkBlocks) + 1
       const rawLogs = await scanLogsForward(
         provider,
         target.address ?? archive.target,
         target.topics ?? [],
         fromBlock,
         toBlock,
+        { chunkBlocks, maxWindows },
       )
       return rawLogs
         .map(log => {
@@ -5313,11 +5323,15 @@ console.log("succeededKeys", succeededKeys)
         }
 
         const cp = await prisma.chainData.findUnique({ where: { key: checkpointKey } })
-        // ~12s/block on Arbitrum = ~28800 blocks/day. 4-day cold-start lookback.
+        // 4-day cold-start lookback, sized from the provider's actually
+        // measured block time rather than a hardcoded seconds-per-block
+        // assumption (see blocksForDuration in rpcProvider.ts — a prior
+        // "~12s/block on Arbitrum" assumption here was ~50x off from
+        // Arbitrum Sepolia's measured ~0.253s/block).
         const cold = !cp
         const fromBlock = cp
           ? Math.max(0, Number(cp.value) + 1)
-          : Math.max(0, latestBlock - 28800 * 4)
+          : Math.max(0, latestBlock - await blocksForDuration(provider!, 4 * 24 * 60 * 60))
         if (cold) console.log(`[OptimisticReplication] Cold-start finalize scan: ${fromBlock}..${latestBlock}`)
 
         if (fromBlock <= latestBlock) {
@@ -5441,8 +5455,65 @@ console.log("succeededKeys", succeededKeys)
         const { archiveRead: archive, l2bProvider: provider, l2bMonitor: w } = await getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
-        // Look back ~3 days of blocks
-        const fromBlock = Math.max(0, latestBlock - 28800 * 3)
+        // Checkpointed the same way as autoFinalizeSubmissions: a full
+        // ~3-day-real lookback (CHALLENGE_PERIOD is 2 days on-chain; the
+        // extra day is margin for this monitor's own downtime/restarts) is
+        // only needed once, on cold start. On correctly-sized block ranges
+        // (see blocksForDuration below) a fixed 3-day scan is ~1.3M blocks
+        // on Arbitrum Sepolia — re-scanning that every cycle would both hit
+        // scanLogsForward's maxWindows cap (100 windows x 10k blocks =
+        // 1M-block ceiling) and burn far more RPC calls than necessary,
+        // since every submission in the window is inspected once per scan;
+        // anything still unresolved after that pass is carried in the retry
+        // queue below instead of being re-scanned.
+        const monitorCheckpointKey = `optimistic-monitor:${w.getAddress().toLowerCase()}:last-block`
+        const monitorCp = await prisma.chainData.findUnique({ where: { key: monitorCheckpointKey } })
+        // ~3 days of blocks, sized from the provider's actually measured
+        // block time rather than a hardcoded seconds-per-block assumption
+        // (see blocksForDuration in rpcProvider.ts — a prior "~12s/block on
+        // Arbitrum" assumption here was ~50x off from Arbitrum Sepolia's
+        // measured ~0.253s/block).
+        const fromBlock = monitorCp
+          ? Math.max(0, Number(monitorCp.value) + 1)
+          : Math.max(0, latestBlock - await blocksForDuration(provider!, 3 * 24 * 60 * 60))
+        if (!monitorCp) console.log(`[Monitor] Cold-start scan: ${fromBlock}..${latestBlock}`)
+
+        // --- Retry queue ---------------------------------------------------
+        // A submission with detected fraud (Mode A or Mode B) that isn't
+        // fully resolved by the end of THIS cycle is kept here and
+        // reprocessed at the start of every following cycle, independent of
+        // the scan checkpoint above. Without this, a submission whose
+        // relayBatch/resolveChallenge/slashIncoherentRoot call fails once
+        // (RPC hiccup, gas spike, LZ fee underpayment) — or that simply
+        // needs another cycle for its challenge to be delivered/resolved —
+        // falls out of the checkpoint's scan window on the very next cycle
+        // (the checkpoint only rescans NEW blocks), and its SubmissionCreated
+        // event is never seen again: the retry is lost permanently.
+        const monitorRetryKey = `optimistic-monitor:${w.getAddress().toLowerCase()}:retry-queue`
+        interface MonitorRetryItem {
+          submissionId: number
+          networkId: number
+          startCp: number
+          endCp: number
+          submitter: string
+          // Block of this submission's SubmissionCreated event. ActionsArchived is
+          // emitted in the same tx, so its lookup is a single-block call. Optional:
+          // items persisted before this field existed fall back to a wide lookback.
+          blockNumber?: number
+        }
+        const retryRow = await prisma.chainData.findUnique({ where: { key: monitorRetryKey } })
+        const pendingMonitorRetries: MonitorRetryItem[] = Array.isArray(retryRow?.value) ? retryRow.value as any : []
+        const nextMonitorRetries: MonitorRetryItem[] = []
+        // A retried item normally carries the block of its own SubmissionCreated
+        // event, so its ActionsArchived lookup is a single-block call. Items
+        // persisted before blockNumber was stored fall back to this wider fixed
+        // lookback (7 days covers the 2-day on-chain challenge period plus
+        // several cycles of retry margin); that is a chunked getLogs scan, one
+        // call per chunk, so it is not free.
+        const retryArchivedScanFrom = Math.max(0, latestBlock - await blocksForDuration(provider!, 7 * 24 * 60 * 60))
+        // Submissions processed this cycle (retry queue + fresh scan), so a
+        // submission present in both isn't processed twice.
+        const processedThisCycle = new Set<number>()
 
         // Query ALL SubmissionCreated events (not just ours)
         const events = await scanArchiveEvents(
@@ -5472,22 +5543,37 @@ console.log("succeededKeys", succeededKeys)
         )
         const newlyResolved: number[] = []
 
-        for (const ev of events) {
-          const args: any = ev.args
-          if (!args) continue
+        // Shared per-submission verification/challenge logic, used for both
+        // freshly-scanned SubmissionCreated events and items carried over in
+        // the retry queue above. `archivedBlock` is the block of this submission's SubmissionCreated event
+        // (ActionsArchived is emitted in the same tx), so its ActionsArchived event
+        // is fetched in a single call. It is undefined only for retry items
+        // persisted before blockNumber was stored; those fall back to the wider
+        // fixed lookback (retryArchivedScanFrom).
+        const processSubmission = async (
+          submissionId: number,
+          submitter: string,
+          networkId: number,
+          startCp: number,
+          endCp: number,
+          archivedBlock: number | undefined,
+        ): Promise<void> => {
+          if (processedThisCycle.has(submissionId)) return
+          processedThisCycle.add(submissionId)
 
-          const submissionId = Number(args[0] || args.submissionId)
-          const submitter = args[1] || args.submitter
-          const networkId = Number(args[2] || args.networkId)
-          const startCp = Number(args[3] || args.startCheckpointId)
-          const endCp = Number(args[4] || args.endCheckpointId)
+          // ActionsArchived is emitted in the same tx as SubmissionCreated, so its
+          // block is the event's block: one getLogs call instead of a chunked scan
+          // of the whole lookback. Retry items persisted before blockNumber was
+          // stored fall back to the wide lookback.
+          const archivedFrom = archivedBlock ?? retryArchivedScanFrom
+          const archivedTo = archivedBlock ?? latestBlock
 
           // Skip our own submissions
-          if (submitter.toLowerCase() === w.getAddress().toLowerCase()) continue
+          if (submitter.toLowerCase() === w.getAddress().toLowerCase()) return
 
           // Skip submissions we already know are resolved (saves a
           // getSubmission view call per cycle).
-          if (resolvedSet.has(submissionId)) continue
+          if (resolvedSet.has(submissionId)) return
 
           // Check if still pending
           let merkleRoot: string
@@ -5497,10 +5583,15 @@ console.log("succeededKeys", succeededKeys)
             if (status !== 0) {
               // Cache this for future cycles.
               newlyResolved.push(submissionId)
-              continue
+              return
             }
             merkleRoot = sub[1] // bytes32 merkleRoot
-          } catch { continue }
+          } catch {
+            // Couldn't even check status this cycle (RPC hiccup) — retry
+            // next cycle rather than dropping it.
+            nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
+            return
+          }
 
           // Set up contract handles once per submission.
           const resolveAbi = [
@@ -5535,7 +5626,7 @@ console.log("succeededKeys", succeededKeys)
               archive,
               provider,
               archive.filters.ActionsArchived(submissionId),
-              fromBlock, latestBlock,
+              archivedFrom, archivedTo,
             )
             const archivedEv: any = archivedEvents[0]
             if (!archivedEv) throw new Error('ActionsArchived event missing')
@@ -5694,7 +5785,13 @@ console.log("succeededKeys", succeededKeys)
 
               const lockHolder = w.getAddress().toLowerCase()
               const claimed = await tryClaimChallengeLock('slashIncoherent', submissionId, 0, lockHolder, 10 * 60 * 1000)
-              if (!claimed) continue
+              if (!claimed) {
+                // Another node (or a previous cycle) already holds this
+                // lock — keep watching until the submission actually
+                // resolves, instead of dropping it here.
+                nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
+                return
+              }
 
               try {
                 // Fetch the originating submitReplication tx via ActionsArchived
@@ -5705,7 +5802,7 @@ console.log("succeededKeys", succeededKeys)
                   archive,
                   provider,
                   archive.filters.ActionsArchived(submissionId),
-                  fromBlock, latestBlock,
+                  archivedFrom, archivedTo,
                 )
                 const archivedEv: any = archivedEvents[0]
                 if (!archivedEv) throw new Error('ActionsArchived event missing')
@@ -5736,13 +5833,21 @@ console.log("succeededKeys", succeededKeys)
               } catch (e: any) {
                 console.error(`[Monitor] slashIncoherentRoot failed for ${submissionId}: ${e?.shortMessage || e?.message}`)
                 await releaseChallengeLock('slashIncoherent', submissionId, 0, 'error')
+                // Still fraudulent and still unresolved — keep retrying
+                // instead of letting the checkpoint carry it out of range.
+                nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
               }
-              continue
+              return
             }
 
             if (!submitterHashes) {
               console.warn(`[Monitor] Submission ${submissionId}: no submitter view available — skipping`)
-              continue
+              // Couldn't verify this cycle (ActionsArchived not found /
+              // decode failed) — try again next cycle rather than
+              // dropping it, since this is often a transient RPC/indexing
+              // gap.
+              nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
+              return
             }
 
             // Mode B detection: compare each submitter-claimed checkpoint
@@ -5771,11 +5876,49 @@ console.log("succeededKeys", succeededKeys)
             if (fraudulentCps.length > 0) {
               try { await relayBatch(fraudulentCps, 'mode B') }
               catch (e: any) { console.error(`[Monitor] Failed to relay batch for submission ${submissionId}: ${e?.shortMessage || e?.message}`) }
+              // Whether relayBatch just succeeded, failed, or a challenge
+              // was already delivered and is merely awaiting
+              // resolveChallenge: this submission stays fraudulent-and-
+              // pending until its on-chain status flips off 0. Keep
+              // watching it next cycle regardless of outcome here.
+              nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
             } else {
               console.log(`[Monitor] Submission ${submissionId} verified OK (network ${networkId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
             }
           } catch (err: any) {
             console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+            nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
+          }
+        }
+
+        // Reprocess anything carried over from a previous cycle first, so a
+        // submission that would otherwise fall out of the scan window below
+        // keeps getting checked until it actually resolves.
+        for (const item of pendingMonitorRetries) {
+          try {
+            await processSubmission(item.submissionId, item.submitter, item.networkId, item.startCp, item.endCp, item.blockNumber)
+          } catch (err: any) {
+            console.warn(`[Monitor] Error reprocessing retry-queue submission ${item.submissionId}: ${err?.shortMessage || err?.message}`)
+            nextMonitorRetries.push(item)
+          }
+        }
+
+        for (const ev of events) {
+          const args: any = ev.args
+          if (!args) continue
+
+          const submissionId = Number(args[0] || args.submissionId)
+          const submitter = args[1] || args.submitter
+          const networkId = Number(args[2] || args.networkId)
+          const startCp = Number(args[3] || args.startCheckpointId)
+          const endCp = Number(args[4] || args.endCheckpointId)
+          const archivedBlock = Number(ev.blockNumber)
+
+          try {
+            await processSubmission(submissionId, submitter, networkId, startCp, endCp, archivedBlock)
+          } catch (err: any) {
+            console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+            nextMonitorRetries.push({ submissionId, networkId, startCp, endCp, submitter, blockNumber: archivedBlock })
           }
         }
 
@@ -5791,6 +5934,34 @@ console.log("succeededKeys", succeededKeys)
             create: { key: 'validator_monitor_resolved', value: { ids: merged } },
           })
         }
+
+        // Advance the scan checkpoint and the retry queue together. A
+        // submission is only ever dropped from the retry queue once it's
+        // either verified clean or its on-chain status has actually
+        // resolved (see newlyResolved above) — never just because a
+        // relay/resolve/slash call happened to fail this cycle. Writing
+        // both keys in one transaction keeps them consistent with each
+        // other (mirrors autoFinalizeSubmissions' pairing of its own
+        // checkpoint + retry queue).
+        // One entry per submission: processSubmission's own handlers and the
+        // catch around it can both queue the same one.
+        const dedupedMonitorRetries = Array.from(
+          new Map<number, MonitorRetryItem>(
+            nextMonitorRetries.map(r => [r.submissionId, r] as [number, MonitorRetryItem]),
+          ).values(),
+        )
+        await prisma.$transaction([
+          prisma.chainData.upsert({
+            where: { key: monitorCheckpointKey },
+            create: { key: monitorCheckpointKey, value: latestBlock as any },
+            update: { value: latestBlock as any },
+          }),
+          prisma.chainData.upsert({
+            where: { key: monitorRetryKey },
+            create: { key: monitorRetryKey, value: dedupedMonitorRetries as any },
+            update: { value: dedupedMonitorRetries as any },
+          }),
+        ])
       } catch (err: any) {
         console.error(`[Monitor] Loop error: ${err?.shortMessage || err?.message}`)
       }

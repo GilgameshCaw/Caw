@@ -773,3 +773,100 @@ export function makeResilientHttpProvider(
     destroy: () => { try { (current as any)?.destroy?.() } catch { /* best effort */ } },
   }
 }
+
+// ============================================
+// BLOCK-TIME-AWARE LOOKBACK RANGES
+// ============================================
+
+/**
+ * Cache of measured seconds-per-block, keyed the same way as the
+ * eth_blockNumber cache above (by provider URL where introspectable).
+ *
+ * A prior bug hardcoded "~12s/block on Arbitrum" and derived "~28800
+ * blocks/day" from it — actually 4x too many blocks for a 12s assumption
+ * (86400/12 = 7200, not 28800), and wildly off from Arbitrum Sepolia's
+ * measured ~0.253s/block regardless. Code using that constant to look
+ * back "N days" of blocks was in practice only looking back a small
+ * fraction of a day. Measuring the real block time avoids re-baking any
+ * chain-specific assumption into a constant that silently goes stale
+ * (different chain, different network conditions, mainnet vs testnet).
+ */
+const BLOCK_TIME_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+const BLOCK_TIME_SAMPLE_BLOCKS = 1000 // how far back to sample for the average
+// If measurement fails outright (fresh chain with <10 blocks of history, or
+// an RPC error) and there's no prior cached value to fall back to, assume a
+// very short block time. This errs toward SCANNING MORE blocks than
+// necessary (extra RPC cost) rather than fewer (missing events) — the safe
+// direction for anything feeding a fraud-monitoring lookback.
+const BLOCK_TIME_FALLBACK_SECONDS = 0.25
+// Safety margin applied on top of the measured average, since block
+// production isn't perfectly uniform and we'd rather over-scan than
+// under-scan a security-relevant window.
+const BLOCK_TIME_SAFETY_MARGIN = 1.25
+
+type BlockTimeCacheEntry = { seconds: number; cachedAt: number; inFlight?: Promise<number> }
+const blockTimeCache = new Map<string, BlockTimeCacheEntry>()
+
+/**
+ * Measure the actual average seconds-per-block for `provider` by comparing
+ * the timestamps of the latest block and a block ~BLOCK_TIME_SAMPLE_BLOCKS
+ * behind it. Cached per provider (by URL where introspectable, otherwise
+ * globally) for BLOCK_TIME_CACHE_TTL_MS so callers on a shared poll cadence
+ * don't re-measure every tick.
+ *
+ * Falls back to the last cached value (however old) on measurement failure,
+ * and to BLOCK_TIME_FALLBACK_SECONDS if there's no cached value at all.
+ * Never throws.
+ */
+export async function estimateBlockTimeSeconds(provider: AbstractProvider): Promise<number> {
+  const cacheKey = getProviderUrl(provider) || '(default)'
+  const entry = blockTimeCache.get(cacheKey)
+  if (entry?.inFlight) return entry.inFlight
+  if (entry && Date.now() - entry.cachedAt < BLOCK_TIME_CACHE_TTL_MS) return entry.seconds
+
+  const measure = (async (): Promise<number> => {
+    try {
+      const latestNumber = await provider.getBlockNumber()
+      const sampleDepth = Math.min(BLOCK_TIME_SAMPLE_BLOCKS, latestNumber)
+      if (sampleDepth < 10) {
+        throw new Error(`only ${sampleDepth} blocks of history available`)
+      }
+      const olderNumber = latestNumber - sampleDepth
+      const [latest, older] = await Promise.all([
+        provider.getBlock(latestNumber),
+        provider.getBlock(olderNumber),
+      ])
+      if (!latest || !older) throw new Error('getBlock returned null')
+      const elapsedSeconds = latest.timestamp - older.timestamp
+      const blockCount = latestNumber - olderNumber
+      if (elapsedSeconds <= 0 || blockCount <= 0) {
+        throw new Error(`non-positive sample (elapsed=${elapsedSeconds}, blocks=${blockCount})`)
+      }
+
+      const seconds = elapsedSeconds / blockCount
+      blockTimeCache.set(cacheKey, { seconds, cachedAt: Date.now() })
+      return seconds
+    } catch (err: any) {
+      const prior = blockTimeCache.get(cacheKey)
+      const fallback = prior ? prior.seconds : BLOCK_TIME_FALLBACK_SECONDS
+      console.warn(`[rpcProvider] estimateBlockTimeSeconds failed, using ${prior ? 'stale cached' : 'hardcoded fallback'} value ${fallback}s: ${err?.message || err}`)
+      blockTimeCache.set(cacheKey, { seconds: fallback, cachedAt: Date.now() })
+      return fallback
+    }
+  })()
+
+  blockTimeCache.set(cacheKey, { seconds: entry?.seconds ?? BLOCK_TIME_FALLBACK_SECONDS, cachedAt: 0, inFlight: measure })
+  return measure
+}
+
+/**
+ * Convert a target real-world duration into a block count for `provider`,
+ * using the actual measured block time (see estimateBlockTimeSeconds)
+ * instead of a hardcoded seconds-per-block assumption. Includes
+ * BLOCK_TIME_SAFETY_MARGIN so the result over-covers slightly rather than
+ * under-covers.
+ */
+export async function blocksForDuration(provider: AbstractProvider, durationSeconds: number): Promise<number> {
+  const blockTimeSeconds = await estimateBlockTimeSeconds(provider)
+  return Math.ceil((durationSeconds / blockTimeSeconds) * BLOCK_TIME_SAFETY_MARGIN)
+}
