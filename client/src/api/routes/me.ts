@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { extractSession } from '../middleware/auth'
+import { extractSession, ownedAuthorizedTokenIds } from '../middleware/auth'
 
 const router = Router()
 
@@ -14,11 +14,12 @@ router.get('/', async (req, res) => {
   try {
     await extractSession(req)
 
-    if (!req.sessionData || req.sessionData.authorizedTokenIds.length === 0) {
+    const ownedIds = req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : []
+    if (!req.sessionData || ownedIds.length === 0) {
       return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Valid session with authorized tokens required' })
     }
 
-    const tokenId = req.sessionData.authorizedTokenIds[0]
+    const tokenId = ownedIds[0]
 
     // --- Run all queries in parallel ---
     const [
@@ -351,7 +352,7 @@ router.get('/role', async (req, res) => {
     if (!req.sessionData) {
       return res.json({ role: 'USER', actorTokenId: null })
     }
-    const authorized = req.sessionData.authorizedTokenIds || []
+    const authorized = await ownedAuthorizedTokenIds(req.sessionData)
     if (authorized.length === 0) {
       return res.json({ role: 'USER', actorTokenId: null })
     }

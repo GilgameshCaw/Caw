@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import {
   requireModerator,
   extractSession,
+  ownedAuthorizedTokenIds,
 } from '../middleware/auth'
 import Redis from 'ioredis'
 
@@ -45,7 +46,7 @@ router.post('/', async (req, res): Promise<void> => {
     // moderator-side impersonation of arbitrary users in the report queue.
     // Audit fix 2026-05-09 (Round 5 API MED-2).
     await extractSession(req)
-    const sessionTokenIds = (req.sessionData?.authorizedTokenIds || []) as number[]
+    const sessionTokenIds = req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : []
     const userId = sessionTokenIds.length > 0 ? sessionTokenIds[0] : null
     let username: string | null = null
     if (userId !== null) {

@@ -42,7 +42,7 @@ import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorI
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
 import { decompressActionText } from '../../utils/decompressActionText'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, ownedAuthorizedTokenIds } from '../middleware/auth'
 import { consumeXQualifiedToken } from './xSignup'
 
 const router = Router()
@@ -2158,7 +2158,7 @@ router.post('/execute-estimate', async (req, res) => {
 // Only this server (the minting mirror) holds the buyer's PurchasedInviteCode +
 // the decryption key, so codes appear on the mirror that processed the purchase.
 router.get('/my-codes', requireAuth({ anySession: true }), async (req, res) => {
-  const authorized = req.sessionData?.authorizedTokenIds ?? []
+  const authorized = req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : []
   if (authorized.length === 0) return res.status(200).json({ codes: [] })
 
   // Scope to the ACTIVE profile, not every profile the session authed. The FE

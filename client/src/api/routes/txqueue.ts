@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, ownedAuthorizedTokenIds } from '../middleware/auth'
 import { countManager } from '../../services/CountManager'
 import { decompressActionText } from '../../utils/decompressActionText'
 
@@ -29,7 +29,7 @@ router.get('/status', requireAuth({ anySession: true }), async (req, res) => {
       return res.status(400).json({ error: 'No valid IDs provided' })
     }
 
-    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+    const authorized = new Set(req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : [])
 
     const txQueueEntries = await prisma.txQueue.findMany({
       where: {
@@ -108,7 +108,7 @@ router.get('/batch/:batchId',
     // Authorization: every row in a batch shares the same senderId
     // (enforced at /api/actions/batch creation time), so check the
     // first row's owner against the caller's authorized tokens.
-    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+    const authorized = new Set(req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : [])
     if (!authorized.has(entries[0].senderId)) {
       return res.status(403).json({ error: 'Not authorized for this batch' })
     }
@@ -159,7 +159,7 @@ router.get('/check-landed/:id',
       return res.status(404).json({ error: 'Not found' })
     }
 
-    const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+    const authorized = new Set(req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : [])
     if (!authorized.has(row.senderId)) {
       return res.status(403).json({ error: 'Not authorized for this row' })
     }
@@ -284,7 +284,7 @@ router.post(
       })
       if (!entry) return res.status(404).json({ error: 'TxQueue entry not found' })
 
-      const authorized = new Set((req.sessionData?.authorizedTokenIds || []) as number[])
+      const authorized = new Set(req.sessionData ? await ownedAuthorizedTokenIds(req.sessionData) : [])
       if (!authorized.has(entry.senderId)) {
         return res.status(403).json({ error: 'Forbidden' })
       }

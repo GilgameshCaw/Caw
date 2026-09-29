@@ -213,8 +213,9 @@ router.post('/blob/prf', blobWriteLimit, async (req, res) => {
       // (A) session-authed first-write.
       await extractSession(req)
       const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
-      const authedTokenIds = req.sessionData?.authorizedTokenIds || []
-      const sessionAuthorized = authedAddresses.includes(addr) || authedTokenIds.includes(user.tokenId)
+      // Address only: every sign-in adds the owner address with its tokenIds,
+      // so a tokenId without its address is one left over from a transfer.
+      const sessionAuthorized = authedAddresses.includes(addr)
       if (!sessionAuthorized) {
         res.status(401).json({ error: 'A passkey signature or an authorized session is required.' })
         return
@@ -365,8 +366,9 @@ router.post('/blob/retrieve', blobReadLimit, async (req, res) => {
     if (!hasPasskeyProof) {
       await extractSession(req)
       const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
-      const authedTokenIds = req.sessionData?.authorizedTokenIds || []
-      if (!(authedAddresses.includes(addr) || authedTokenIds.includes(user.tokenId))) {
+      // Address only: every sign-in adds the owner address with its tokenIds,
+      // so a tokenId without its address is one left over from a transfer.
+      if (!authedAddresses.includes(addr)) {
         res.status(401).json({ error: 'A passkey signature or an authorized session is required.' })
         return
       }

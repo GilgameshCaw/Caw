@@ -115,8 +115,15 @@ export class DmWebSocketService {
         // Resolve username from DB — never trust the client-supplied value.
         const dbUser = await prisma.user.findUnique({
           where: { tokenId: userId },
-          select: { username: true },
+          select: { username: true, address: true },
         })
+        // Same owner check as requireAuth({ verifyOwnership }): a tokenId left
+        // in the session after a transfer must not open the new owner's socket.
+        const addrs = (session.authorizedAddresses || []).map((a: string) => a.toLowerCase())
+        if (!dbUser?.address || !addrs.includes(dbUser.address.toLowerCase())) {
+          return next(new Error('Token owner changed'))
+        }
+        socket.data.authorizedAddresses = addrs
 
         socket.userId = userId
         socket.username = dbUser?.username ?? undefined
@@ -226,6 +233,28 @@ export class DmWebSocketService {
         eventBuckets.delete(socket.id)
 
       })
+
+      // Re-register and re-check now that the socket is connected. The check
+      // above ran before this socket was in io.sockets, so a transfer landing in
+      // between could run disconnectUser without finding it (and drop its
+      // userSockets entry). From here disconnectUser can see it, and
+      // NftTransferWatcher updates User.address before it disconnects, so either
+      // this read sees the new owner or the watcher's disconnect comes after it.
+      // Placed after the 'disconnect' handler so its cleanup runs.
+      {
+        const uid = socket.userId!
+        if (!this.userSockets.has(uid)) this.userSockets.set(uid, new Set())
+        this.userSockets.get(uid)!.add(socket.id)
+        const addrs: string[] = socket.data?.authorizedAddresses || []
+        prisma.user.findUnique({ where: { tokenId: uid }, select: { address: true } })
+          .then(u => {
+            if (!u?.address || !addrs.includes(u.address.toLowerCase())) {
+              socket.emit('session-revoked', { reason: 'token owner changed' })
+              socket.disconnect(true)
+            }
+          })
+          .catch(() => socket.disconnect(true))
+      }
     })
   }
 

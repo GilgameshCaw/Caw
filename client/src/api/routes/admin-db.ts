@@ -566,7 +566,7 @@ router.patch('/:model/:id', async (req, res) => {
   }
 
   // Best-effort attribution (mirrors DELETE pattern).
-  const actorTokenId = (req as any).sessionData?.authorizedTokenIds?.[0] ?? null
+  const actorTokenId = (req as any).moderatorActorTokenId ?? null
 
   try {
     const { idField, idValue } = resolveIdForLookup(model, id)
@@ -626,9 +626,9 @@ router.delete('/:model/:id', async (req, res) => {
   }
   // Best-effort attribution: the admin auth path may or may not have a
   // wallet identity attached (password-cookie admin has none, wallet-auth
-  // admin has authorizedTokenIds[0]).
+  // admin has the tokenId requireAdmin verified).
   const actorTokenId =
-    (req as any).sessionData?.authorizedTokenIds?.[0] ?? null
+    (req as any).moderatorActorTokenId ?? null
 
   const delegate = getDelegate(model)
 

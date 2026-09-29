@@ -151,13 +151,36 @@ async function resolveAdminTokenId(authorized: number[]): Promise<number | null>
   return elevated?.tokenId ?? null
 }
 
+/**
+ * The session's authorizedTokenIds whose CURRENT on-record owner is among the
+ * session's authorizedAddresses: the requireAuth({ verifyOwnership }) check for
+ * code that reads the list directly. authorizedTokenIds alone is not proof of
+ * ownership; a transfer only prunes it, and a prune can be late or lost. One
+ * query, order preserved. Like verifyOwnership it trusts User.address, so the
+ * window before NftTransferWatcher records a transfer remains.
+ */
+export async function ownedAuthorizedTokenIds(
+  session: { authorizedTokenIds?: number[]; authorizedAddresses?: string[] },
+): Promise<number[]> {
+  const ids = session.authorizedTokenIds || []
+  if (ids.length === 0) return []
+  const addrs = new Set((session.authorizedAddresses || []).map(a => a.toLowerCase()))
+  if (addrs.size === 0) return []
+  const rows = await prisma.user.findMany({
+    where: { tokenId: { in: ids } },
+    select: { tokenId: true, address: true },
+  })
+  const owned = new Set(rows.filter(r => r.address && addrs.has(r.address.toLowerCase())).map(r => r.tokenId))
+  return ids.filter(id => owned.has(id))
+}
+
 export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   await extractSession(req)
   if (!req.sessionData) {
     res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
     return
   }
-  const authorized = req.sessionData.authorizedTokenIds || []
+  const authorized = await ownedAuthorizedTokenIds(req.sessionData)
   const tokenId = await resolveAdminTokenId(authorized)
   if (tokenId === null) {
     res.status(403).json({ error: 'NOT_ADMIN', message: 'Account is not authorized for this action' })
@@ -181,7 +204,7 @@ export async function requireModerator(req: Request, res: Response, next: NextFu
     return
   }
 
-  const authorized = req.sessionData.authorizedTokenIds || []
+  const authorized = await ownedAuthorizedTokenIds(req.sessionData)
   if (authorized.length === 0) {
     res.status(403).json({ error: 'NOT_MODERATOR', message: 'Account is not authorized to moderate' })
     return
@@ -219,7 +242,7 @@ export async function requireWalletAdmin(req: Request, res: Response, next: Next
     return
   }
 
-  const authorized = req.sessionData.authorizedTokenIds || []
+  const authorized = await ownedAuthorizedTokenIds(req.sessionData)
   const tokenId = await resolveAdminTokenId(authorized)
   if (tokenId === null) {
     res.status(403).json({ error: 'NOT_ADMIN', message: 'Account is not authorized for this action' })

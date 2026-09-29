@@ -30,6 +30,10 @@ const AUTH_SIG_PREFIX = 'caw:authSig:'
 const AUTH_SIG_TTL_SECONDS = 5 * 60
 
 export interface SessionData {
+  /** Tokens this session signed in for. NOT proof of current ownership: a
+   *  transfer only prunes this list, and a prune can be late or lost. Code that
+   *  grants anything from it should use ownedAuthorizedTokenIds
+   *  (middleware/auth.ts) or requireAuth({ verifyOwnership: true }). */
   authorizedTokenIds: number[]
   authorizedAddresses: string[] // lowercase
   createdAt: number
@@ -159,12 +163,6 @@ export async function pruneTokenIdFromAllSessions(tokenId: number): Promise<numb
   }
   // Index might still have phantom entries if writes raced; let TTL clean.
   return pruned
-}
-
-export async function isAuthorized(token: string, tokenId: number): Promise<boolean> {
-  const session = await getSession(token)
-  if (!session) return false
-  return session.authorizedTokenIds.includes(tokenId)
 }
 
 export async function deleteSession(token: string): Promise<void> {
