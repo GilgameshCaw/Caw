@@ -442,6 +442,15 @@ export function buildServiceList(nodeType, config) {
       service: 'StakeLedgerReconciler',
       config: {}
     })
+    services.push({
+      service: 'SponsorRepayIndexer',
+      config: {
+        l1RpcUrl: '${L1_RPC_URL}',
+        l1ChainId: net.l1ChainId,
+        l2RpcUrl: '${L2_RPC_URL}',
+        l2ChainId: net.l2ChainId,
+      }
+    })
   }
 
   return services

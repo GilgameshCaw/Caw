@@ -69,5 +69,14 @@
   {
     "service": "StakeLedgerReconciler",
     "config": {}
+  },
+  {
+    "service": "SponsorRepayIndexer",
+    "config": {
+      "l1RpcUrl":  "${L1_RPC_URL}",
+      "l1ChainId": 11155111,
+      "l2RpcUrl":  "${L2_RPC_URL}",
+      "l2ChainId": 84532
+    }
   }
 ]
