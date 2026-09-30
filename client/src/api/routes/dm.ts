@@ -508,6 +508,14 @@ router.post('/messages',
           include: { user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } } }
         })
 
+        // The recipient has no DM key: never enabled, or cleared after the
+        // name changed hands. A client can only have encrypted this to a key
+        // it cached earlier, which the recipient no longer holds; storing and
+        // relaying it would deliver ciphertext the current owner can't read.
+        if (!peerIdentity?.publicKey) {
+          return res.status(409).json({ error: 'Peer has not enabled DMs', code: 'PEER_NO_DM_KEY' })
+        }
+
         const privacy = peerIdentity?.dmPrivacy || 'EVERYONE'
         console.log(`[DM] Privacy check: peer=${peer.userId}, dmPrivacy=${privacy}, sender=${senderId}`)
 
@@ -749,6 +757,16 @@ router.patch('/messages/:messageId',
 
       if (!encryptedPayload) {
         return res.status(400).json({ error: 'encryptedPayload is required' })
+      }
+
+      // Same check as a 1:1 send: don't store an edit encrypted to a key the
+      // recipient no longer holds.
+      const editPeer = await prisma.conversationParticipant.findFirst({
+        where: { conversationId: message.conversationId, userId: { not: message.senderId } },
+        select: { identity: { select: { publicKey: true } } },
+      })
+      if (editPeer && !editPeer.identity?.publicKey) {
+        return res.status(409).json({ error: 'Peer has not enabled DMs', code: 'PEER_NO_DM_KEY' })
       }
 
       let history: string[] = []
