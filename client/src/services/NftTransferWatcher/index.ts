@@ -17,6 +17,7 @@ import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { findOrCreateUser, StaleTokenError } from '../UserService'
 import { pruneTokenIdFromAllSessions } from '../../api/sessionStore'
 import dmWebSocketService from '../DmService/websocket'
+import { releaseTransferredName, transferTime } from './releaseTransferredName'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -425,6 +426,12 @@ export const nftTransferWatcherService: Service = {
                   dmWebSocketService.disconnectUser(tokenId, 'token transferred')
                 } catch (err: any) {
                   console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
+                }
+                // A name's moderator role and group memberships belong to whoever
+                // held it when they were granted (see releaseTransferredName).
+                // Throws on failure, which holds the checkpoint for a retry.
+                if (!isMint && fromAddr !== toAddr) {
+                  await releaseTransferredName(tokenId, () => transferTime(provider, ev.blockNumber))
                 }
               } catch (err: any) {
                 anyFailed = true
