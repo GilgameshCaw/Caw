@@ -173,6 +173,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // recaw via /api/txqueue/:id/cancel instead of firing a second on-chain
   // hide:recaw action that would double-spend.
   const [pendingRecawTxQueueId, setPendingRecawTxQueueId] = useState<number | null>(null)
+  // What this viewer last did to the repost state (true = reposted, false =
+  // undone), or null. useItem.hasRecawed only changes on the next fetch, so
+  // after an undo lands it can still say "reposted": the icon stayed green and
+  // the menu kept offering "Undo repost" (a second hide:recaw) until reload.
+  const [recawOverride, setRecawOverride] = useState<boolean | null>(null)
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
@@ -290,6 +295,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }
   const effectiveReplyAdj = settled(replyCountAdj, useItem.commentCount, replyCountBase) ? 0 : replyCountAdj
   const effectiveRecawAdj = settled(recawCountAdj, useItem.recawCount, recawCountBase) ? 0 : recawCountAdj
+  // Override wins until the server agrees with it (same rule as likeOverride).
+  // Compare against the combined state: on a pure repost row authored by the
+  // viewer, isRecawByCurrentUser stays true after an undo, so comparing with
+  // hasRecawed alone would drop the override and show "Undo repost" again.
+  const serverHasRecawed = !!(useItem.hasRecawed || isRecawByCurrentUser)
+  const recawOverrideActive = recawOverride !== null && recawOverride !== serverHasRecawed
+  const recawShownSettled = recawOverrideActive ? !!recawOverride : serverHasRecawed
+  const recawShown = recawOverrideActive ? !!recawOverride : !!(serverHasRecawed || recawPending)
   const effectiveLikeAdj  = settled(likeCountAdj,  useItem.likeCount,    likeCountBase)  ? 0 : likeCountAdj
   const effectiveTipAdj   = settled(tipCountAdj, useItem.tipCount ?? 0, tipCountBase)    ? 0 : tipCountAdj
 
@@ -718,6 +731,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
       // Set pending state and increment count optimistically
       setRecawPending(true)
+      setRecawOverride(true)
       setRecawCountAdj(1)
       setRecawCountBase(useItem.recawCount)
       if (result.txQueueId) setPendingRecawTxQueueId(result.txQueueId)
@@ -743,6 +757,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     } catch (err) {
       console.error('Recaw failed', err)
       setRecawPending(false)
+      setRecawOverride(null)
       setRecawCountAdj(0)
       setRecawCountBase(null)
     } finally {
@@ -1746,7 +1761,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       ? 'cursor-not-allowed opacity-50'
                       : 'hover:text-green-500 cursor-pointer'
                   } ${
-                    (useItem.hasRecawed || isRecawByCurrentUser || recawPending)
+                    recawShown
                       ? `text-green-500 ${recawPending ? 'opacity-90' : ''}`
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
@@ -1770,11 +1785,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     </div>
                   ) : (
                     <Recaw className={`${uiDensity === 'compact' ? 'w-4 h-4 translate-y-[3px]' : 'w-5 h-5 translate-y-1'} transition-all duration-300 ${
-                      (useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? 'text-green-500' : ''
+                      recawShown ? 'text-green-500' : ''
                     }`} />
                   )}
                   <span className={`${uiDensity === 'compact' ? 'text-xs translate-y-0.5' : 'text-sm translate-y-1'} transition-colors duration-300 ${
-                    (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
+                    recawShownSettled ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount + effectiveRecawAdj)}</span>
                 </button></Tooltip>
 
@@ -1788,7 +1803,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     }`}
                     style={{ left: '-3px', bottom: 'calc(100% + 4px)', backgroundColor: isDark ? '#000' : '#fff', opacity: 1 }}
                   >
-                    {(useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? (
+                    {recawShown ? (
                       <button
                         className={`flex items-center gap-2 px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 ${
                           isDark ? 'hover:bg-gray-800 text-red-400' : 'hover:bg-red-50 text-red-600'
@@ -1797,6 +1812,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
                           const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
                           if (!effectiveTokenId) return
+                          // Count as shown right now. On the 409 path useItem can
+                          // still be the pre-repost row, so basing the -1 on
+                          // useItem.recawCount showed "-1" for a repost that landed.
+                          const shownRecawCount = useItem.recawCount + effectiveRecawAdj
+                          setRecawOverride(false)
 
                           // Fast-path: the recaw is still pending (validator
                           // hasn't picked it up). Cancel the original tx queue
@@ -1865,7 +1885,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           } finally {
                             setRecawPending(false)
                             setRecawCountAdj(-1)
-                            setRecawCountBase(useItem.recawCount)
+                            setRecawCountBase(shownRecawCount)
                             if (onRecawStateChange) onRecawStateChange(useItem.id, false)
                             setBusyRecaw(false)
                           }
