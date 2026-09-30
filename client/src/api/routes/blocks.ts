@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 
 const router = Router()
 
@@ -9,7 +9,7 @@ const router = Router()
  * List all users blocked by the given user
  */
 router.get('/',
-  requireAuth({ lookup: async (req) => Number(req.query.userId), verifyOwnership: true }),
+  requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }),
   async (req: any, res: any) => {
     try {
       const userId = Number(req.query.userId)

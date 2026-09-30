@@ -15,7 +15,7 @@ import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 //   by DataCleaner's `refreshOnChainStakeForPendingDeposits` pass and read
 //   straight from the DB. The Contract/provider plumbing is gone.
 import { getBlockedUserIds } from '../shared/blockUtils'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
 import { pokeIndexTokenId } from '../util/indexerPoke'
@@ -179,7 +179,7 @@ router.post('/ensure', async (req, res) => {
  * Frontend uses this to combine three previously-separate polls into one.
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
  */
-router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
+router.get('/badges', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.query.userId as string)
     if (!userId || isNaN(userId)) {
@@ -871,7 +871,7 @@ router.patch(
  */
 router.patch(
   '/:tokenId/language',
-  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
+  requireAuth({ lookup: async (req) => tokenIdParam(req.params.tokenId), verifyOwnership: true }),
   async (req, res) => {
     try {
       const tokenId = Number(req.params.tokenId)
@@ -928,7 +928,7 @@ router.patch(
  */
 router.patch(
   '/:tokenId/notification-tip-gate',
-  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
+  requireAuth({ lookup: async (req) => tokenIdParam(req.params.tokenId), verifyOwnership: true }),
   async (req, res) => {
     try {
       const tokenId = Number(req.params.tokenId)
@@ -971,7 +971,7 @@ router.patch(
  */
 router.patch(
   '/:tokenId/profile',
-  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
+  requireAuth({ lookup: async (req) => tokenIdParam(req.params.tokenId), verifyOwnership: true }),
   async (req, res) => {
     try {
       const tokenId = Number(req.params.tokenId)

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 
 const router = Router()
 
@@ -63,7 +63,7 @@ router.get('/post/:cawId', async (req, res) => {
  * `x-user-id` from the client and would happily return any user's sent-tip
  * history. Audit fix 2026-05-13.
  */
-router.get('/sent', requireAuth({ lookup: async (req) => Number(req.header('x-user-id')), verifyOwnership: true }), async (req, res) => {
+router.get('/sent', requireAuth({ lookup: async (req) => tokenIdParam(req.header('x-user-id')), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = Number(req.header('x-user-id'))
     if (!userId) {
@@ -103,7 +103,7 @@ router.get('/sent', requireAuth({ lookup: async (req) => Number(req.header('x-us
  * the previous version was unauthenticated and would return any user's
  * received-tip history given a userId query param. Audit fix 2026-05-13.
  */
-router.get('/received', requireAuth({ lookup: async (req) => Number(req.query.userId), verifyOwnership: true }), async (req, res) => {
+router.get('/received', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, limit = 50, offset = 0 } = req.query
     if (!userId) {

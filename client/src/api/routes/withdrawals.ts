@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 
 const router = Router()
 
@@ -11,7 +11,7 @@ const router = Router()
  * every user's withdrawal history (amounts, txHashes, status). Audit
  * fix 2026-05-09 (Round 5 API HIGH-5).
  */
-router.get('/:userId', requireAuth({ lookup: async (req) => Number(req.params.userId), verifyOwnership: true }), async (req, res) => {
+router.get('/:userId', requireAuth({ lookup: async (req) => tokenIdParam(req.params.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.params.userId)
 
@@ -101,7 +101,7 @@ router.get('/:userId', requireAuth({ lookup: async (req) => Number(req.params.us
  * GET /api/withdrawals/:userId/pending
  * Fetch only pending withdrawal requests for a specific user
  */
-router.get('/:userId/pending', requireAuth({ lookup: async (req) => Number(req.params.userId), verifyOwnership: true }), async (req, res) => {
+router.get('/:userId/pending', requireAuth({ lookup: async (req) => tokenIdParam(req.params.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.params.userId)
 

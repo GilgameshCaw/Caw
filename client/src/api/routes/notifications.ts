@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { NotificationService, createNotificationWithGroup } from '../../services/NotificationService'
 import { NotificationType } from '@prisma/client'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
@@ -11,7 +11,7 @@ const router = Router()
  * GET /api/notifications
  * Get notifications for the authenticated user
  */
-router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
+router.get('/', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, type, limit = 50, offset = 0, unreadOnly = false } = req.query
 
@@ -364,7 +364,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
  * GET /api/notifications/unread-count
  * Get unread notification count for a user
  */
-router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
+router.get('/unread-count', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const { userId } = req.query
 
@@ -402,7 +402,7 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
  *               returned row. Omit for the first page.
  *   limit     – optional. Default 50, max 100.
  */
-router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
+router.get('/group-actors', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, groupKey, type, cursor, limit: limitParam, groupId: groupIdParam } = req.query
 

@@ -300,6 +300,21 @@ interface RequireAuthAnySessionOpts {
 
 type RequireAuthOpts = RequireAuthFieldOpts | RequireAuthLookupOpts | RequireAuthAnySessionOpts
 
+/**
+ * Parse a tokenId taken from a header, query or path parameter for
+ * requireAuth. Only a plain decimal integer is accepted.
+ *
+ * The check and the handler must read the same number. Handlers re-parse the
+ * raw value (often with parseInt), and Number() and parseInt() disagree on
+ * forms like '1.2e1' (12 vs 1), so a session authorized for 12 could act as
+ * tokenId 1. Rejecting anything but digits here makes every later parse agree.
+ */
+export function tokenIdParam(raw: unknown): number | undefined {
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) return undefined
+  const n = Number(raw)
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined
+}
+
 export function requireAuth(opts: RequireAuthOpts) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     await extractSession(req)
@@ -328,7 +343,7 @@ export function requireAuth(opts: RequireAuthOpts) {
     if ('field' in opts && opts.field) {
       // Extract from body or query
       const raw = req.body?.[opts.field] ?? req.query?.[opts.field]
-      requiredTokenId = raw !== undefined ? Number(raw) : undefined
+      requiredTokenId = raw !== undefined ? (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0 ? raw : tokenIdParam(raw)) : undefined
     } else if ('lookup' in opts && opts.lookup) {
       requiredTokenId = await opts.lookup(req)
     }

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 import {
   bucketFollowers,
   buildAuthUrl,
@@ -285,7 +285,7 @@ router.delete('/x', requireAuth({ field: 'tokenId', verifyOwnership: true }), as
  * tokenId. We resolve the wallet from User.address — same trust story
  * as the start-popup flow.
  */
-router.get('/x/wallet-status', requireAuth({ lookup: async (req) => Number(req.query.tokenId) || undefined, verifyOwnership: true }), async (req, res) => {
+router.get('/x/wallet-status', requireAuth({ lookup: async (req) => tokenIdParam(req.query.tokenId), verifyOwnership: true }), async (req, res) => {
   try {
     const tokenId = Number(req.query.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0) {

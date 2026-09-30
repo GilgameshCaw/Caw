@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, tokenIdParam } from '../middleware/auth'
 import { createNotificationWithGroup } from '../../services/NotificationService'
 
 const redis = process.env.REDIS_URL
@@ -550,7 +550,7 @@ router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), asy
  * (which transitions it out of ACTIVE). Endpoint name kept for FE compat.
  * Authenticated: requires session with the given userId.
  */
-router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
+router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => tokenIdParam(req.query.userId), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.query.userId as string)
     if (!userId || isNaN(userId)) return res.status(400).json({ error: 'userId required' })
