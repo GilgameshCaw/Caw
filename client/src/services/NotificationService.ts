@@ -125,6 +125,77 @@ export async function createNotificationWithGroup(
   return notif.id
 }
 
+/**
+ * Mark notifications hidden and bring their rollup groups back in line.
+ *
+ * The feed and the bell badge are read from NotificationGroup, not from
+ * Notification. Hiding a member row on its own leaves the group pointing at
+ * a hidden row (or with no visible members at all) and still counted as
+ * unread, so a hidden notification keeps showing up and the badge never
+ * clears. For every group the matched rows belong to this:
+ *   - deletes the group if no visible member is left,
+ *   - otherwise re-points `latestNotificationId` (only if it now points at a
+ *     hidden row), recounts, and marks the group read if every remaining
+ *     visible member is already read.
+ *
+ * `where` selects the notifications. Rows that are already hidden are still
+ * matched (their group gets re-synced) but are not updated again.
+ *
+ * Each group row is locked FOR UPDATE first: createNotificationWithGroup's
+ * INSERT ... ON CONFLICT DO UPDATE takes the same lock on an existing open
+ * group, so a concurrent join waits for us instead of landing on a group we
+ * are about to delete. Groups are locked in id order to avoid deadlocks.
+ */
+export async function hideNotificationsWithGroupSync(
+  where: Prisma.NotificationWhereInput,
+): Promise<{ matched: number; hiddenIds: number[] }> {
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.notification.findMany({
+      where,
+      select: { id: true, groupId: true, hidden: true },
+    })
+    const hiddenIds = rows.filter(r => !r.hidden).map(r => r.id)
+    if (hiddenIds.length > 0) {
+      await tx.notification.updateMany({
+        where: { id: { in: hiddenIds } },
+        data: { hidden: true },
+      })
+    }
+
+    const groupIds = [...new Set(rows.map(r => r.groupId).filter((g): g is number => g != null))]
+      .sort((a, b) => a - b)
+    for (const groupId of groupIds) {
+      await tx.$queryRaw`SELECT id FROM "NotificationGroup" WHERE id = ${groupId} FOR UPDATE`
+      const group = await tx.notificationGroup.findUnique({
+        where: { id: groupId },
+        select: { latestNotificationId: true },
+      })
+      if (!group) continue
+
+      const visible = await tx.notification.findMany({
+        where: { groupId, hidden: false },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { id: true, isRead: true },
+      })
+      if (visible.length === 0) {
+        await tx.notificationGroup.delete({ where: { id: groupId } })
+        continue
+      }
+      const keepLatest = visible.some(v => v.id === group.latestNotificationId)
+      await tx.notificationGroup.update({
+        where: { id: groupId },
+        data: {
+          count: visible.length,
+          latestNotificationId: keepLatest ? group.latestNotificationId : visible[0].id,
+          ...(visible.every(v => v.isRead) ? { isRead: true } : {}),
+        },
+      })
+    }
+
+    return { matched: rows.length, hiddenIds }
+  })
+}
+
 export class NotificationService {
   /** Exposed for tests + the migration backfill path. */
   static _attachToGroup = createNotificationWithGroup

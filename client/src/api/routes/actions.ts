@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import { makeVerifiedJsonRpcProvider, makeVerifiedWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
+import { hideNotificationsWithGroupSync } from '../../services/NotificationService'
 
 // smltxt singleton for decompressing the `bytes text` field signed by clients.
 // `data.text` arrives as 0x-hex of compressed bytes — keep it that way for the
@@ -2449,18 +2450,16 @@ router.post('/batch', async (req, res) => {
           // query — only `equals`, `string_contains`, etc. OR a list of per-ID
           // equals filters; the retry-set is small (sibling rows in one batch),
           // so the OR length is bounded by batch size.
-          await prisma.notification.updateMany({
-            where: {
-              type: 'ACTION_FAILED',
-              userId: firstSenderId,
-              OR: parsedRetryIds.map(id => ({
-                actionPayload: {
-                  path: ['originalTxQueueId'],
-                  equals: id,
-                },
-              })),
-            },
-            data: { hidden: true },
+          await hideNotificationsWithGroupSync({
+            type: 'ACTION_FAILED',
+            userId: firstSenderId,
+            hidden: false,
+            OR: parsedRetryIds.map(id => ({
+              actionPayload: {
+                path: ['originalTxQueueId'],
+                equals: id,
+              },
+            })),
           })
         } catch (hideErr: any) {
           console.warn(`[Actions/batch] Could not hide ACTION_FAILED notifications for retried batch:`, hideErr?.message)

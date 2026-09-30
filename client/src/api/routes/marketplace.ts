@@ -2,7 +2,7 @@ import { Router } from 'express'
 import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
-import { createNotificationWithGroup } from '../../services/NotificationService'
+import { createNotificationWithGroup, hideNotificationsWithGroupSync } from '../../services/NotificationService'
 
 const redis = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
@@ -633,10 +633,7 @@ router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
     })
 
     // Hide the OFFER notification too so it doesn't keep nagging
-    await prisma.notification.updateMany({
-      where: { offerId, type: 'OFFER', hidden: false },
-      data: { hidden: true },
-    })
+    await hideNotificationsWithGroupSync({ offerId, type: 'OFFER', hidden: false })
 
     console.log(`[marketplace] Offer ${offerId} dismissed by tokenId=${offer.tokenId}`)
     res.json({ ok: true })

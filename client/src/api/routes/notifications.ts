@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { NotificationService, createNotificationWithGroup } from '../../services/NotificationService'
+import { NotificationService, createNotificationWithGroup, hideNotificationsWithGroupSync } from '../../services/NotificationService'
 import { NotificationType } from '@prisma/client'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
@@ -89,6 +89,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     const notifications = await prisma.notification.findMany({
       where: {
         id: { in: latestIds },
+        hidden: false,
         ...(blockedIds.length > 0 ? { actorId: { notIn: blockedIds } } : {}),
       },
       include: {
@@ -167,6 +168,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
         JOIN "User" u ON u."tokenId" = n."actorId"
         WHERE n."groupId" = ANY($1::int[])
           AND n.id <> ALL($2::int[])
+          AND n.hidden = false
           ${blockedIds.length > 0 ? `AND n."actorId" NOT IN (${blockedIds.map((_, i) => `$${i + 3}`).join(',')})` : ''}
         ORDER BY n."groupId", u."tokenId", n."createdAt" DESC
       `, multiGroupIds, latestIds, ...blockedIds)
@@ -550,23 +552,15 @@ router.patch('/:id/hide', requireAuth({ field: 'userId', verifyOwnership: true }
     const notificationId = parseInt(id)
     const userTokenId = parseInt(userId)
 
-    // Verify the notification belongs to the user
-    const notification = await prisma.notification.findFirst({
-      where: {
-        id: notificationId,
-        userId: userTokenId
-      }
+    // Scoped to the user's own notification; also re-syncs its rollup group.
+    const { matched } = await hideNotificationsWithGroupSync({
+      id: notificationId,
+      userId: userTokenId,
     })
 
-    if (!notification) {
+    if (matched === 0) {
       return res.status(404).json({ error: 'Notification not found' })
     }
-
-    // Hide the notification
-    await prisma.notification.update({
-      where: { id: notificationId },
-      data: { hidden: true }
-    })
 
     return res.json({ success: true })
 
@@ -604,31 +598,23 @@ router.post('/hide-by-original-tx', requireAuth({ field: 'userId', verifyOwnersh
     }
 
     // Prisma's JSON filtering varies by provider — for Postgres we can use
-    // `path` filtering. Find matches first so we can return a count, then
-    // update them in bulk.
-    const matches = await prisma.notification.findMany({
-      where: {
-        userId: userTokenId,
-        type: 'ACTION_FAILED',
-        hidden: false,
-        actionPayload: {
-          path: ['originalTxQueueId'],
-          equals: targetTxQueueId,
-        } as any,
-      },
-      select: { id: true },
+    // `path` filtering. Hide the matches (and re-sync their rollup groups)
+    // in one transaction.
+    const { hiddenIds } = await hideNotificationsWithGroupSync({
+      userId: userTokenId,
+      type: 'ACTION_FAILED',
+      hidden: false,
+      actionPayload: {
+        path: ['originalTxQueueId'],
+        equals: targetTxQueueId,
+      } as any,
     })
 
-    if (matches.length === 0) {
+    if (hiddenIds.length === 0) {
       return res.json({ success: true, count: 0 })
     }
 
-    await prisma.notification.updateMany({
-      where: { id: { in: matches.map(m => m.id) } },
-      data: { hidden: true },
-    })
-
-    return res.json({ success: true, count: matches.length, ids: matches.map(m => m.id) })
+    return res.json({ success: true, count: hiddenIds.length, ids: hiddenIds })
 
   } catch (error: any) {
     console.error('POST /api/notifications/hide-by-original-tx error:', error)
