@@ -5208,10 +5208,13 @@ console.log("succeededKeys", succeededKeys)
       toBlock: number,
     ) {
       const target = await filter
+      const topics = typeof target.getTopicFilter === 'function'
+        ? await target.getTopicFilter()
+        : (target.topics ?? [])
       const rawLogs = await scanLogsForward(
         provider,
         target.address ?? archive.target,
-        target.topics ?? [],
+        topics,
         fromBlock,
         toBlock,
       )
