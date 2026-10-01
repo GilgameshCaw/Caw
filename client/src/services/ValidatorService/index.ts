@@ -24,6 +24,7 @@ import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueu
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
+import { warnIfValidatorIdNotOwned } from '../../utils/validatorIdGuard'
 
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
@@ -5902,6 +5903,8 @@ console.log("succeededKeys", succeededKeys)
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
       console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
       console.log(`  - Wallet Address: ${signer.getAddress()}`);
+      // Advisory: warn if validatorId isn't owned by this key (tips go to its holder).
+      void warnIfValidatorIdNotOwned(validatorId, signer.getAddress())
 
       // Use setTimeout chains instead of setInterval so updated settings take effect immediately
       function schedulePoll() {
