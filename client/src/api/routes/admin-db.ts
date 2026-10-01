@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAdmin } from '../middleware/auth'
 import { prisma } from '../../prismaClient'
 import { Prisma } from '@prisma/client'
+import { adminJsonReplacer } from '../../utils/decimalJson'
 
 const router = Router()
 
@@ -460,11 +461,7 @@ router.get('/:model', async (req, res) => {
       // exponential above 1e21; read the original off the holder since
       // toJSON runs before this replacer). Same rule as server.ts's global
       // json replacer, which this inner stringify would otherwise bypass.
-      records: JSON.parse(JSON.stringify(records, function (this: any, key, value) {
-        const raw = this != null ? this[key] : undefined
-        if (raw instanceof Prisma.Decimal) return raw.toFixed(0)
-        return typeof value === 'bigint' ? value.toString() : value
-      })),
+      records: JSON.parse(JSON.stringify(records, adminJsonReplacer)),
       total,
       limit,
       offset,
@@ -504,9 +501,7 @@ router.get('/:model/:id', async (req, res) => {
     }
 
     res.json({
-      record: JSON.parse(JSON.stringify(record, (_key, value) =>
-        typeof value === 'bigint' ? value.toString() : value
-      )),
+      record: JSON.parse(JSON.stringify(record, adminJsonReplacer)),
       model,
       meta,
     })
@@ -593,9 +588,7 @@ router.patch('/:model/:id', async (req, res) => {
     }
 
     res.json({
-      record: JSON.parse(JSON.stringify(record, (_key, value) =>
-        typeof value === 'bigint' ? value.toString() : value
-      )),
+      record: JSON.parse(JSON.stringify(record, adminJsonReplacer)),
     })
   } catch (err: any) {
     console.error(`[AdminDB] Error updating ${model}/${id}:`, err.message)
