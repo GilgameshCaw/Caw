@@ -1669,6 +1669,7 @@ function buildDeploymentsBlock(env, addresses) {
     CawNetworkManager: addresses.CawNetworkManager,
     CawProfileMinter: addresses.CawProfileMinter,
     CawProfileQuoter: addresses.CawProfileQuoter,
+    CawProfileLens: addresses.CawProfileLens,
     CawProfileMarketplace: addresses.CawProfileMarketplace,
     SmartEOA: addresses.SmartEOA,
     CawProfileURI: addresses.CawProfileURI,
