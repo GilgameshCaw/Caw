@@ -612,7 +612,7 @@ program
       const clientDir = path.join(installDir, 'client')
       setAddressesNetwork(config.network)
       console.log(brand(`Regenerating addresses.ts (network=${config.network}, networkId=${config.networkId})...`))
-      await writeAddressesForNetwork(config, clientDir)
+      await writeAddressesForNetwork(config, clientDir, installDir)
       console.log(success(`Done. addresses.ts now reflects deployments.ts for ${config.network}/Network ${config.networkId}.`))
     } catch (e) {
       console.error('regen-addresses failed:', e.message)
