@@ -13,6 +13,7 @@ import Redis from 'ioredis'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
+import { settleTentativeDmIdentity } from '../DmService/tentativeIdentity'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { findOrCreateUser, StaleTokenError } from '../UserService'
 import { pruneTokenIdFromAllSessions } from '../../api/sessionStore'
@@ -84,49 +85,11 @@ const checkpointKey = (chainId: number, contract: string) =>
  * StaleTokenError; we log + skip them.
  */
 /**
- * Reconcile tentative DmIdentity rows for a tokenId after its on-chain
- * owner address is now known.
- *
- * When an identity-relay arrives while the local User row is absent
- * (indexer lag), the relay receiver writes the relayed walletAddress into
- * DmIdentity.relayedWalletAddress and marks the row tentative. Once
- * NftTransferWatcher writes User.address from a real Transfer event, this
- * function checks whether the recorded relayedWalletAddress matches the
- * now-authoritative address. Mismatches tombstone the row (revoked=true)
- * so future message-encrypt calls don't use a potentially-forged public key.
- *
- * Non-fatal: failures log but do not surface to the caller.
- *
- * Audit: 2026-05-22 DM-2
+ * Settle a tentatively relayed DmIdentity once a Transfer gives the owner;
+ * see settleTentativeDmIdentity.
  */
 async function reconcileDmIdentity(tokenId: number, canonicalAddress: string): Promise<void> {
-  try {
-    const identity = await prisma.dmIdentity.findUnique({
-      where: { userId: tokenId },
-      select: { relayedWalletAddress: true, revoked: true },
-    })
-    if (!identity || identity.revoked) return
-    if (!identity.relayedWalletAddress) return // canonical local registration — no reconcile needed
-
-    if (identity.relayedWalletAddress.toLowerCase() !== canonicalAddress.toLowerCase()) {
-      await prisma.dmIdentity.update({
-        where: { userId: tokenId },
-        data: { revoked: true },
-      })
-      console.warn(
-        `[NftTransferWatcher] DmIdentity reconcile: tokenId=${tokenId} REVOKED` +
-        ` — relayed wallet ${identity.relayedWalletAddress} ≠ on-chain ${canonicalAddress}`,
-      )
-    } else {
-      // Addresses match: clear the tentative flag so future re-reconciles are no-ops.
-      await prisma.dmIdentity.update({
-        where: { userId: tokenId },
-        data: { relayedWalletAddress: null },
-      })
-    }
-  } catch (err: any) {
-    console.warn(`[NftTransferWatcher] DmIdentity reconcile failed for tokenId=${tokenId}:`, err?.message)
-  }
+  await settleTentativeDmIdentity(tokenId, canonicalAddress, 'NftTransferWatcher')
 }
 
 // Re-entrancy guard. A backfill can take tens of seconds on a large

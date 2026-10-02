@@ -2,6 +2,7 @@ import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl, getL1WsRpcUrl, getL2WsRpcUrl, getL1WsSecret, getL2WsSecret } from '../utils/rpcProvider'
+import { settleTentativeDmIdentity } from './DmService/tentativeIdentity'
 
 /** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
 export class StaleTokenError extends Error {
@@ -457,6 +458,9 @@ export async function refreshUserFromChain(tokenId: number): Promise<{ tokenId: 
   // promise that resolved against the placeholder state; drop it so the
   // next call re-reads the fresh row.
   userCache.delete(tokenId)
+  // A placeholder row is what an identity relay creates for a name this node
+  // didn't know, so a key relayed for it may still be tentative.
+  await settleTentativeDmIdentity(tokenId, updated.address, 'UserService')
   console.log(`[UserService] Refreshed stale user tokenId=${tokenId} → username=${updated.username} owner=${updated.address}`)
   return updated
 }
@@ -591,6 +595,7 @@ export async function syncTokensOwnedByWallet(walletAddress: string): Promise<nu
       } else if (user.address.toLowerCase() !== normalized) {
         console.log(`[UserService] Ownership changed for tokenId=${tokenId}: ${user.address} → ${normalized}`)
         await prisma.user.update({ where: { tokenId }, data: { address: normalized } })
+        await settleTentativeDmIdentity(tokenId, normalized, 'UserService')
       }
     }
 
