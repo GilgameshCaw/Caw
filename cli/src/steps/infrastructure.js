@@ -846,7 +846,7 @@ async function pickFreeApiPort(startPort, maxAttempts = 50) {
     const inUse = await probeTcp('127.0.0.1', candidate, 300)
     if (!inUse) {
       if (i > 0) {
-        warn(`Port ${startPort} is already in use on this host — using ${candidate} instead.`)
+        console.log(warn(`Port ${startPort} is already in use on this host — using ${candidate} instead.`))
         tipBlock([
           `Another CAW instance (or something else) is already listening on ${startPort}.`,
           `This install will use port ${candidate}. Set CAW_API_PORT to override.`,
@@ -855,7 +855,7 @@ async function pickFreeApiPort(startPort, maxAttempts = 50) {
       return candidate
     }
   }
-  warn(`Could not find a free port after ${maxAttempts} attempts starting at ${startPort}; using ${startPort} anyway.`)
+  console.log(warn(`Could not find a free port after ${maxAttempts} attempts starting at ${startPort}; using ${startPort} anyway.`))
   return startPort
 }
 
