@@ -1113,7 +1113,13 @@ async function collectSignozEndpoint(nodeType, config) {
       name: 'mode',
       message: 'How do you want to handle performance tracing?',
       choices,
-      default: localOptionAvailable ? 'local' : 'skip',
+      // Only pre-select "this box" when SigNoz is already running here, so
+      // pressing Enter just points at it. Otherwise default to skip: the
+      // local option installs SigNoz (and Docker via apt when missing), which
+      // an operator should choose on purpose. Skip also isn't remembered on
+      // an --env re-run (an empty OTEL endpoint isn't preloaded), so this
+      // prompt comes back on every re-run.
+      default: alreadyRunning ? 'local' : 'skip',
     },
   ])
 
