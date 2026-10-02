@@ -28,7 +28,7 @@ const CawProfileL1Abi = [
 // Lazy-initialized providers - only created when first needed
 let l2Provider: WebSocketProvider | null = null
 let l2NameContract: Contract | null = null
-let l1Provider: WebSocketProvider | null = null
+let l1Provider: WebSocketProvider | JsonRpcProvider | null = null
 let l1NameContract: Contract | null = null
 
 // Rate limit tracking
@@ -178,7 +178,21 @@ async function getL1Provider() {
   if (!l1Provider) {
     const rpcUrl = getL1WsRpcUrl()
     if (!rpcUrl) {
-      throw new Error('Missing L1_RPC_URL in environment variables')
+      // No L1 WS URL (the cli asks for it as optional). Every L1 read in this
+      // file is an eth_call, and the WS-failure paths below already fall back
+      // to HTTP, so use the HTTP URL from the start instead of throwing.
+      const httpUrl = getL1HttpRpcUrl()
+      if (!httpUrl) {
+        throw new Error('Missing L1_RPC_URL_HTTP (or L1_RPC_URL) in environment variables')
+      }
+      l1Provider = makeJsonRpcProvider(httpUrl)
+      l1NameContract = new Contract(
+        CAW_NAMES_ADDRESS,
+        CawProfileL1Abi,
+        l1Provider
+      )
+      console.log('[UserService] No L1 WS URL — using the HTTP provider for L1 reads')
+      return { provider: l1Provider, contract: l1NameContract }
     }
 
     // Check if we need to wait due to rate limiting
