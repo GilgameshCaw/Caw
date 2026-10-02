@@ -88,6 +88,10 @@ const ENV_TO_CAW = {
   L2_RPC_URL: 'CAW_L2_RPC_URL',
   L2_RPC_URL_HTTP: 'CAW_L2_RPC_URL_HTTP',
   L2_RPC_SECRET: 'CAW_L2_RPC_SECRET',
+  // Optional fallback RPCs (FallbackProvider). Without these a --env re-run
+  // skips the RPC prompt and silently writes .env without them.
+  L1_RPC_URL_HTTP_FALLBACK: 'CAW_L1_RPC_URL_HTTP_FALLBACK',
+  L2_RPC_URL_HTTP_FALLBACK: 'CAW_L2_RPC_URL_HTTP_FALLBACK',
   ETH_MAINNET_RPC_URL: 'CAW_ETH_MAINNET_RPC_URL',
   ETH_MAINNET_RPC_SECRET: 'CAW_ETH_MAINNET_RPC_SECRET',
   // Generated-once values that MUST persist across re-runs. Without these
@@ -176,6 +180,11 @@ const EXPECTED_DROPS = new Set([
   'MOONPAY_SECRET_KEY',
   'ALLOWED_ORIGINS',
   'BIND_HOST',
+  // Appended by generate.js from deployments.ts on every run (SponsorService
+  // reads them from process.env), so a rewrite that drops them re-adds them.
+  'CAW_NAMES_MINTER_ADDRESS',
+  'CAW_NAMES_ADDRESS',
+  'SMART_EOA_ADDRESS',
 ])
 
 // When --env points at a previous install, read every supported value out

@@ -324,6 +324,7 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
       // breaks RPC calls silently — providers respond with 401 to unauth'd
       // requests but our error path treats it as a generic network error.
       l1RpcSecret: process.env.CAW_L1_RPC_SECRET || '',
+      l1RpcUrlHttpFallback: process.env.CAW_L1_RPC_URL_HTTP_FALLBACK || '',
     }
     if (['full', 'validator'].includes(nodeType) && process.env.CAW_ETH_MAINNET_RPC_URL) {
       answers.ethMainnetRpcUrl = process.env.CAW_ETH_MAINNET_RPC_URL
@@ -592,6 +593,7 @@ export async function collectL2Rpc(nodeType, storageChainLabel, network = 'testn
       l2RpcUrlHttp: process.env.CAW_L2_RPC_URL_HTTP,
       // Preserve HTTP-auth secret on re-runs (see L1 collector for rationale).
       l2RpcSecret: process.env.CAW_L2_RPC_SECRET || '',
+      l2RpcUrlHttpFallback: process.env.CAW_L2_RPC_URL_HTTP_FALLBACK || '',
     }
   }
 
