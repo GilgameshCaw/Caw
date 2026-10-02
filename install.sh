@@ -720,6 +720,20 @@ chown "$CAW_USER":"$CAW_USER" "$CAW_DIR"
 if [[ -d "$CAW_DIR/.git" ]]; then
   log "Existing checkout — pulling latest..."
   sudo -u "$CAW_USER" -H git -C "$CAW_DIR" fetch origin "$CAW_BRANCH"
+  # A re-run resets the checkout to origin/$CAW_BRANCH. Keep anything that
+  # reset would otherwise discard silently: tracked edits go to a stash and
+  # local commits get a backup branch. This also covers a blank domain
+  # landing on an existing /var/www/caw. Re-runs aren't blocked, because the
+  # CLI itself rewrites tracked files (lockfiles, client/src/abi/addresses.ts).
+  backup_tag="caw-install-$(date -u +%Y%m%d-%H%M%S)"
+  if [[ -n "$(sudo -u "$CAW_USER" -H git -C "$CAW_DIR" status --porcelain --untracked-files=no)" ]]; then
+    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" stash push -q -m "$backup_tag"
+    warn "Uncommitted changes in $CAW_DIR were stashed as '$backup_tag' (git -C $CAW_DIR stash list)."
+  fi
+  if ! sudo -u "$CAW_USER" -H git -C "$CAW_DIR" merge-base --is-ancestor HEAD "origin/$CAW_BRANCH"; then
+    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" branch "$backup_tag" HEAD
+    warn "Local commits not on origin/$CAW_BRANCH were kept on branch '$backup_tag' before resetting."
+  fi
   sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
 elif [[ -n "$(ls -A "$CAW_DIR" 2>/dev/null)" ]]; then
   err "Install dir $CAW_DIR exists and is non-empty but not a git checkout."
