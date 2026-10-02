@@ -1041,13 +1041,22 @@ export const validatorService: Service = {
   start(rawCfg, ctx) {
     const cfg = ValidatorConfig.parse(rawCfg)
     // Prefer environment variable for RPC URL (never commit API keys to config)
-    const l2RpcUrl = getL2WsRpcUrl() || cfg.l2RpcUrl
+    // An unsubstituted `${L2_RPC_URL}` placeholder from config.json counts as unset.
+    const l2RpcUrlRaw = getL2WsRpcUrl() || cfg.l2RpcUrl
+    const l2RpcUrl = l2RpcUrlRaw && !l2RpcUrlRaw.includes('${') ? l2RpcUrlRaw : ''
     // ETH L1 mainnet RPC for Uniswap CAW price queries (separate from L2 RPC)
     const ethMainnetRpcUrl = getEthMainnetHttpRpcUrl(cfg.ethMainnetRpcUrl) || 'https://eth.llamarpc.com'
     const { validatorId, checkInterval } = cfg
 
-    if (!l2RpcUrl || l2RpcUrl.includes('${')) {
-      throw new Error('Missing L2_RPC_URL in environment variables')
+    // The WS URL is only needed when the WS path is on (ENABLE_VALIDATOR_WS=1,
+    // same check as USE_WS below). The default path is HTTP-only and takes its
+    // URL from L2_RPC_URL_HTTP, with l2RpcUrl only as a fallback to derive it.
+    if (process.env.ENABLE_VALIDATOR_WS === '1') {
+      if (!l2RpcUrl) {
+        throw new Error('Missing L2_RPC_URL in environment variables (required when ENABLE_VALIDATOR_WS=1)')
+      }
+    } else if (!getL2HttpRpcUrl(l2RpcUrl)) {
+      throw new Error('Missing L2_RPC_URL_HTTP (or L2_RPC_URL) in environment variables')
     }
 
     let provider: WebSocketProvider

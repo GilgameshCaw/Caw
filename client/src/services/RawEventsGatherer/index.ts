@@ -7,7 +7,7 @@ import listenForRawEvents, { RawEventInput, getRawEventsPollIntervalMs } from '.
 import { convertBigIntsToStrings } from "./utils";
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
-import { getL2WsRpcUrl } from '../../utils/rpcProvider'
+import { getL2WsRpcUrl, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { getNetworkId } from '../../utils/networkId'
 
 const Config = z.object({
@@ -43,7 +43,9 @@ export const rawEventsGathererService: Service = {
     const pollIntervalMs = getRawEventsPollIntervalMs()
     ctx.declareLoop('poll', Math.max(pollIntervalMs * 4, 180_000))
     // Prefer environment variable for RPC URL (never commit API keys to config)
-    const rpcUrl = getL2WsRpcUrl() || cfg.rpcUrl
+    // An unsubstituted `${L2_RPC_URL}` placeholder from config.json counts as unset.
+    const rpcUrlRaw = getL2WsRpcUrl() || cfg.rpcUrl
+    const rpcUrl = rpcUrlRaw && !rpcUrlRaw.includes('${') ? rpcUrlRaw : ''
     const { chainId, redisUrl } = cfg
 
     // Resolve networkId — this instance scopes to one network. Falls through
@@ -60,8 +62,15 @@ export const rawEventsGathererService: Service = {
       throw new Error('RawEventsGatherer: CLIENT_ID is required (set it in client/.env or config.json)')
     }
 
-    if (!rpcUrl || rpcUrl.includes('${')) {
-      throw new Error('Missing L2_RPC_URL in environment variables')
+    // The WS URL is only needed when the WS path is on (ENABLE_RAW_EVENTS_WS=1,
+    // see listenForRawEvents). The default path is HTTP polling and takes its
+    // URL from L2_RPC_URL_HTTP, with rpcUrl only as a fallback to derive it.
+    if (process.env.ENABLE_RAW_EVENTS_WS === '1') {
+      if (!rpcUrl) {
+        throw new Error('Missing L2_RPC_URL in environment variables (required when ENABLE_RAW_EVENTS_WS=1)')
+      }
+    } else if (!getL2HttpRpcUrl(rpcUrl)) {
+      throw new Error('Missing L2_RPC_URL_HTTP (or L2_RPC_URL) in environment variables')
     }
 
     const redis = new Redis(redisUrl)
