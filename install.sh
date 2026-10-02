@@ -303,7 +303,11 @@ if [[ -z "${CAW_REDIS_URL:-}" ]]; then
     elif [[ "$line" =~ /([0-9]+)[[:space:]]*$ ]]; then
       db="${BASH_REMATCH[1]}"
     fi
-    [[ -n "$db" ]] && used_dbs="$used_dbs $db"
+    # No REDIS_URL line, or one without a DB number, means the default db 0
+    # (this script itself writes no ?db= suffix when it picks 0). Count it as
+    # used, otherwise a second install lands on the first install's db 0.
+    [[ -z "$db" ]] && db=0
+    used_dbs="$used_dbs $db"
   done
   next_db=0
   for n in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
