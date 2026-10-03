@@ -41,6 +41,14 @@ warn() { echo -e "  ${GOLD}!${RESET} $*"; }
 err()  { echo -e "  ${RED}✗${RESET} $*" >&2; }
 step() { echo; echo -e "${GOLD}▸${RESET} $*"; }
 
+# True only if we can actually open the controlling terminal. `[[ -r /dev/tty ]]`
+# is not enough: /dev/tty always exists with mode 0666, so the test passes even
+# with no controlling terminal (cloud-init, `ssh host '...'` without -t, cron,
+# setsid). The later `read ... < /dev/tty` then fails with ENXIO ("No such
+# device or address") and `set -e` ends the install before the "No tty"
+# fallbacks below are ever reached.
+tty_ok() { { : < /dev/tty; } 2>/dev/null; }
+
 # Run a command quietly. Stdout goes to /tmp/caw-install.log (so apt's
 # unpacking spam doesn't drown the user); stderr stays attached so real errors
 # surface in real time. On failure, dump the last 30 lines of the log so the
@@ -189,7 +197,7 @@ if (( ${#low[@]} > 0 )); then
   warn "This host is below recommended specs:"
   for item in "${low[@]}"; do warn "  • $item"; done
   warn "Install will likely succeed but ES may OOM and the frontend build may swap."
-  if [[ -t 0 ]] || [[ -r /dev/tty ]]; then
+  if [[ -t 0 ]] || tty_ok; then
     if [[ -t 0 ]]; then
       read -r -p "  Continue anyway? [y/N]: " ans
     else
@@ -224,7 +232,7 @@ if [[ -z "${CAW_DIR:-}" ]]; then
   echo
   if [[ -t 0 ]]; then
     read -r -p "  Domain (or blank): " CAW_DOMAIN
-  elif [[ -r /dev/tty ]]; then
+  elif tty_ok; then
     read -r -p "  Domain (or blank): " CAW_DOMAIN < /dev/tty
   else
     warn "No tty available — defaulting domain to none."
@@ -377,7 +385,7 @@ ask_node_type() {
   local answer
   if [[ -t 0 ]]; then
     read -r -p "$prompt" answer
-  elif [[ -r /dev/tty ]]; then
+  elif tty_ok; then
     read -r -p "$prompt" answer < /dev/tty
   else
     answer=1
@@ -431,7 +439,7 @@ ask_infra_mode() {
   local answer
   if [[ -t 0 ]]; then
     read -r -p "$prompt" answer
-  elif [[ -r /dev/tty ]]; then
+  elif tty_ok; then
     read -r -p "$prompt" answer < /dev/tty
   else
     answer=1
@@ -874,7 +882,7 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
       tls_choice=""
       if [[ -t 0 ]]; then
         read -r -p "  Pick [1-4]: " tls_choice
-      elif [[ -r /dev/tty ]]; then
+      elif tty_ok; then
         read -r -p "  Pick [1-4]: " tls_choice < /dev/tty
       fi
 
@@ -1074,7 +1082,7 @@ fi
 # caw:caw afterward (handled by `pm2 startup` and the running services
 # themselves; new files written by the running pm2 apps will be caw-owned
 # because the apps drop privileges via the ecosystem's user: directive).
-if [[ -r /dev/tty ]]; then
+if tty_ok; then
   exec env \
     SUDO_USER="$CAW_USER" \
     CAW_DOMAIN="${CAW_DOMAIN:-}" \
