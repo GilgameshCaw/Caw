@@ -14,7 +14,12 @@ export function redactRpcUrl(url: string | undefined | null): string {
   try {
     const u = new URL(url)
     const firstSeg = u.pathname.split('/').filter(Boolean)[0]
-    const path = firstSeg ? `/${firstSeg}/…` : ''
+    // Keep the first segment only when it is a version marker like /v2 or /v3
+    // (Alchemy, Infura). Some providers put the token itself in the first
+    // segment (e.g. QuickNode https://<name>.<net>.quiknode.pro/<token>/),
+    // so anything else is replaced with /… rather than echoed.
+    const keep = /^v\d+$/i.test(firstSeg ?? '')
+    const path = firstSeg ? (keep ? `/${firstSeg}/…` : '/…') : ''
     return `${u.protocol}//${u.host}${path}`
   } catch {
     return '<unparseable>'
