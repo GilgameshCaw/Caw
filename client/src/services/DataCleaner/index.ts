@@ -12,6 +12,10 @@ import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/dom
 import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
+import {
+  parseUsernameDriftReconcileIntervalMinutes,
+  shouldReconcileUsernameDrift,
+} from './usernameDriftInterval'
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
 import { NotificationService } from '../NotificationService'
@@ -964,6 +968,37 @@ const PLACEHOLDER_REFRESH_MAX_PER_TICK = 50
 // (2 L1 reads each) so the rotating cursor covers the table over time without
 // spiking RPC. On a small testnet it laps the whole table in a few ticks.
 const USERNAME_DRIFT_RECONCILE_PER_TICK = 25
+
+// Real-row username drift is a repair safety net, not the primary sync path.
+// Keep it available without polling every real user on every 1-minute cleaner tick.
+const USERNAME_DRIFT_RECONCILE_INTERVAL_MINUTES =
+  parseUsernameDriftReconcileIntervalMinutes(
+    process.env.USERNAME_DRIFT_RECONCILE_INTERVAL_MINUTES,
+  )
+
+const USERNAME_DRIFT_RECONCILE_INTERVAL_MS =
+  USERNAME_DRIFT_RECONCILE_INTERVAL_MINUTES * 60_000
+
+let _lastUsernameDriftReconcileAt = 0
+
+async function maybeReconcileUsernameDrift() {
+  const now = Date.now()
+  if (
+    !shouldReconcileUsernameDrift(
+      now,
+      _lastUsernameDriftReconcileAt,
+      USERNAME_DRIFT_RECONCILE_INTERVAL_MS,
+    )
+  ) {
+    return
+  }
+
+  // Advance the gate before the RPC work so a transient failure does not turn
+  // into a hot retry on every 1-minute DataCleaner tick.
+  _lastUsernameDriftReconcileAt = now
+  await reconcileUsernameDrift(USERNAME_DRIFT_RECONCILE_PER_TICK)
+}
+
 async function cleanupPlaceholderUsers() {
   try {
     // Postgres regex on (username) — uses the existing username unique
@@ -1339,9 +1374,12 @@ async function runDataCleanup() {
   // Reconcile username drift on REAL rows against chain (rotating window). Unlike
   // the placeholder sweep above, this catches a real username that went stale —
   // e.g. after a --clean --reset redeploy reassigned tokenIds, since the Transfer
-  // watcher re-syncs owner but never the username. Bounded per tick; a cursor
-  // round-robins the whole table over many ticks so RPC cost stays flat.
-  await reconcileUsernameDrift(USERNAME_DRIFT_RECONCILE_PER_TICK).catch(err =>
+  // watcher re-syncs owner but never the username. Each run is bounded, and a
+  // cursor round-robins the table across scheduled reconciliation runs.
+  // Real-row username drift is an exceptional repair path. Run it on its own
+  // configurable interval instead of sweeping real users every cleaner tick.
+  // Placeholder recovery above remains unchanged.
+  await maybeReconcileUsernameDrift().catch(err =>
     logger.error('Username-drift reconcile failed:', err?.message || err))
 
   // Clean up failed txqueue records and update associated caws
