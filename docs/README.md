@@ -49,7 +49,6 @@ Welcome to the documentation for the CAW Protocol — a trustless and decentrali
 - **ValidatorService** - Batches and submits pending actions on-chain
 - **ActionProcessor** - Indexes blockchain events into PostgreSQL
 - **RawEventsGatherer** - Captures blockchain events via WebSocket
-- **RawEventsProvider** - Event data provider
 - **DataCleaner** - Stale data cleanup and failure escalation
 - **DmService / DmRelayService** - Direct messaging infrastructure
 - **MarketplaceIndexerService** - NFT marketplace event indexing

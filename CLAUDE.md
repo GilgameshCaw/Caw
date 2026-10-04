@@ -119,7 +119,6 @@ Identity management lives under the existing AccountSettings page (Population B 
 ### Database & Infrastructure
 - **PostgreSQL** with Prisma ORM
 - **Redis** for caching
-- **TypeORM** for additional database operations
 
 ## UI Standards
 

@@ -82,7 +82,6 @@ CAW-nfts/
 │   │   │   ├── ValidatorService/          # On-chain action processing
 │   │   │   ├── ActionProcessor/           # Blockchain event indexing
 │   │   │   ├── RawEventsGatherer/         # Blockchain event listener
-│   │   │   ├── RawEventsProvider/         # Event data provider
 │   │   │   ├── FrontEnd/                  # React application
 │   │   │   ├── DataCleaner/               # Stale data cleanup
 │   │   │   ├── DmService/                 # Direct messaging
