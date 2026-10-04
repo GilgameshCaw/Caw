@@ -86,6 +86,16 @@ function looksLikeImage(buf: Buffer): boolean {
 // Rejects oversized bitmaps (L-2: pixel-bomb / decompression-bomb DoS fix):
 // 1 MB PNG can decode to 400 MP; 8000×8000 px cap blocks Satori/Resvg OOM.
 async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
+  // Magic-byte guard for every caller. The multipart route (POST /) only sees the
+  // client-declared Content-Type, while libvips picks the real loader from the
+  // bytes, so a body declared as image/jpeg could otherwise reach any loader
+  // sharp ships with. The base64 routes already check this before calling in;
+  // doing it here covers the multipart route too (videos never come through here).
+  if (!looksLikeImage(buffer)) {
+    const err = new Error('Invalid image data')
+    ;(err as any).statusCode = 400
+    throw err
+  }
   const sharp = getSharp()
   if (!sharp) {
     // Fail closed: without sharp we cannot strip EXIF or bound dimensions, so
@@ -168,6 +178,13 @@ router.post('/', requireAuth({ anySession: true }), upload.array('media', 10), r
       })
     }
 
+    // multer only checked the declared Content-Type. Check the bytes of every image
+    // before reserving quota or storing anything, so one bad part can't leave the
+    // other parts stored behind a refunded reservation.
+    if (files.some(f => f.mimetype.startsWith('image/') && !looksLikeImage(f.buffer))) {
+      return res.status(400).json({ error: 'Invalid image data' })
+    }
+
     // Per-user daily POST upload quota (storage cost ceiling against
     // bots / runaway clients). DM uploads count against a separate,
     // tighter budget — see /encrypted route.
@@ -231,6 +248,8 @@ router.post('/variant', requireAuth({ anySession: true }), variantUpload.single(
     const file = req.file as Express.Multer.File | undefined
 
     if (!file) return res.status(400).json({ error: 'No file uploaded' })
+    // multer only checked the declared Content-Type; check the bytes too.
+    if (!looksLikeImage(file.buffer)) return res.status(400).json({ error: 'Invalid image data' })
     if (!baseFilename || typeof baseFilename !== 'string') return res.status(400).json({ error: 'Missing baseFilename' })
     if (!/^\d+$/.test(width)) return res.status(400).json({ error: 'Invalid width' })
     if (!/^[a-z0-9]+\.(webp|jpg|jpeg|png|gif)$/i.test(baseFilename)) return res.status(400).json({ error: 'Invalid baseFilename' })
@@ -281,6 +300,10 @@ router.post('/bug-report', bugReportUpload.array('media', 4), async (req: any, r
         error: `Image too large (${(oversized.size / 1024 / 1024).toFixed(1)}MB, max ${IMAGE_MAX_BYTES / 1024 / 1024}MB)`,
       })
     }
+
+    // multer only checked the declared Content-Type; this route is unauthenticated,
+    // so make sure what we store under an image extension is an image.
+    if (files.some(f => !looksLikeImage(f.buffer))) return res.status(400).json({ error: 'Invalid image data' })
 
     const storage = mediaStorage()
     const urls = await Promise.all(files.map(async file => {
