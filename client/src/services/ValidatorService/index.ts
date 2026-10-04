@@ -4461,8 +4461,9 @@ console.log("succeededKeys", succeededKeys)
       // mismatch via a slashed submission. Audit fix 2026-05-13 (V3).
       let actualChainId: bigint
       try {
-        const net = await provider.getNetwork()
-        actualChainId = net.chainId
+        // provider was built with expectedChainId as staticNetwork, so
+        // getNetwork() would echo it back. Ask the RPC for its real chainId.
+        actualChainId = BigInt(await provider.send('eth_chainId', []))
       } catch (e: any) {
         throw new Error(`[OptimisticReplication] could not read chainId from REPLICATION_RPC: ${e?.message || e}`)
       }
