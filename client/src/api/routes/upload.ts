@@ -18,11 +18,15 @@ import { reserveUpload, refundReservation } from '../util/uploadQuota'
 // automatically by `caw install` / `caw update`) source-builds a compatible
 // sharp against the distro libvips. If you see the fail-closed log line below
 // on a server, run that script — see its header for the full diagnosis.
-let sharpModule: typeof import('sharp') | null = null
+// sharp 0.35's typings export the factory as the default export, so `typeof import('sharp')`
+// has no call signatures there; the `export =` typings of 0.34 are callable as they are.
+type SharpModule = typeof import('sharp')
+type SharpFactory = SharpModule extends { default: infer D } ? D : SharpModule
+let sharpModule: SharpFactory | null = null
 let sharpLoadAttempted = false
 let sharpLoadError: string | null = null
 
-function getSharp(): typeof import('sharp') | null {
+function getSharp(): SharpFactory | null {
   if (!sharpLoadAttempted) {
     sharpLoadAttempted = true
     try {

@@ -34,6 +34,21 @@ function sh(cmd, opts = {}) {
   return execSync(cmd, { cwd: clientDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts })
 }
 
+// x86-64-v2 needs cx16, lahf_lm, popcnt, sse3 (pni), ssse3, sse4_1 and sse4_2. Reading the
+// flags ourselves keeps the fallback working when sharp's own message does not show up:
+// sharp 0.35's loader throws a TypeError (err.code.endsWith on an error without a code)
+// instead of "Unsupported CPU" when the wasm fallback fails with a CompileError.
+function lacksX64V2(cpuinfo, platform = process.platform, arch = process.arch) {
+  if (platform !== 'linux' || arch !== 'x64') return false
+  if (cpuinfo === undefined) {
+    try { cpuinfo = require('fs').readFileSync('/proc/cpuinfo', 'utf8') } catch { return false }
+  }
+  const m = cpuinfo.match(/^flags\s*:\s*(.*)$/m)
+  if (!m) return false
+  const flags = new Set(m[1].trim().split(/\s+/))
+  return !['cx16', 'lahf_lm', 'popcnt', 'pni', 'ssse3', 'sse4_1', 'sse4_2'].every(f => flags.has(f))
+}
+
 function sharpLoadError() {
   try {
     sh(`node -e "require('sharp')"`)
@@ -64,7 +79,7 @@ const err = sharpLoadError()
 if (!err) {
   if (sharpReallyWorks()) process.exit(0)
   console.log('[ensure-sharp] sharp loads but fails to process images — attempting source-build fallback')
-} else if (/Unsupported CPU|microarchitecture|Wasm SIMD unsupported/i.test(err)) {
+} else if (/Unsupported CPU|microarchitecture|Wasm SIMD unsupported/i.test(err) || lacksX64V2()) {
   console.log('[ensure-sharp] sharp prebuilt binaries unsupported on this CPU — building from source against system libvips')
 } else {
   // Some other load failure (missing install, exotic platform) — not ours to
