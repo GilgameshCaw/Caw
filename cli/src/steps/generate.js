@@ -820,7 +820,8 @@ function verifyFrontendEnv(frontendEnvPath) {
       `  This will cause the frontend to throw "NaN can't be converted to BigInt" on every contract call,\n` +
       `  or to query the wrong Network's data on chain.\n` +
       `  Re-run the install (node cli/bin/caw.js install --dir <install-dir>) and pick a Network at the prompt,\n` +
-      `  or set VITE_NETWORK_ID=<positive integer ≤ 4294967295> in that .env by hand and restart vite.`
+      `  or set VITE_NETWORK_ID=<positive integer ≤ 4294967295> in that .env by hand and rebuild the frontend\n` +
+      `  (the value is compiled into the bundle; restarting only helps under the vite dev server).`
     )
   }
   console.log(success(`  Verified ${dim('VITE_NETWORK_ID=' + check.value)}`))

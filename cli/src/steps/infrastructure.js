@@ -452,8 +452,9 @@ async function collectWalletConnectProjectId(nodeType) {
     'When users on your CAW frontend click "Connect Wallet", the picker',
     'modal is powered by WalletConnect (now Reown). Mobile wallets like',
     'MetaMask Mobile, Rainbow, Trust, etc. talk to the site through Reown\'s',
-    'relay servers. Without a project ID, the modal falls back to a',
-    'placeholder and WC-based wallets simply can\'t connect.',
+    'relay servers. Without a project ID, the production frontend build',
+    'can\'t open the connect modal at all, so no wallet can connect, browser',
+    'extensions like MetaMask included. The rest of the site still loads.',
     '',
     `${brand('Why each operator needs their own:')}`,
     'Project IDs are tied to one dashboard at cloud.reown.com — the dashboard',
@@ -478,8 +479,9 @@ async function collectWalletConnectProjectId(nodeType) {
     'you\'re live.',
     '',
     'You can leave the prompt blank to skip and add VITE_PROJECT_ID to',
-    'client/src/services/FrontEnd/.env later — the rest of the install will',
-    'still work, only WalletConnect-based wallets will be unavailable.',
+    'client/src/services/FrontEnd/.env later, then rebuild the frontend (the',
+    'ID is baked in at build time). The rest of the install will still work,',
+    'but until then nobody can connect a wallet on this node\'s frontend.',
   ])
 
   const { projectId } = await inquirer.prompt([
@@ -498,6 +500,10 @@ async function collectWalletConnectProjectId(nodeType) {
       },
     },
   ])
+
+  if (!projectId.trim()) {
+    console.log(warn('  No WalletConnect project ID: wallets can\'t connect on this frontend until VITE_PROJECT_ID is set and the frontend is rebuilt.'))
+  }
 
   return projectId.trim()
 }
@@ -777,8 +783,9 @@ async function collectSentryDsn(nodeType) {
     `  ${brand('4.')} Paste below.`,
     '',
     'Leave blank to skip — error handling falls back to plain console logs',
-    'and pm2 log files. You can add SENTRY_DSN / VITE_SENTRY_DSN to the env',
-    'files later without re-running install.',
+    'and pm2 log files. You can add SENTRY_DSN to client/.env later without',
+    're-running install. VITE_SENTRY_DSN (frontend errors) also needs a',
+    'frontend rebuild, since it is baked in at build time.',
   ])
 
   const { dsn } = await inquirer.prompt([
