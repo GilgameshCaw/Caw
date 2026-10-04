@@ -46,7 +46,6 @@ step() { echo; echo -e "${GOLD}▸${RESET} $*"; }
 # surface in real time. On failure, dump the last 30 lines of the log so the
 # operator has something to debug with. Usage: quiet <label> <cmd...>
 INSTALL_LOG=/tmp/caw-install.log
-: > "$INSTALL_LOG"
 quiet() {
   local label="$1"; shift
   printf "  %s..." "$label"
@@ -150,8 +149,26 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
   fi
   log "Re-running with sudo (you may be prompted for your password)..."
+  # The README one-liner runs us as `bash -c "<script>"`. In that mode $0 is
+  # the shell itself (/bin/bash), not a script file, so `bash "$0"` would try
+  # to execute the bash binary as a script ("cannot execute binary file").
+  # BASH_EXECUTION_STRING holds the -c text; re-exec that instead. Only in
+  # -c mode: when the script runs from a file, bash leaves an inherited
+  # BASH_EXECUTION_STRING from the environment visible, and re-exec'ing that
+  # under sudo would run arbitrary text as root instead of this script.
+  if [[ $- == *c* && -n "${BASH_EXECUTION_STRING:-}" ]]; then
+    exec sudo -E bash -c "$BASH_EXECUTION_STRING" "$0" "$@"
+  fi
   exec sudo -E bash "$0" "$@"
 fi
+
+# Start the install log only now that we are root. Creating it before the
+# re-exec makes it owned by the invoking user, and with fs.protected_regular=2
+# (Ubuntu default) root then cannot open that file in sticky /tmp, so the
+# truncate fails with "Permission denied". Remove any copy left behind by an
+# earlier run for the same reason.
+rm -f "$INSTALL_LOG"
+: > "$INSTALL_LOG"
 
 # ---------- Host capability check --------------------------------------------
 #
