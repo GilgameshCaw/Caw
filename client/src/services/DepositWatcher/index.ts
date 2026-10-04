@@ -139,7 +139,13 @@ export const depositWatcherService: Service = {
         provider = rpc.get()
         contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
         try {
-          const currentBlock = await provider.getBlockNumber()
+          // Stay L1_POLL_HEAD_MARGIN blocks (default 1) below the reported head:
+          // getBlockNumber and the getLogs below can be served by different
+          // upstreams, and one that is a block behind rejects the range. Same
+          // issue and default as RAW_EVENTS_HEAD_MARGIN in RawEventsGatherer.
+          const marginEnv = Number(process.env.L1_POLL_HEAD_MARGIN)
+          const headMargin = Number.isFinite(marginEnv) && marginEnv >= 0 ? marginEnv : 1
+          const currentBlock = (await provider.getBlockNumber()) - headMargin
           if (currentBlock > lastBlock) {
             const fromBlock = lastBlock + 1
             const toBlock = Math.min(currentBlock, fromBlock + cfg.maxBlocksPerPoll - 1)
