@@ -2,7 +2,7 @@
 import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
-import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, type ResilientProvider } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, redactRpcUrl, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -83,7 +83,7 @@ export const marketplaceIndexerService: Service = {
     const started = (async () => {
       if (!rpcUrl) throw new Error('[MarketplaceIndexer] No L1 RPC URL configured (set L1_RPC_URL env var)')
       await prisma.$connect()
-      console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
+      console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${redactRpcUrl(rpcUrl)}`)
 
       // Probe chainId ONCE at startup before trusting this RPC — a primary RPC on
       // the wrong chain would otherwise be silently trusted (audit 2026-07-11

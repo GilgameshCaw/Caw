@@ -3273,7 +3273,7 @@ console.log("succeededKeys", succeededKeys)
         const fullBatch = buildMultiActionData(validatedEntries)
         const totalTipBefore = computeTotalTip(validatedEntries)
 
-        console.log(`[Validator] Starting simulation for validator ${validatorId} with RPC: ${l2RpcUrl}`);
+        console.log(`[Validator] Starting simulation for validator ${validatorId} with RPC: ${redactRpcUrl(l2RpcUrl)}`);
         console.log(`[Validator] Simulating ${fullBatch.actions.length} actions:`, fullBatch.actions.map((a: any) => ({
           type: getActionType(a.actionType).toString(),
           sender: a.senderId,
