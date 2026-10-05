@@ -327,9 +327,23 @@ const DatabaseAdmin: React.FC = () => {
   // Delete record
   const deleteRecord = async () => {
     if (!detailId || !activeModel) return
-    if (!confirm('Are you sure you want to delete this record?')) return
+    // The API requires a reason for every admin delete (it goes into the
+    // ModeratorAction audit log). The prompt doubles as the confirmation:
+    // cancelling it, or leaving it empty, sends nothing.
+    const input = window.prompt(
+      `Delete ${activeModel} #${detailId}? This cannot be undone.\n\nReason (required, saved to the audit log):`,
+    )
+    if (input === null) return
+    const reason = input.trim()
+    if (!reason) {
+      setSaveMsg('Delete failed: a reason is required')
+      return
+    }
     try {
-      await apiFetch(`/api/admin/db/${activeModel}/${detailId}`, { method: 'DELETE' })
+      await apiFetch(`/api/admin/db/${activeModel}/${detailId}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason }),
+      })
       closeDetail()
       fetchRecords()
     } catch (err: any) {
