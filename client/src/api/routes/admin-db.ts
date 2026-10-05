@@ -349,6 +349,8 @@ router.get('/models', (_req, res) => {
   const models = Object.entries(MODEL_META).map(([name, meta]) => ({
     name,
     ...meta,
+    // Tells the admin page which models need an audit reason on save.
+    requiresReason: PATCH_REQUIRES_REASON.has(name),
   }))
   res.json({ models })
 })
@@ -522,8 +524,9 @@ const PATCH_REQUIRES_REASON = new Set(['user', 'txQueue', 'withdrawalRequest'])
 /**
  * PATCH /api/admin/db/:model/:id
  * Update a record. Only allowed for writable models. Writes a ModeratorAction
- * audit row on success (M-3 audit fix 2026-05-23). Requires `reason` in the
- * request body for sensitive models (user, txQueue, withdrawalRequest).
+ * audit row on success (M-3 audit fix 2026-05-23). Requires a reason in the
+ * request body for sensitive models (user, txQueue, withdrawalRequest): send it
+ * as `auditReason` (`reason` is also accepted where it is not a column).
  */
 router.patch('/:model/:id', async (req, res) => {
   const { model, id } = req.params
@@ -534,13 +537,6 @@ router.patch('/:model/:id', async (req, res) => {
 
   if (!meta.writable) {
     return res.status(403).json({ error: `Model ${model} is read-only` })
-  }
-
-  if (PATCH_REQUIRES_REASON.has(model)) {
-    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : ''
-    if (!reason) {
-      return res.status(400).json({ error: `reason field is required for admin PATCH on ${model}` })
-    }
   }
 
   const delegate = getDelegate(model)
@@ -565,6 +561,20 @@ router.patch('/:model/:id', async (req, res) => {
     if (allowed.has(k) && !ADMIN_WRITE_BLOCKLIST.has(k)) data[k] = req.body[k]
   }
 
+  // The admin's own reason for the change travels as `auditReason`. `reason`
+  // is a writable column on some models (txQueue keeps its failure reason
+  // there) and would be written into it, so it cannot also be the audit
+  // reason; it still counts as one where it is not a column (user,
+  // withdrawalRequest), as before.
+  const reasonIsColumn = allowed.has('reason')
+  const asText = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const auditReason = asText(req.body?.auditReason) || (reasonIsColumn ? '' : asText(req.body?.reason))
+  if (PATCH_REQUIRES_REASON.has(model) && !auditReason) {
+    return res.status(400).json({
+      error: `${reasonIsColumn ? 'auditReason' : 'reason'} field is required for admin PATCH on ${model}`,
+    })
+  }
+
   // Best-effort attribution (mirrors DELETE pattern).
   const actorTokenId = (req as any).sessionData?.authorizedTokenIds?.[0] ?? null
 
@@ -577,7 +587,7 @@ router.patch('/:model/:id', async (req, res) => {
 
     // Audit row — same pattern as DELETE. Best-effort: failure here does
     // not roll back the update (two-tx split per project convention).
-    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : null
+    const reason = auditReason || null
     try {
       await prisma.moderatorAction.create({
         data: {

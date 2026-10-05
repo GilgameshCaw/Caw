@@ -55,6 +55,8 @@ interface ModelMeta {
   searchFields: string[]
   listFields: string[]
   writable: boolean
+  /** Set by the API for models whose PATCH needs an audit reason. */
+  requiresReason?: boolean
 }
 
 const fmtDate = (v: string) => {
@@ -310,9 +312,27 @@ const DatabaseAdmin: React.FC = () => {
         return
       }
 
+      // user, txQueue and withdrawalRequest need a reason for the ModeratorAction
+      // audit log (the API says so in /models). It is sent as `auditReason`, not
+      // `reason`: txQueue and report have a `reason` column of their own, and
+      // that key would be written into it. Cancelling the prompt, or leaving it
+      // empty, saves nothing.
+      let auditReason: string | undefined
+      if (meta?.requiresReason) {
+        const input = window.prompt(
+          `Save changes to ${activeModel} #${detailId}?\n\nReason (required, saved to the audit log):`,
+        )
+        if (input === null) return
+        auditReason = input.trim()
+        if (!auditReason) {
+          setSaveMsg('Error: a reason is required')
+          return
+        }
+      }
+
       const data = await apiFetch(`/api/admin/db/${activeModel}/${detailId}`, {
         method: 'PATCH',
-        body: JSON.stringify(updates),
+        body: JSON.stringify(auditReason ? { ...updates, auditReason } : updates),
       })
       setDetailRecord(data.record)
       setSaveMsg('Saved')
