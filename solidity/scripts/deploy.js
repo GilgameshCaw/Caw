@@ -319,6 +319,34 @@ function requireUniswapRouter(chainKey) {
   return v;
 }
 
+// Civic's provider network and CAW protocol KYC level are different
+// namespaces. CIVIC_GATEKEEPER_NETWORK selects the Civic credential network;
+// CIVIC_KYC_LEVEL selects the CawProfileMinter verifier slot.
+//
+// There is deliberately no default protocol level. Enabling Civic without an
+// explicit level would make the adapter deploy successfully while leaving no
+// deterministic statement of which KYC gate it is intended to satisfy.
+function requireCivicKycLevel() {
+  if (!process.env.CIVIC_GATEWAY_ADDRESS) return null;
+
+  const raw = (process.env.CIVIC_KYC_LEVEL || '').trim();
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+    throw new FatalDeployError(
+      'CIVIC_KYC_LEVEL must be an explicit decimal integer in [2,255] ' +
+      'when CIVIC_GATEWAY_ADDRESS is set.'
+    );
+  }
+
+  const level = Number(raw);
+  if (!Number.isInteger(level) || level < 2 || level > 255) {
+    throw new FatalDeployError(
+      `CIVIC_KYC_LEVEL=${raw} is invalid; verifier-backed levels are 2..255.`
+    );
+  }
+
+  return level;
+}
+
 // Pre-existing contracts (don't redeploy these)
 const EXISTING_CONTRACTS = {
   testnet: {
@@ -562,9 +590,9 @@ const CONTRACTS = {
       state.addresses.CawProfile,
       state.addresses.MockSwapRouter || requireUniswapRouter(chainKey),
       // pathwayExpander = sole address authorized to call addKycVerifier.
-      // KYC verifiers start unconfigured (mapping defaults to address(0));
-      // post-deploy linking steps below call PathwayExpander.addKycVerifier
-      // for each KYC_VERIFIER_L* env var that is set.
+      // KYC verifiers start unconfigured. If Civic is enabled, the Phase-2
+      // linking step registers the deployed adapter at explicit CIVIC_KYC_LEVEL
+      // and requires exact on-chain readback before deployment can continue.
       state.addresses.PathwayExpander_L1,
     ],
   },
@@ -599,7 +627,7 @@ const CONTRACTS = {
       process.env.CIVIC_GATEWAY_ADDRESS || '0x0000000000000000000000000000000000000000',
       process.env.CIVIC_GATEKEEPER_NETWORK || '0',
     ],
-    condition: () => !!process.env.CIVIC_GATEWAY_ADDRESS,
+    condition: () => requireCivicKycLevel() !== null,
   },
   CawProfileMarketplace: {
     chain: 'L1',
@@ -845,6 +873,133 @@ for (const L of L2_CHAIN_KEYS) {
 
 // Linking steps (run after deployments)
 const LINKING_STEPS = [
+  // Civic is optional, but when enabled its adapter must be registered into an
+  // explicit additions-only Minter slot during the same deployment generation.
+  // This runs after all Phase-2 contracts have landed. Any failure is fatal:
+  // shipping a deployed but unregistered Civic adapter is not a valid deploy.
+  {
+    name: 'Register CivicKycVerifier on CawProfileMinter',
+    chain: 'L1',
+    phase: 2,
+    condition: (state) => !!state.addresses.CivicKycVerifier,
+    custom: async (state, deployer) => {
+      try {
+        const level = requireCivicKycLevel();
+        if (level === null) {
+          throw new FatalDeployError(
+            'CivicKycVerifier is deployed but CIVIC_KYC_LEVEL is unavailable'
+          );
+        }
+
+        const minterAddr = state.addresses.CawProfileMinter;
+        const expanderAddr = state.addresses.PathwayExpander_L1;
+        const civicAddr = state.addresses.CivicKycVerifier;
+
+        if (!minterAddr || !expanderAddr || !civicAddr) {
+          throw new FatalDeployError(
+            'Civic KYC registration requires CawProfileMinter, ' +
+            'PathwayExpander_L1, and CivicKycVerifier addresses'
+          );
+        }
+
+        const minterContract = deployer.getContract('CawProfileMinter');
+        const expanderContract = deployer.getContract('PathwayExpander_L1');
+
+        if (!minterContract || !expanderContract) {
+          throw new FatalDeployError(
+            'Civic KYC registration contract handle missing'
+          );
+        }
+
+        const prior = state.kyc?.civic;
+        if (prior) {
+          const priorLevel = Number(prior.level);
+          if (!Number.isInteger(priorLevel) || priorLevel !== level) {
+            throw new FatalDeployError(
+              `Civic KYC level changed across deployment state: ` +
+              `recorded=${prior.level} configured=${level}`
+            );
+          }
+
+          if (
+            prior.verifier &&
+            prior.verifier.toLowerCase() !== civicAddr.toLowerCase()
+          ) {
+            throw new FatalDeployError(
+              `Civic verifier changed across deployment state: ` +
+              `recorded=${prior.verifier} deployed=${civicAddr}`
+            );
+          }
+        }
+
+        const current = await minterContract.kycVerifierFor(level);
+        const zero = ethers.ZeroAddress.toLowerCase();
+        const expectedVerifier = civicAddr.toLowerCase();
+        const currentVerifier = current.toLowerCase();
+
+        if (
+          currentVerifier !== zero &&
+          currentVerifier !== expectedVerifier
+        ) {
+          throw new FatalDeployError(
+            `KYC level ${level} is already occupied by ${current}; ` +
+            `expected CivicKycVerifier ${civicAddr}`
+          );
+        }
+
+        let transactionHash = prior?.transactionHash || null;
+        let blockNumber = prior?.blockNumber ?? null;
+
+        if (currentVerifier === zero) {
+          const tx = await expanderContract.addKycVerifier(
+            minterAddr,
+            level,
+            civicAddr
+          );
+          const receipt = await tx.wait();
+
+          if (!receipt || receipt.status !== 1 || receipt.blockNumber == null) {
+            throw new FatalDeployError(
+              `Civic KYC registration transaction failed for level ${level}`
+            );
+          }
+
+          transactionHash = tx.hash;
+          blockNumber = receipt.blockNumber;
+        }
+
+        const registered = await minterContract.kycVerifierFor(level);
+        if (registered.toLowerCase() !== expectedVerifier) {
+          throw new FatalDeployError(
+            `Civic KYC registration read-back mismatch at level ${level}: ` +
+            `expected=${civicAddr} actual=${registered}`
+          );
+        }
+
+        state.kyc = state.kyc || {};
+        state.kyc.civic = {
+          level,
+          verifier: civicAddr,
+          transactionHash,
+          blockNumber,
+        };
+        deployer.saveState();
+
+        console.log(
+          `   Civic KYC registered: level=${level} verifier=${civicAddr}`
+        );
+      } catch (e) {
+        if (e instanceof FatalDeployError) {
+          throw e;
+        }
+
+        throw new FatalDeployError(
+          `Civic KYC bootstrap registration failed: ${e.message}`
+        );
+      }
+    },
+  },
+
   // Phase 2 linking (L1)
   {
     name: 'Create first network on NetworkManager (Uruk / Sepolia-Uruk)',

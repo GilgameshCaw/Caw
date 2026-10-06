@@ -169,12 +169,53 @@ async function main() {
   const minter = new ethers.Contract(A.CawProfileMinter, [
     'function CawProfile() view returns (address)',
     'function pathwayExpander() view returns (address)',
+    'function kycVerifierFor(uint8) view returns (address)',
   ], l1);
   // The IMint cast inside Minter exposes the slot, but the public getter is named after the var declaration.
   try {
     eq('CawProfileMinter.pathwayExpander', await minter.pathwayExpander(), A.PathwayExpander_L1);
   } catch (e) {
     warn('CawProfileMinter.pathwayExpander', 'not callable (getter may be missing)');
+  }
+
+  // Civic KYC is optional. If the adapter was deployed, deployment state must
+  // identify the exact protocol KYC level chosen during bootstrap and the
+  // on-chain Minter slot must point to that exact adapter.
+  if (A.CivicKycVerifier) {
+    console.log('\nCivic KYC registration:');
+
+    const civicProof = state.kyc?.civic;
+    const civicLevel = Number(civicProof?.level);
+    const validLevel =
+      Number.isInteger(civicLevel) &&
+      civicLevel >= 2 &&
+      civicLevel <= 255;
+
+    ok(
+      'state.kyc.civic level metadata present',
+      validLevel,
+      civicProof ? `level=${civicProof.level}` : 'missing'
+    );
+
+    if (validLevel) {
+      eq(
+        'state.kyc.civic.verifier',
+        civicProof?.verifier,
+        A.CivicKycVerifier
+      );
+
+      eq(
+        `CawProfileMinter.kycVerifierFor(${civicLevel})`,
+        await minter.kycVerifierFor(civicLevel),
+        A.CivicKycVerifier
+      );
+    }
+  } else if (state.kyc?.civic) {
+    ok(
+      'state.kyc.civic absent when CivicKycVerifier is not deployed',
+      false,
+      'stale Civic KYC metadata present'
+    );
   }
 
   // CawProfileLedger_L1 (bypassLZ)
