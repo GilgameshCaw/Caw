@@ -198,14 +198,22 @@ const ReportsAdmin: React.FC = () => {
 
                     {/* Post and user links */}
                     <div className="flex items-center gap-3 mt-1">
-                      <Link
-                        to={`/caws/${report.postId}`}
-                        className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
-                      >
-                        View Post #{report.postId}
-                      </Link>
+                      {/* User reports (POST /api/reports/user) are stored with postId 0:
+                          there is no post to link to. */}
+                      {report.postId === 0 ? (
+                        <span className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                          User report
+                        </span>
+                      ) : (
+                        <Link
+                          to={`/caws/${report.postId}`}
+                          className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          View Post #{report.postId}
+                        </Link>
+                      )}
                       <span className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                        Author ID: {report.postAuthorId}
+                        {report.postId === 0 ? 'Reported user ID' : 'Author ID'}: {report.postAuthorId}
                       </span>
                       <span className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
                         Reporter ID: {report.reporterId}
