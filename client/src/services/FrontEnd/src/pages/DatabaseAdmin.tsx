@@ -98,6 +98,14 @@ function statusColor(value: string): string {
   return ''
 }
 
+// Primary-key column of each model. Must match resolveIdForLookup in
+// client/src/api/routes/admin-db.ts (the page uses it as the row id).
+const primaryKeyField = (model: string | null): string =>
+  model === 'validatorSetting' || model === 'chainData' ? 'key'
+  : model === 'sponsorCode' ? 'codeHash'
+  : model === 'sponsorRepay' ? 'tokenId'
+  : 'id'
+
 const DatabaseAdmin: React.FC = () => {
   const { isDark } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -389,7 +397,7 @@ const DatabaseAdmin: React.FC = () => {
 
   // Detail view
   if (detailRecord && detailId) {
-    const idField = activeModel === 'validatorSetting' || activeModel === 'chainData' ? 'key' : 'id'
+    const idField = primaryKeyField(activeModel)
     return (
       <div className={`min-h-screen ${bg} p-4`}>
         <div className="max-w-4xl mx-auto">
@@ -644,7 +652,7 @@ const DatabaseAdmin: React.FC = () => {
                 ) : records.length === 0 ? (
                   <tr><td colSpan={columns.length} className={`px-3 py-8 text-center ${muted}`}>No records found</td></tr>
                 ) : records.map((record, i) => {
-                  const idField = activeModel === 'validatorSetting' || activeModel === 'chainData' ? 'key' : 'id'
+                  const idField = primaryKeyField(activeModel)
                   const id = record[idField]
                   return (
                     <tr

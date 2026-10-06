@@ -335,7 +335,9 @@ function resolveIdForLookup(model: string, id: string): { idField: string; idVal
     : model === 'sponsorRepay' ? 'tokenId'
     : 'id'
   let idValue: string | number = id
-  if (idField === 'id' && /^-?\d+$/.test(id)) {
+  // `id` and sponsorRepay's `tokenId` are Int columns; the other primary keys
+  // (key, codeHash) are strings and must not be coerced.
+  if ((idField === 'id' || idField === 'tokenId') && /^-?\d+$/.test(id)) {
     idValue = Number(id)
   }
   return { idField, idValue }
