@@ -3,9 +3,10 @@ import { HiFlag, HiOutlinePhotograph, HiOutlineX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { uploadMedia } from '~/api/upload'
+import { useActiveToken } from '~/store/tokenDataStore'
 import ModalWrapper from './ModalWrapper'
 
-export type ReportReason = 'SPAM' | 'HARASSMENT' | 'INAPPROPRIATE' | 'SCAM' | 'OTHER'
+export type ReportReason = 'SPAM' | 'HARASSMENT' | 'INAPPROPRIATE' | 'OTHER'
 
 interface ReportUserModalProps {
   isOpen: boolean
@@ -18,12 +19,12 @@ const REPORT_REASONS: { value: ReportReason; label: string; description: string 
   { value: 'SPAM', label: 'Spam', description: 'Unwanted messages or repetitive content' },
   { value: 'HARASSMENT', label: 'Harassment', description: 'Targeted abuse, threats, or bullying' },
   { value: 'INAPPROPRIATE', label: 'Inappropriate content', description: 'Graphic, violent, or adult content' },
-  { value: 'SCAM', label: 'Scam', description: 'Attempting to defraud or deceive' },
   { value: 'OTHER', label: 'Other', description: 'Another issue not listed above' },
 ]
 
 const ReportUserModal: React.FC<ReportUserModalProps> = ({ isOpen, onClose, userId, username }) => {
   const { isDark } = useTheme()
+  const activeToken = useActiveToken()
   const [selectedReason, setSelectedReason] = useState<ReportReason | null>(null)
   const [details, setDetails] = useState('')
   const [images, setImages] = useState<{ file: File; preview: string }[]>([])
@@ -55,6 +56,12 @@ const ReportUserModal: React.FC<ReportUserModalProps> = ({ isOpen, onClose, user
 
   const handleSubmit = async () => {
     if (!selectedReason) return
+    // POST /api/reports/user is requireAuth({ field: 'reporterId' }): the
+    // reporter's tokenId must be in the body, or the API answers 400.
+    if (!activeToken) {
+      setError('Select a profile before reporting a user')
+      return
+    }
     setIsSubmitting(true)
     setError(null)
 
@@ -65,6 +72,7 @@ const ReportUserModal: React.FC<ReportUserModalProps> = ({ isOpen, onClose, user
       await apiFetch('/api/reports/user', {
         method: 'POST',
         body: JSON.stringify({
+          reporterId: activeToken.tokenId,
           reportedUserId: userId,
           reportedUsername: username,
           reason: selectedReason,
