@@ -16,6 +16,13 @@ interface Report {
   reviewedBy: string | null
   resolution: string | null
   createdAt: string
+  // Added by GET /api/reports for the moderator list; absent on older servers.
+  reporterIdUsername?: string | null
+  postAuthorIdUsername?: string | null
+  postActualAuthorId?: number | null
+  postAuthorMismatch?: boolean
+  postStatus?: string | null
+  postContent?: string | null
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -198,19 +205,38 @@ const ReportsAdmin: React.FC = () => {
 
                     {/* Post and user links */}
                     <div className="flex items-center gap-3 mt-1">
-                      <Link
-                        to={`/caws/${report.postId}`}
-                        className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
-                      >
-                        View Post #{report.postId}
-                      </Link>
+                      {/* User reports (POST /api/reports/user) are stored with postId 0:
+                          there is no post to link to. */}
+                      {report.postId === 0 ? (
+                        <span className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                          User report
+                        </span>
+                      ) : (
+                        <Link
+                          to={`/caws/${report.postId}`}
+                          className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
+                        >
+                          View Post #{report.postId}
+                        </Link>
+                      )}
                       <span className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                        Author ID: {report.postAuthorId}
+                        {report.postId === 0 ? 'Reported user ID' : 'Author ID'}: {report.postAuthorId}
+                        {report.postAuthorMismatch
+                          ? ` (stored value; the post's author is ${report.postActualAuthorId}${report.postAuthorIdUsername ? ` @${report.postAuthorIdUsername}` : ''})`
+                          : (report.postAuthorIdUsername ? ` (@${report.postAuthorIdUsername})` : '')}
                       </span>
                       <span className={`text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                        Reporter ID: {report.reporterId}
+                        Reporter ID: {report.reporterId}{report.reporterIdUsername ? ` (@${report.reporterIdUsername})` : ''}
                       </span>
                     </div>
+
+                    {/* Reported post context. The server returns content only for
+                        visible (SUCCESS) posts. */}
+                    {report.postId !== 0 && report.postStatus && (
+                      <p className={`text-sm mt-2 whitespace-pre-wrap break-words ${isDark ? 'text-white/80' : 'text-gray-800'}`}>
+                        {report.postContent ?? (report.postStatus === 'HIDDEN' ? 'Post removed by its author' : `Post status: ${report.postStatus}`)}
+                      </p>
+                    )}
 
                     {/* Details */}
                     {report.details && (
