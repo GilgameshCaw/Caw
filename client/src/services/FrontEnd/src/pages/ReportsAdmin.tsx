@@ -243,6 +243,9 @@ const ReportsAdmin: React.FC = () => {
                     <button
                       onClick={() => {
                         const note = prompt('Resolution note (optional):')
+                        // null = the prompt was cancelled: leave the report untouched.
+                        // (An empty note still goes through; the note is optional.)
+                        if (note === null) return
                         updateStatus(report.id, 'ACTIONED', note || undefined)
                       }}
                       className="px-3 py-1 text-xs bg-green-500/20 text-green-500 rounded-full hover:bg-green-500/30 transition-colors cursor-pointer"
