@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { Link } from '~/utils/localizedRouter'
+import { useLocation } from 'react-router-dom'
+import { adminHomeFor } from '~/utils/adminHome'
 const PAGE_SIZE = 50
 
 interface Report {
@@ -42,6 +44,7 @@ const REASON_COLORS: Record<string, string> = {
 
 const ReportsAdmin: React.FC = () => {
   const { isDark } = useTheme()
+  const adminHome = adminHomeFor(useLocation().pathname)
   const [reports, setReports] = useState<Report[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -125,7 +128,7 @@ const ReportsAdmin: React.FC = () => {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <Link to="/admin" className={`text-sm ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}>Admin</Link>
+            <Link to={adminHome.to} className={`text-sm ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}>{adminHome.label}</Link>
             <span className={isDark ? 'text-white/20' : 'text-gray-300'}>/</span>
             <h1 className="text-2xl font-bold">Post Reports ({total})</h1>
           </div>
