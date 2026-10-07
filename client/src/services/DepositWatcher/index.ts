@@ -14,10 +14,12 @@
 // from other CAW network deployments sharing the same L1 contract.
 //
 // Operator-tuned for free-tier RPCs (50K-block-per-getLogs cap):
-// per-poll cap, halve-and-retry on chunk failures via the shared
-// `scanLogsForward`, catch-up draining when the checkpoint falls
-// behind. Same shape as NftTransferWatcher — reuse the operator's
-// mental model.
+// per-poll cap (maxBlocksPerPoll, default 10,000) and catch-up draining
+// when the checkpoint falls behind. Same shape as NftTransferWatcher —
+// reuse the operator's mental model. Like NftTransferWatcher, the poll
+// calls queryFilter directly rather than the shared `scanLogsForward`:
+// a window the RPC rejects fails the poll, the checkpoint stays where it
+// is, and the next poll asks for the same window again, without halving.
 
 import 'dotenv/config'
 import { z } from 'zod'
