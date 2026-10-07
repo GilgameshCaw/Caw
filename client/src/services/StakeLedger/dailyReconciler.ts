@@ -16,6 +16,7 @@
 
 import { prisma } from '../../prismaClient'
 import { getCawProfileLedger } from './cawProfileLedger'
+import { applyDepositToMemory } from './index'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
@@ -120,6 +121,15 @@ export async function runDailyReconciliation(): Promise<ReconcileResult> {
           update: { ownership: onChain.toString(), updatedAt: now },
         })
       })
+
+      // Mirror the corrected Current row into the running ledger, after
+      // commit (same rule as DepositWatcher). Without this the in-memory
+      // ownership map keeps the pre-reconcile value until the next restart;
+      // the next action touching this tokenId computes from it and writes
+      // the stale value back over the Current row corrected above.
+      // amountWei=0n: this path does not change StakeLedgerState.totalCaw
+      // in the DB, so the in-memory totalCaw must not move either.
+      await applyDepositToMemory(tokenId, 0n, onChain)
 
       result.depositsDiscovered++
       result.totalDepositAmount += balanceDelta
