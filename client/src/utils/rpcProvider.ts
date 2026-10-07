@@ -532,7 +532,8 @@ export function makeJsonRpcProvider(url: string, chainId?: number, secret?: stri
  * almost everything we use is on the AbstractProvider interface) should keep
  * using makeJsonRpcProvider with a single URL.
  *
- * Quorum: 1 — accept the first non-error response. This is the right setting
+ * Quorum: 1 — the first answer wins, an error the RPC returns included
+ * (see the note above `configs` below). This is the right setting
  * for "operator wants resilience, not consensus." If the operator wants
  * quorum-style consensus across two providers (e.g. to defend against
  * malicious RPC responses), they can configure that later — the protocol's
@@ -552,10 +553,21 @@ export function makeFallbackJsonRpcProvider(urls: string[], chainId?: number): A
     }
     return new JsonRpcProvider(fetchReq, undefined, { staticNetwork: true })
   })
-  // Each subprovider gets equal weight; quorum 1 = first-success-wins.
-  // The 'priority' field defaults to 1 across configs, so all candidates
-  // are tried in order on each request. ethers internally rotates failing
-  // providers out of the active set after a few errors.
+  // How ethers' FallbackProvider uses these configs (quorum 1):
+  // - Every config has the default priority 1, and ethers shuffles configs
+  //   that share a priority (FallbackProvider#getNextConfig), so each call
+  //   starts at a random URL, fallbacks included. It is not urls[0] first.
+  // - An error the RPC returns (a 413 range cap, a 429, -32000, ...) is an
+  //   answer: with quorum 1 it goes back to the caller without asking
+  //   another URL. ethers only moves on when a call fails to connect, or
+  //   stays silent past stallTimeout (default 400 ms), in which case it
+  //   asks the next config as well. Nothing takes a failing URL out.
+  // Measured with two stub servers, 40 eth_getLogs calls each: both
+  // healthy, 19 / 21; one answering 413, 26 ok and 14 failed (each call
+  // that started there); one refusing connections, 40 ok on the other.
+  // Giving urls[0] priority 1 and the rest 2, 3, ... keeps calls on the
+  // primary while it is healthy, but in the same test turns its 413 case
+  // into 0 ok out of 40, so it is a trade-off and is not done here.
   const configs = subproviders.map(provider => ({ provider, weight: 1 }))
   const fallback = new FallbackProvider(configs, network, { quorum: 1 })
   // wrapSend hooks the throttle into .send(); FallbackProvider itself
