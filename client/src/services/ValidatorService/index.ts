@@ -588,6 +588,17 @@ async function backstopCawonceFromCalldata(
   return 'failed'
 }
 
+// L2 chain id this node signs and submits for, and the key the indexer
+// health stats are read with. Same env read as UserService, actions.ts and
+// ChainSync: L2_CHAIN_ID if set, otherwise Base Sepolia.
+//
+// This replaces resolveChainIdFromProvider(), which called
+// provider.getNetwork(). Every provider this file is handed is built with
+// staticNetwork, so getNetwork() returned the id the provider was
+// constructed with (84532) without asking the RPC — the value never came
+// from the live chain.
+const L2_CHAIN_ID = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : 84532
+
 /**
  * Resolve a "Cawonce already used" simulation rejection by checking our
  * local Action table.
@@ -618,29 +629,6 @@ async function backstopCawonceFromCalldata(
  *   'failed'            — Different action at this cawonce, or scan window came back empty.
  *   'awaiting_indexer'  — Action row not present and either budget hasn't elapsed or indexer is stalled.
  */
-// Resolve and cache the chainId from a provider once per process. Calling
-// `provider.getNetwork()` per resolveCawonceUsed invocation would add an
-// RPC roundtrip to a path that already has tight latency targets, but the
-// active L2 doesn't change at runtime — the validator is bound to a single
-// provider for its lifetime. This is the seam V2's "network" model will
-// hook into; today it just reads the live provider rather than the
-// hardcoded 84532 constant the rest of this file uses.
-let _cachedChainId: number | null = null
-async function resolveChainIdFromProvider(provider: AbstractProvider): Promise<number> {
-  if (_cachedChainId !== null) return _cachedChainId
-  try {
-    const net = await provider.getNetwork()
-    _cachedChainId = Number(net.chainId)
-  } catch (err) {
-    // Fall back to the Base Sepolia constant. Matches what every other
-    // RPC site in this file does today; not a regression. Logged so the
-    // operator can spot RPC issues in the noise.
-    console.warn(`[Validator] resolveChainIdFromProvider: getNetwork failed, falling back to 84532 — ${err instanceof Error ? err.message : String(err)}`)
-    _cachedChainId = 84532
-  }
-  return _cachedChainId
-}
-
 async function resolveCawonceUsed(
   data: any,
   firstSeenAt: Date | undefined,
@@ -690,7 +678,7 @@ async function resolveCawonceUsed(
     return 'awaiting_indexer'
   }
 
-  const chainId = await resolveChainIdFromProvider(provider)
+  const chainId = L2_CHAIN_ID
   const stats = getIndexerStats(chainId)
   // Fallback throughput when the indexer hasn't produced enough samples
   // yet (cold start, or process just restarted). Conservative — on Base
@@ -1842,9 +1830,8 @@ export const validatorService: Service = {
           console.warn(`[submitERC1271Actions] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), formula fallback: ${rawGasLimit}`)
         }
 
-        // M-2: Derive chainId from the live provider (same pattern as ECDSA
-        // path via resolveChainIdFromProvider) instead of hardcoding 84532.
-        const chainId = await resolveChainIdFromProvider(httpProvider)
+        // Same L2_CHAIN_ID as the ECDSA submit path.
+        const chainId = L2_CHAIN_ID
         // Cross-module nonce lock: _submitChain serializes the validator's own
         // ECDSA vs ERC-1271 submits, but the Quick-Sign session register/revoke
         // (api/routes/sessions.ts) sends from the SAME wallet on a single-operator
@@ -2342,7 +2329,7 @@ export const validatorService: Service = {
             gasLimit: rawGasLimit,
             maxFeePerGas,
             maxPriorityFeePerGas,
-            chainId: 84532,
+            chainId: L2_CHAIN_ID,
             type: 2,
           })
         )

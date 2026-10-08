@@ -132,14 +132,14 @@ async function initializeProviders(config: ChainSyncConfig) {
   if (!l1Provider && config.l1RpcUrl) {
     const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
     console.log('[ChainSync] L1 provider URL:', redactRpcUrl(l1Url))
-    l1Provider = await makeVerifiedJsonRpcProvider(l1Url, 11155111)
+    l1Provider = await makeVerifiedJsonRpcProvider(l1Url, process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111)
     networkManager = new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
     const l2Url = getL2HttpRpcUrl(config.l2RpcUrl)
     console.log('[ChainSync] L2 provider URL:', redactRpcUrl(l2Url))
-    l2Provider = await makeVerifiedJsonRpcProvider(l2Url, 84532)
+    l2Provider = await makeVerifiedJsonRpcProvider(l2Url, process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : 84532)
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {

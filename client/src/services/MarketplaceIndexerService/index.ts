@@ -88,12 +88,13 @@ export const marketplaceIndexerService: Service = {
       // Probe chainId ONCE at startup before trusting this RPC — a primary RPC on
       // the wrong chain would otherwise be silently trusted (audit 2026-07-11
       // MEDIUM). The resilient handle below re-probes on every rebuild.
-      await makeVerifiedJsonRpcProvider(rpcUrl, 11155111)
+      const l1ChainId = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
+      await makeVerifiedJsonRpcProvider(rpcUrl, l1ChainId)
       // Self-healing provider (2026-07-10 incident): a degraded L1 RPC rebuilds
       // itself instead of wedging the poll loop forever. provider + contracts are
       // re-derived from rpc.get() each tick; connection errors call reportError().
       const rpc: ResilientProvider = makeResilientHttpProvider(
-        getL1HttpRpcUrls(cfg.l1RpcUrl), 11155111, { label: 'MarketplaceIndexer/L1' },
+        getL1HttpRpcUrls(cfg.l1RpcUrl), l1ChainId, { label: 'MarketplaceIndexer/L1' },
       )
       let provider = rpc.get()
       let marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)

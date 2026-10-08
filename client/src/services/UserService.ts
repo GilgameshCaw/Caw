@@ -58,8 +58,14 @@ function invalidateWsProvider(name: string) {
   }
 }
 
+// Same env-first pattern as routes/users.ts, routes/sessions.ts and
+// passkeyVerify.ts, so a node with L1_CHAIN_ID / L2_CHAIN_ID set (mainnet)
+// builds its providers for the right chains.
+const L1_CHAIN_ID = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
+const L2_CHAIN_ID = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : 84532
+
 // Helper to create WebSocket provider with error handling
-async function createWebSocketProvider(rpcUrl: string, name: string, secret?: string): Promise<WebSocketProvider> {
+async function createWebSocketProvider(rpcUrl: string, name: string, chainId: number, secret?: string): Promise<WebSocketProvider> {
   return new Promise((resolve, reject) => {
     let provider: WebSocketProvider | null = null
     let settled = false
@@ -72,7 +78,7 @@ async function createWebSocketProvider(rpcUrl: string, name: string, secret?: st
     }, 30000)
 
     try {
-      provider = makeWebSocketProvider(rpcUrl, 11155111, secret)
+      provider = makeWebSocketProvider(rpcUrl, chainId, secret)
 
       // Handle connection errors via websocket
       const ws = (provider as any)._websocket || (provider as any).websocket
@@ -152,7 +158,7 @@ async function getL2Provider() {
     console.log('[UserService] Initializing L2 WebSocket provider...')
 
     try {
-      l2Provider = await createWebSocketProvider(rpcUrl, 'L2', getL2WsSecret())
+      l2Provider = await createWebSocketProvider(rpcUrl, 'L2', L2_CHAIN_ID, getL2WsSecret())
       l2NameContract = new Contract(
         CAW_NAMES_L2_ADDRESS,
         CawProfileLedgerAbi,
@@ -194,7 +200,7 @@ async function getL1Provider() {
     console.log('[UserService] Initializing L1 WebSocket provider...')
 
     try {
-      l1Provider = await createWebSocketProvider(rpcUrl, 'L1', getL1WsSecret())
+      l1Provider = await createWebSocketProvider(rpcUrl, 'L1', L1_CHAIN_ID, getL1WsSecret())
       l1NameContract = new Contract(
         CAW_NAMES_ADDRESS,
         CawProfileL1Abi,
@@ -322,7 +328,7 @@ async function doFindOrCreateUser(
         console.warn(`[UserService] WebSocket timed out, trying HTTP fallback...`)
         const httpUrl = getL1HttpRpcUrl()
         if (httpUrl) {
-          const httpProvider = makeJsonRpcProvider(httpUrl, 11155111)
+          const httpProvider = makeJsonRpcProvider(httpUrl, L1_CHAIN_ID)
           const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)
           try {
             ;[ownerAddress, username] = await withTimeout(
@@ -433,7 +439,7 @@ export async function refreshUserFromChain(tokenId: number): Promise<{ tokenId: 
     // background sweep — if HTTP also fails we just retry next tick.
     const httpUrl = getL1HttpRpcUrl()
     if (!httpUrl) throw err
-    const httpProvider = makeJsonRpcProvider(httpUrl, 11155111)
+    const httpProvider = makeJsonRpcProvider(httpUrl, L1_CHAIN_ID)
     const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)
     ;[owner, username] = await Promise.all([
       httpContract.ownerOf(tokenId),
