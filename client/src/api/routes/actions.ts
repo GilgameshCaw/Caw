@@ -840,7 +840,7 @@ router.post('/', async (req, res) => {
       txQueueEntry = await prisma.$transaction(async (tx) => {
         if (parsedRetryId != null) {
           const updated = await tx.txQueue.updateMany({
-            where: { id: parsedRetryId, status: 'failed' },
+            where: { id: parsedRetryId, senderId: data.senderId, status: 'failed' },
             data: { status: 'retried' }
           })
           if (updated.count === 0) {
