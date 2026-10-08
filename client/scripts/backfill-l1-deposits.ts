@@ -156,6 +156,12 @@ async function main() {
       // can't trust historical multiplier state anyway). We only
       // care about the per-bucket delta for the chart, which is
       // exactly what recordDeposit's `delta` field captured.
+      //
+      // This row sits at the same (txHash, logIndex, 'DEPOSIT') key that
+      // recordDeposit dedups on. multiplier '0' marks it as a placeholder:
+      // if DepositWatcher reaches the same deposit later, recordDeposit
+      // applies it to the ledger and overwrites this row instead of
+      // skipping it. Keep multiplier '0' here.
       const existing = await prisma.cawOwnershipSnapshot.findFirst({
         where: { txHash, logIndex, reason: 'DEPOSIT' },
         select: { id: true },

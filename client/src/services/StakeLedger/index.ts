@@ -642,11 +642,19 @@ export async function recordDeposit(
 
   // Dedup: a watcher restart catching up may replay the same Deposited
   // log. (txHash, logIndex) uniquely identifies the source event.
+  //
+  // Exception: scripts/backfill-l1-deposits.ts writes chart-only
+  // placeholder rows at this same key (ownership/multiplier/balance = '0')
+  // and never touches the ledger. If the backfill reaches a deposit before
+  // this watcher does, returning null here would leave that deposit out of
+  // CawOwnershipCurrent / totalCaw / memory for good. A real row always
+  // carries the live multiplier (never '0'), so treat a '0' row as "not yet
+  // applied": apply the deposit and overwrite the placeholder in place.
   const existing = await tx.cawOwnershipSnapshot.findFirst({
     where: { txHash, logIndex, reason: 'DEPOSIT' },
-    select: { id: true },
+    select: { id: true, multiplier: true },
   })
-  if (existing) return null
+  if (existing && existing.multiplier !== '0') return null
 
   // Compute the post-deposit state WITHOUT mutating the in-memory
   // singleton `s` yet. addToBalance/balanceOf are pure — they read `s`
@@ -666,23 +674,27 @@ export async function recordDeposit(
   const after = addToBalance(own, s.multiplier, amountWei)
   const nextTotalCaw = s.totalCaw + amountWei
 
-  await tx.cawOwnershipSnapshot.create({
-    data: {
-      tokenId,
-      blockNumber,
-      blockTimestamp,
-      txHash,
-      logIndex,
-      actionIndex: null,
-      ownership: after.ownership.toString(),
-      multiplier: s.multiplier.toString(),
-      balance: after.balance.toString(),
-      delta: (after.balance - startingBalance).toString(),
-      reason: 'DEPOSIT',
-      actionType: null,
-      counterpartyTokenId: null,
-    },
-  })
+  const snapshotData = {
+    tokenId,
+    blockNumber,
+    blockTimestamp,
+    txHash,
+    logIndex,
+    actionIndex: null,
+    ownership: after.ownership.toString(),
+    multiplier: s.multiplier.toString(),
+    balance: after.balance.toString(),
+    delta: (after.balance - startingBalance).toString(),
+    reason: 'DEPOSIT',
+    actionType: null,
+    counterpartyTokenId: null,
+  }
+  if (existing) {
+    // Placeholder from backfill-l1-deposits.ts (see dedup above).
+    await tx.cawOwnershipSnapshot.update({ where: { id: existing.id }, data: snapshotData })
+  } else {
+    await tx.cawOwnershipSnapshot.create({ data: snapshotData })
+  }
   await tx.cawOwnershipCurrent.upsert({
     where: { tokenId },
     create: { tokenId, ownership: after.ownership.toString() },
