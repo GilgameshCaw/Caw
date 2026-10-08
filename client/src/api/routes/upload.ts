@@ -245,6 +245,15 @@ router.post('/variant', requireAuth({ anySession: true }), variantUpload.single(
     const ext = baseFilename.slice(dot)
     const variantName = `${stem}_${width}${ext}`
 
+    // A variant filename is derived purely from the public base image URL, and
+    // putVariant overwrites unconditionally. Without this check, any logged-in
+    // user could overwrite someone else's variant by passing that base filename.
+    // uploadFeedImage generates each variant once, so a pre-existing variant is
+    // never a legitimate re-upload. Refuse rather than replace.
+    if (await storage.baseExists('images', variantName)) {
+      return res.status(409).json({ error: 'Variant already exists' })
+    }
+
     const url = await storage.putVariant(baseFilename, variantName, file.buffer, file.mimetype)
     res.json({ success: true, url })
   } catch (error) {
