@@ -7,6 +7,7 @@ import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { createNotificationWithGroup } from '../NotificationService'
+import { txHashesAfter } from './eventOrder'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -456,8 +457,23 @@ export const marketplaceIndexerService: Service = {
 
             const listing = await prisma.marketplaceListing.findUnique({ where: { listingId: onChainListingId } })
             if (listing) {
+              // BidPlaced is processed before BidWithdrawn for the whole
+              // window, so a bid this bidder placed AFTER the withdraw (and
+              // that was outbid within the same window) is already OUTBID
+              // here. withdrawBid only paid out what was owed at the time;
+              // the later bid's refund is still claimable — leave it OUTBID.
+              const laterBids = txHashesAfter(bids, ev, (b) => {
+                const a = (b as ethers.EventLog).args
+                return Number(a[0]) === onChainListingId && String(a[1]).toLowerCase() === bidder
+              })
               await prisma.marketplaceBid.updateMany({
-                where: { listingId: listing.id, bidder, status: 'OUTBID' },
+                where: {
+                  listingId: listing.id,
+                  bidder,
+                  status: 'OUTBID',
+                  // txHash is nullable and NOT IN drops NULL rows, so keep them explicitly.
+                  ...(laterBids.length ? { OR: [{ txHash: null }, { txHash: { notIn: laterBids } }] } : {}),
+                },
                 data: { status: 'WITHDRAWN' },
               })
             }
@@ -844,8 +860,19 @@ export const marketplaceIndexerService: Service = {
             const amount    = BigInt(ev.args[2].toString())
 
             try {
+              // PayoutQueued is processed before PayoutWithdrawn for the
+              // whole window, so a payout queued AFTER this withdraw is
+              // already a pending row here. It was not part of what this
+              // withdraw paid out — leave it pending.
+              const laterQueued = txHashesAfter(payoutsQueued, ev, (q) =>
+                String((q as ethers.EventLog).args[0]).toLowerCase() === seller)
+              const pendingWhere = {
+                seller,
+                status: 'pending',
+                ...(laterQueued.length ? { queuedTxHash: { notIn: laterQueued } } : {}),
+              }
               const pendingRows = await prisma.marketplacePayout.findMany({
-                where: { seller, status: 'pending' },
+                where: pendingWhere,
               })
 
               const pendingSum = pendingRows.reduce((acc, r) => acc + r.amount, 0n)
@@ -859,7 +886,7 @@ export const marketplaceIndexerService: Service = {
 
               if (pendingRows.length > 0) {
                 await prisma.marketplacePayout.updateMany({
-                  where: { seller, status: 'pending' },
+                  where: pendingWhere,
                   data: {
                     status: 'withdrawn',
                     withdrawnAt: new Date(),
