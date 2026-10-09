@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { randomBytes } from 'crypto'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
-import { isSafePublicUrl } from '../util/ssrfGuard'
+import { safeFetch } from '../util/ssrfGuard'
 import { requireAuth } from '../middleware/auth'
 
 const router = Router()
@@ -135,12 +135,11 @@ export async function extractMetadata(url: string): Promise<{
     // hostname has an A-record pointing at a private IP (the common
     // rebinding-via-single-A-record pattern). String-based
     // `isPrivateUrl` misses this entirely.
-    if (!(await isSafePublicUrl(url))) return {}
-
+    // safeFetch runs that check on the URL and on every redirect hop.
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000) // 5s timeout
 
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; CAWBot/1.0)',
@@ -149,7 +148,7 @@ export async function extractMetadata(url: string): Promise<{
     })
     clearTimeout(timeout)
 
-    if (!response.ok) {
+    if (!response || !response.ok) {
       return {}
     }
 

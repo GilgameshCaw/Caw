@@ -19,6 +19,13 @@
 //      that splice 127.0.0.1 into a public-looking host, the
 //      "DNS-rebinding-via-A-record" pattern).
 //
+// Redirects: isSafePublicUrl only looks at ONE URL. fetch() follows 3xx
+// on its own by default (redirect: 'follow'), so checking the first URL
+// and then calling fetch() lets any public page 302 the server into a
+// private address. Callers that fetch an attacker-influenced URL should
+// use safeFetch() below, which follows redirects by hand and re-checks
+// every hop.
+//
 // Note this does NOT defend against full DNS rebinding (where the
 // resolver returns "public" on the check call and "private" on the
 // fetch call moments later). That requires either pinning the resolved
@@ -52,6 +59,43 @@ export async function isSafePublicUrl(rawUrl: string): Promise<boolean> {
   if (ips.length === 0) return false
   for (const ip of ips) if (!isPublicIp(ip)) return false
   return true
+}
+
+const MAX_REDIRECTS = 5
+
+/**
+ * fetch() that follows redirects by hand (`redirect: 'manual'`) and runs
+ * isSafePublicUrl on every hop. GET-style requests only: the init is
+ * re-sent unchanged on each hop.
+ *
+ * `trustInitial`: the caller already validated the first URL some other
+ * way (og.ts turns allow-listed relative paths into `${publicUrl()}/...`,
+ * which is not a public address on dev boxes). Hops that stay on that
+ * same origin are trusted too; every other hop is checked.
+ *
+ * Returns null when a hop is not safe, a redirect has no Location, or the
+ * chain is longer than MAX_REDIRECTS. Otherwise returns the final
+ * non-redirect Response (the caller still checks res.ok).
+ */
+export async function safeFetch(
+  rawUrl: string,
+  init: RequestInit = {},
+  opts: { trustInitial?: boolean } = {},
+): Promise<Response | null> {
+  let initialOrigin: string
+  try { initialOrigin = new URL(rawUrl).origin } catch { return null }
+  let url = rawUrl
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const trusted = !!opts.trustInitial && (hop === 0 || new URL(url).origin === initialOrigin)
+    if (!trusted && !(await isSafePublicUrl(url))) return null
+    const res = await fetch(url, { ...init, redirect: 'manual' })
+    if (res.status < 300 || res.status >= 400 || res.status === 304) return res
+    const location = res.headers.get('location')
+    try { await res.body?.cancel() } catch { /* ignore */ }
+    if (!location) return null
+    try { url = new URL(location, url).toString() } catch { return null }
+  }
+  return null
 }
 
 // True only for IPs we're willing to reach from the server. Excludes:
