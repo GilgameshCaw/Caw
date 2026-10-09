@@ -29,9 +29,9 @@
  *   At every step the honest-DVN majority is preserved. The plan is to
  *   escalate to 3-of-4 then 3-of-5 as client-diverse DVNs (not LZ-built)
  *   come online — per Dane at LZ, that is a couple of months out from
- *   the initial mainnet deploy. This script only handles the initial
- *   configureNewPathway write; escalation is a separate operator action
- *   that runs addDvnToPathway directly.
+ *   the initial mainnet deploy. This script handles initial ULN
+ *   configuration plus explicit send/receive message-library pinning;
+ *   escalation is a separate operator action that runs addDvnToPathway directly.
  *
  * DVN DIVERSITY NOTE:
  *
@@ -136,6 +136,8 @@ const ENDPOINT_ABI = [
 const PATHWAY_EXPANDER_ABI = [
   'function configureNewPathway(address oapp, address endpointAddr, address lib, uint32 eid, bytes calldata ulnConfig) external',
   'function isPathwayConfigured(address oapp, address lib, uint32 eid) external view returns (bool)',
+  'function pinSendLibrary(address oapp, address endpointAddr, uint32 eid, address lib) external',
+  'function pinReceiveLibrary(address oapp, address endpointAddr, uint32 eid, address lib) external',
 ];
 
 // The ULN config type — LZ V2 has these standard ids.
@@ -264,12 +266,14 @@ function buildPathways(l2ChainKeys) {
 }
 
 /**
- * Runs the full DVN config reconciliation. For each pathway:
- *  1. Read current SEND config on source. If already matches 2-of-3, skip.
- *  2. If mismatch, call setConfig on source endpoint's SEND library.
- *  3. Same for RECEIVE config on destination.
+ * Runs the full DVN config + message-library-pin reconciliation.
+ * For each SEND/RECEIVE side:
+ *  1. If PathwayExpander already recorded the pathway, re-check its explicit pin.
+ *  2. Otherwise route the desired ULN config through configureNewPathway.
+ *  3. Explicitly pin the corresponding ULN302 message library.
  *
- * Safe to re-run: reads before writes, only sends txs when needed.
+ * Safe to re-run: configured pathways are not rewritten, and the pin helpers
+ * are idempotent when the expected explicit library is already selected.
  *
  * @param state - deployer.state
  * @param deployer - Deployer instance (provides getContract, initChain, etc.)
@@ -349,7 +353,7 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainK
     }
   }
 
-  console.log(`\n  DVN config summary: ${applied} applied, ${skipped} already-correct, ${pathways.length * 2 - applied - skipped} skipped (missing contracts)`);
+  console.log(`\n  DVN config summary: ${applied} applied, ${skipped} resumed/pin-checked, ${pathways.length * 2 - applied - skipped} skipped (missing contracts)`);
 }
 
 /**
@@ -385,21 +389,59 @@ function getChainEid(chainsMap, deployer, abstractChain) {
 /**
  * Reconcile SEND or RECEIVE side for one pathway on one chain.
  *
- * Calls endpoint.getConfig (read-only) to check the current effective config,
- * then — if an update is needed — routes through PathwayExpander.configureNewPathway
- * instead of calling endpoint.setConfig directly. PathwayExpander is the
+ * Calls endpoint.getConfig (read-only) when PathwayExpander lacks its local
+ * pathway guard, then routes the desired config through
+ * PathwayExpander.configureNewPathway instead of calling endpoint.setConfig directly. PathwayExpander is the
  * registered LZ delegate for all CAW OApps, so only it can call setConfig on
  * their behalf. The deployer EOA is never the delegate after this change.
  *
  * Idempotency: PathwayExpander.isPathwayConfigured is checked first. If the
- * expander has already applied a config for this (oapp, lib, eid) triple it
- * refuses to rewrite it — so re-running deploy is safe.
+ * expander has already applied a config for this (oapp, lib, eid) triple,
+ * the ULN config is not rewritten, but the corresponding explicit message
+ * library pin is still checked through the expander's idempotent pin method.
  */
+async function pinConfiguredLibrary({
+  expander,
+  oappAddress,
+  endpointAddr,
+  libraryKind,
+  peerEid,
+  libAddress,
+  label,
+}) {
+  let tx;
+
+  if (libraryKind === 'sendUln302') {
+    console.log(`     ${label}: pinning send library...`);
+    tx = await expander.pinSendLibrary(
+      oappAddress,
+      endpointAddr,
+      peerEid,
+      libAddress
+    );
+  } else if (libraryKind === 'receiveUln302') {
+    console.log(`     ${label}: pinning receive library...`);
+    tx = await expander.pinReceiveLibrary(
+      oappAddress,
+      endpointAddr,
+      peerEid,
+      libAddress
+    );
+  } else {
+    throw new Error(
+      `Unsupported LayerZero library kind: ${libraryKind}`
+    );
+  }
+
+  console.log(`       pin tx=${tx.hash}`);
+  const receipt = await tx.wait();
+  console.log(`       pin confirmed in block ${receipt.blockNumber}`);
+}
+
 async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libraryKind, peerEid, label, state, l2ChainAbstract }) {
   const libs = LZ_LIBRARIES_MAINNET[chainKey];
   if (!libs) {
-    console.log(`     ${label}: no library addresses for ${chainKey}, skipping`);
-    return 'missing';
+    throw new Error(`Missing LayerZero library configuration for ${chainKey}: ${label}`);
   }
   const libAddress = libs[libraryKind];
 
@@ -421,12 +463,26 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
   // Check whether expander already applied this config (additions-only guard).
   const alreadyConfigured = await expander.isPathwayConfigured(oappAddress, libAddress, peerEid);
   if (alreadyConfigured) {
-    console.log(`     ${label}: expander already applied, skipping`);
+    console.log(
+      `     ${label}: expander already applied; verifying explicit library pin`
+    );
+
+    await pinConfiguredLibrary({
+      expander,
+      oappAddress,
+      endpointAddr: libs.endpoint,
+      libraryKind,
+      peerEid,
+      libAddress,
+      label,
+    });
+
     return 'skipped';
   }
 
-  // Also check effective on-chain config — if it already matches our 2-of-3
-  // optional target (e.g. from a prior deploy run that completed), skip.
+  // Check effective on-chain config to identify a legacy/pre-expander match.
+  // Even when it already matches, route through the expander once so its
+  // additions-only guard is established before the explicit library pin.
   const endpoint = new ethers.Contract(libs.endpoint, ENDPOINT_ABI, wallet);
   let current = null;
   try {
@@ -438,8 +494,9 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
 
   const expectedDvns = DVNS_BY_CHAIN_MAINNET[chainKey];
   if (configMatches(current, expectedDvns)) {
-    console.log(`     ${label}: already correct on-chain, skipping`);
-    return 'skipped';
+    console.log(
+      `     ${label}: config already correct on-chain; reapplying through expander to establish guarded pathway state`
+    );
   }
 
   // Build the raw ULN config bytes (the `config` field of SetConfigParam).
@@ -465,6 +522,17 @@ async function reconcileOneSide({ ethers, deployer, chainKey, oappAddress, libra
   console.log(`       tx=${tx.hash}`);
   const receipt = await tx.wait();
   console.log(`       confirmed in block ${receipt.blockNumber}`);
+
+  await pinConfiguredLibrary({
+    expander,
+    oappAddress,
+    endpointAddr: libs.endpoint,
+    libraryKind,
+    peerEid,
+    libAddress,
+    label,
+  });
+
   return 'applied';
 }
 

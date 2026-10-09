@@ -50,6 +50,7 @@ require('dotenv').config(); // load .env (RPC URLs) — deploy.js does this; sta
 const fs = require('fs');
 const path = require('path');
 const { ethers } = require('ethers');
+const { LZ_LIBRARIES_MAINNET } = require('./lz-dvn-config');
 
 const STATE_FILE = path.join(__dirname, '..', '.deploy-state.json');
 const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
@@ -63,6 +64,12 @@ const CHAINS = {
   testnetL1:  { rpc: process.env.L1_RPC_URL,  lzEid: 40161, endpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f' },
   testnetL2:  { rpc: process.env.L2_RPC_URL,  lzEid: 40245, endpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f' },
   testnetL2b: { rpc: process.env.L2B_RPC_URL, lzEid: 40231, endpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f' },
+
+  // Mainnet values mirror deploy.js. Keep RPC selection semantics unchanged:
+  // the verifier still requires the role-named RPC env vars.
+  mainnetL1:  { rpc: process.env.L1_RPC_URL,  lzEid: 30101, endpoint: '0x1a44076050125825900e736c501f859c50fe728c' },
+  mainnetL2:  { rpc: process.env.L2_RPC_URL,  lzEid: 30184, endpoint: '0x1a44076050125825900e736c501f859c50fe728c' },
+  mainnetL2b: { rpc: process.env.L2B_RPC_URL, lzEid: 30110, endpoint: '0x1a44076050125825900e736c501f859c50fe728c' },
 };
 
 const chainKeyFor = (env, abstract) => `${env}${abstract}`;
@@ -116,6 +123,183 @@ function ok(name, cond, detail) {
 function warn(name, detail) {
   console.log(`  ⚠ ${name}: ${detail}`);
   warnings++;
+}
+
+async function verifyMainnetLibraryPins() {
+  if (ENV !== 'mainnet') {
+    console.log(
+      '\nLayerZero message-library pins: mainnet-only; skipping.'
+    );
+    return;
+  }
+
+  console.log(
+    '\n===== LayerZero explicit message-library pins =====\n'
+  );
+
+  const endpointLibraryAbi = [
+    'function getSendLibrary(address _sender, uint32 _eid) view returns (address lib)',
+    'function isDefaultSendLibrary(address _sender, uint32 _eid) view returns (bool)',
+    'function getReceiveLibrary(address _receiver, uint32 _eid) view returns (address lib, bool isDefault)',
+  ];
+
+  const providers = {
+    L1: providerFor('L1'),
+  };
+
+  for (const L of L2_CHAIN_KEYS) {
+    providers[L] = providerFor(L);
+  }
+
+  // Mirror lz-dvn-config.js buildPathways() without importing its private
+  // helper. Each directed pathway has one SEND pin on the source OApp and
+  // one RECEIVE pin on the destination OApp.
+  const pathways = [];
+
+  for (const L of L2_CHAIN_KEYS) {
+    pathways.push({
+      srcChain: 'L1',
+      destChain: L,
+      srcOappKey: 'CawProfile',
+      destOappKey: `CawProfileLedger_${L}`,
+    });
+
+    pathways.push({
+      srcChain: L,
+      destChain: 'L1',
+      srcOappKey: `CawProfileLedger_${L}`,
+      destOappKey: 'CawProfile',
+    });
+  }
+
+  for (const L of L2_CHAIN_KEYS) {
+    for (const Lp of L2_CHAIN_KEYS) {
+      if (Lp === L) continue;
+
+      pathways.push({
+        srcChain: L,
+        destChain: Lp,
+        srcOappKey: `CawChallengeRelay_${L}`,
+        destOappKey: `CawActionsArchive_${Lp}`,
+      });
+
+      pathways.push({
+        srcChain: Lp,
+        destChain: L,
+        srcOappKey: `CawActionsArchive_${Lp}`,
+        destOappKey: `CawChallengeRelay_${L}`,
+      });
+    }
+  }
+
+  for (const pathway of pathways) {
+    const srcChainKey =
+      chainKeyFor(ENV, pathway.srcChain);
+
+    const destChainKey =
+      chainKeyFor(ENV, pathway.destChain);
+
+    const srcChain = CHAINS[srcChainKey];
+    const destChain = CHAINS[destChainKey];
+
+    const srcLibraries =
+      LZ_LIBRARIES_MAINNET[srcChainKey];
+
+    const destLibraries =
+      LZ_LIBRARIES_MAINNET[destChainKey];
+
+    const srcOapp = A[pathway.srcOappKey];
+    const destOapp = A[pathway.destOappKey];
+
+    const label =
+      `${pathway.srcOappKey} ${pathway.srcChain}->${pathway.destChain}`;
+
+    if (!srcChain || !destChain) {
+      ok(
+        `LZ pin ${label}: chain configuration present`,
+        false,
+        `src=${srcChainKey}, dest=${destChainKey}`
+      );
+      continue;
+    }
+
+    if (!srcLibraries || !destLibraries) {
+      ok(
+        `LZ pin ${label}: library configuration present`,
+        false,
+        `src=${srcChainKey}, dest=${destChainKey}`
+      );
+      continue;
+    }
+
+    if (!srcOapp || !destOapp) {
+      ok(
+        `LZ pin ${label}: OApp addresses present`,
+        false,
+        `src=${pathway.srcOappKey}, dest=${pathway.destOappKey}`
+      );
+      continue;
+    }
+
+    const srcEndpoint =
+      new ethers.Contract(
+        srcChain.endpoint,
+        endpointLibraryAbi,
+        providers[pathway.srcChain]
+      );
+
+    const destEndpoint =
+      new ethers.Contract(
+        destChain.endpoint,
+        endpointLibraryAbi,
+        providers[pathway.destChain]
+      );
+
+    const sendLibrary =
+      await srcEndpoint.getSendLibrary(
+        srcOapp,
+        destChain.lzEid
+      );
+
+    const sendIsDefault =
+      await srcEndpoint.isDefaultSendLibrary(
+        srcOapp,
+        destChain.lzEid
+      );
+
+    eq(
+      `LZ SEND ${label}: library`,
+      sendLibrary,
+      srcLibraries.sendUln302
+    );
+
+    ok(
+      `LZ SEND ${label}: explicit`,
+      sendIsDefault === false,
+      'not inherited from endpoint default'
+    );
+
+    const [
+      receiveLibrary,
+      receiveIsDefault,
+    ] =
+      await destEndpoint.getReceiveLibrary(
+        destOapp,
+        srcChain.lzEid
+      );
+
+    eq(
+      `LZ RECV ${label}: library`,
+      receiveLibrary,
+      destLibraries.receiveUln302
+    );
+
+    ok(
+      `LZ RECV ${label}: explicit`,
+      receiveIsDefault === false,
+      'not inherited from endpoint default'
+    );
+  }
 }
 
 async function main() {
@@ -259,6 +443,11 @@ async function main() {
     eq(`Endpoint(${L}).delegates(CawChallengeRelay_${L})`,
       await epL.delegates(A[`CawChallengeRelay_${L}`]), A[`PathwayExpander_${L}`]);
   }
+
+  // -----------------------------------------------------------------
+  // LayerZero message-library selection
+  // -----------------------------------------------------------------
+  await verifyMainnetLibraryPins();
 
   // -----------------------------------------------------------------
   // Summary

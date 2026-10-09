@@ -17,16 +17,35 @@ interface IKycRegistrar {
   function addKycVerifier(uint8 level, address verifier) external;
 }
 
-/// @notice Minimal interface to the LZ EndpointV2 config surface.
-/// @dev    Only setConfig/getConfig are used here. The full endpoint ABI is
-///         intentionally not imported to keep PathwayExpander lean and dependency-free.
+/// @notice Minimal interface to the LZ EndpointV2 surfaces used here.
+/// @dev    Covers ULN configuration plus one-way message-library pinning.
 interface ILzEndpoint {
   struct SetConfigParam {
     uint32 eid;
     uint32 configType;
     bytes config;
   }
+
   function setConfig(address _oapp, address _lib, SetConfigParam[] calldata _params) external;
+
+  function getSendLibrary(address _sender, uint32 _eid)
+    external view returns (address lib);
+
+  function isDefaultSendLibrary(address _sender, uint32 _eid)
+    external view returns (bool);
+
+  function setSendLibrary(address _oapp, uint32 _eid, address _newLib)
+    external;
+
+  function getReceiveLibrary(address _receiver, uint32 _eid)
+    external view returns (address lib, bool isDefault);
+
+  function setReceiveLibrary(
+    address _oapp,
+    uint32 _eid,
+    address _newLib,
+    uint256 _gracePeriod
+  ) external;
 }
 
 /// @title PathwayExpander
@@ -120,6 +139,8 @@ contract PathwayExpander is Ownable {
     address addedDvn
   );
   event PathwayConfigured(address indexed oapp, address indexed lib, uint32 indexed eid, bytes config);
+  event SendLibraryPinned(address indexed oapp, uint32 indexed eid, address indexed lib);
+  event ReceiveLibraryPinned(address indexed oapp, uint32 indexed eid, address indexed lib);
 
   constructor(address _owner) {
     require(_owner != address(0), "PathwayExpander: zero address");
@@ -180,6 +201,97 @@ contract PathwayExpander is Ownable {
     require(verifier != address(0), "PathwayExpander: zero verifier");
     IKycRegistrar(minter).addKycVerifier(level, verifier);
     emit KycVerifierAdded(minter, level, verifier);
+  }
+
+  /// @notice Permanently select the configured send library for this pathway.
+  /// @dev    The library must first have been configured through
+  ///         configureNewPathway. If the OApp is still following the Endpoint
+  ///         default, this pins the supplied library explicitly. If already
+  ///         pinned to the same library, the call is an idempotent no-op.
+  ///         A different existing explicit pin is never overwritten.
+  function pinSendLibrary(
+    address oapp,
+    address endpointAddr,
+    uint32 eid,
+    address lib
+  ) external onlyOwner {
+    require(oapp != address(0), "PathwayExpander: zero oapp");
+    require(endpointAddr != address(0), "PathwayExpander: zero endpoint");
+    require(lib != address(0), "PathwayExpander: zero lib");
+    require(
+      _pathwayConfigured[oapp][lib][eid],
+      "PathwayExpander: pathway not configured"
+    );
+
+    ILzEndpoint endpoint = ILzEndpoint(endpointAddr);
+
+    if (!endpoint.isDefaultSendLibrary(oapp, eid)) {
+      require(
+        endpoint.getSendLibrary(oapp, eid) == lib,
+        "PathwayExpander: send library already pinned"
+      );
+      return;
+    }
+
+    endpoint.setSendLibrary(oapp, eid, lib);
+
+    require(
+      !endpoint.isDefaultSendLibrary(oapp, eid),
+      "PathwayExpander: send library still default"
+    );
+    require(
+      endpoint.getSendLibrary(oapp, eid) == lib,
+      "PathwayExpander: send library mismatch"
+    );
+
+    emit SendLibraryPinned(oapp, eid, lib);
+  }
+
+  /// @notice Permanently select the configured receive library for this pathway.
+  /// @dev    Mirrors pinSendLibrary. The explicit pin is installed with zero
+  ///         grace period because this is bootstrap selection, not migration
+  ///         away from an already-pinned production library.
+  function pinReceiveLibrary(
+    address oapp,
+    address endpointAddr,
+    uint32 eid,
+    address lib
+  ) external onlyOwner {
+    require(oapp != address(0), "PathwayExpander: zero oapp");
+    require(endpointAddr != address(0), "PathwayExpander: zero endpoint");
+    require(lib != address(0), "PathwayExpander: zero lib");
+    require(
+      _pathwayConfigured[oapp][lib][eid],
+      "PathwayExpander: pathway not configured"
+    );
+
+    ILzEndpoint endpoint = ILzEndpoint(endpointAddr);
+    (address currentLib, bool isDefault) =
+      endpoint.getReceiveLibrary(oapp, eid);
+
+    if (!isDefault) {
+      require(
+        currentLib == lib,
+        "PathwayExpander: receive library already pinned"
+      );
+      return;
+    }
+
+    endpoint.setReceiveLibrary(oapp, eid, lib, 0);
+
+    (address pinnedLib, bool stillDefault) =
+      endpoint.getReceiveLibrary(oapp, eid);
+
+    require(
+      !stillDefault,
+      "PathwayExpander: receive library still default"
+    );
+    require(
+      pinnedLib == lib,
+      "PathwayExpander: receive library mismatch"
+    );
+
+    emit ReceiveLibraryPinned(oapp, eid, lib);
   }
 
   /// @notice Set the ULN (DVN) config for a NEW (oapp, lib, eid) pathway.
