@@ -15,9 +15,9 @@
  * every legitimate encrypted-DM URL).
  *
  * IMPORTANT: do NOT use these as gates for security-critical decisions
- * about content authenticity. They only prevent the FE from emitting
- * fetches/img-loads to attacker-chosen URLs from inside post bodies and
- * DMs (passive deanon + LAN-probe vectors). The server's upload path
+ * about content authenticity. They only stop the FE from fetching
+ * arbitrary paths from post bodies and DMs; the host is not checked (see
+ * above), so they do not limit which hosts are contacted. The server's upload path
  * is the actual integrity boundary.
  */
 

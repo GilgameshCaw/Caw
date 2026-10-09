@@ -1005,8 +1005,7 @@ export async function handleOtherAction(
               // M-5: validate path shape before storing.
               // Only accept URLs whose path matches /uploads/{images,videos}/<8hex>.<ext>
               // (same canonical shape as the upload pipeline's randomBytes(4) filenames).
-              // Empty string is allowed (clears the field). Anything else — including
-              // tracking pixels pointing at attacker-controlled hosts — is silently
+              // Empty string is allowed (clears the field). Anything else is silently
               // dropped. Validates path shape, not host equality, per
               // feedback_url_sanitizer_path_not_host.md.
               if (trimmedValue === '') {

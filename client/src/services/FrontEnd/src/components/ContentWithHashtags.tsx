@@ -553,6 +553,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
         // every viewer's IP+UA hits attacker logs (passive deanon).
         // External-host images flow through LinkPreview / explicit
         // unfurling instead. Audit fix 2026-05-09 (Round 5 FE/DM HIGH-1).
+        // The host is not checked, so this limits the path, not which host is contacted.
         if (!isCanonicalUploadUrl(match[0])) continue
         mediaMatches.push({
           type: 'image',

@@ -97,6 +97,7 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sealedKey, senderT
         // and the receiver's browser would emit a GET that leaks IP/UA
         // or probes their LAN. Mirrors the project-wide URL sanitizer
         // convention (validate by path shape, not host equality).
+        // The host is not checked, so this limits the path, not which host is contacted.
         if (!isCanonicalEncryptedUploadUrl(url)) {
           throw new Error('URL does not match the canonical encrypted-upload shape')
         }
