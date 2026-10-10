@@ -806,14 +806,16 @@ const L2_SYNC_BLOCK_KEY = 'l2_events_last_synced_block'
 const L2_EVENT_CHUNK_SIZE = 2000 // blocks per getLogs call
 const L2_EVENT_BOOTSTRAP_LOOKBACK = 10000 // if no cursor exists, start this many blocks back
 
+// A failed read must not look like a missing cursor. Returning null here would
+// bootstrap from head - lookback and silently skip every event between the
+// stored cursor and that point. Let it throw, like getBlockNumber() right after
+// it: startTask logs the failure and the next tick retries from the stored
+// cursor. Unlike a failed getLogs below (caught there, so the loop still
+// heartbeats), this skips the heartbeat, so a DB that stays down trips the watchdog.
 async function getLastSyncedL2Block(): Promise<number | null> {
-  try {
-    const row = await prisma.chainData.findUnique({ where: { key: L2_SYNC_BLOCK_KEY } })
-    const value = row?.value as any
-    return typeof value?.block === 'number' ? value.block : null
-  } catch {
-    return null
-  }
+  const row = await prisma.chainData.findUnique({ where: { key: L2_SYNC_BLOCK_KEY } })
+  const value = row?.value as any
+  return typeof value?.block === 'number' ? value.block : null
 }
 
 async function setLastSyncedL2Block(block: number): Promise<void> {
@@ -1068,14 +1070,16 @@ const L1_FEE_SYNC_BLOCK_KEY = 'l1_fee_events_last_synced_block'
 const L1_FEE_EVENT_CHUNK_SIZE = 2000   // blocks per getLogs call (stays under free-tier 50 K cap)
 const L1_FEE_EVENT_BOOTSTRAP_LOOKBACK = 50000 // if no cursor, start this many L1 blocks back
 
+// A failed read must not look like a missing cursor. Returning null here would
+// bootstrap from head - lookback and silently skip every event between the
+// stored cursor and that point. Let it throw, like getBlockNumber() right after
+// it: startTask logs the failure and the next tick retries from the stored
+// cursor. Unlike a failed getLogs below (caught there, so the loop still
+// heartbeats), this skips the heartbeat, so a DB that stays down trips the watchdog.
 async function getLastSyncedL1FeeBlock(): Promise<number | null> {
-  try {
-    const row = await prisma.chainData.findUnique({ where: { key: L1_FEE_SYNC_BLOCK_KEY } })
-    const value = row?.value as any
-    return typeof value?.block === 'number' ? value.block : null
-  } catch {
-    return null
-  }
+  const row = await prisma.chainData.findUnique({ where: { key: L1_FEE_SYNC_BLOCK_KEY } })
+  const value = row?.value as any
+  return typeof value?.block === 'number' ? value.block : null
 }
 
 async function setLastSyncedL1FeeBlock(block: number): Promise<void> {
