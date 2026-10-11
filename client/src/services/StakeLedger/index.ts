@@ -21,6 +21,7 @@
 
 import { prisma } from '../../prismaClient'
 import type { PrismaTransactionClient, RawAction } from '../ActionProcessor/types'
+import { acquireRepairSharedLock, acquireRepairExclusiveLock } from './repairGuard'
 import {
   ACTION_TYPE_NUM_TO_NAME,
   type FixedCostActionType,
@@ -39,10 +40,34 @@ import { getNetworkId } from '../../utils/networkId'
 
 // Tests can override this to avoid real RPC calls.
 // eslint-disable-next-line prefer-const
-let _cawProfileLedgerOverride: { rewardMultiplier: (...args: any[]) => Promise<any> } | null = null
+type CawProfileLedgerReadContract = {
+  rewardMultiplier: (...args: any[]) => Promise<any>
+  totalCaw: (...args: any[]) => Promise<any>
+  cawOwnership: (...args: any[]) => Promise<any>
+}
 
-function getCawProfileLedger(): { rewardMultiplier: (...args: any[]) => Promise<any> } {
+let _cawProfileLedgerOverride: CawProfileLedgerReadContract | null = null
+
+function getCawProfileLedger(): CawProfileLedgerReadContract {
   return (_cawProfileLedgerOverride ?? _getCawProfileLedgerReal()) as any
+}
+
+// Normal StakeLedger DB override for tests.
+let _prismaOverride: any | null = null
+
+function getPrisma(): typeof prisma {
+  return (_prismaOverride ?? prisma) as typeof prisma
+}
+
+export function _setPrismaForTests(p: any | null): void {
+  _prismaOverride = p
+}
+
+// Reconciliation-only DB override for tests.
+let _reconcilePrismaOverride: any | null = null
+
+function getReconcilePrisma(): typeof prisma {
+  return (_reconcilePrismaOverride ?? prisma) as typeof prisma
 }
 
 // Tests can override this to avoid real RPC calls.
@@ -63,7 +88,7 @@ const capStateKey = () => `stake-ledger:${CAW_CLIENT_ID}:cap-state`
 
 async function readPersistedCapState(): Promise<{ ratio: bigint; lastUpdatedAt: bigint } | null> {
   try {
-    const row = await prisma.chainData.findUnique({ where: { key: capStateKey() } })
+    const row = await getPrisma().chainData.findUnique({ where: { key: capStateKey() } })
     const v = row?.value as { ratio?: string; lastUpdatedAt?: string } | null | undefined
     if (!v || typeof v.ratio !== 'string' || typeof v.lastUpdatedAt !== 'string') return null
     return { ratio: BigInt(v.ratio), lastUpdatedAt: BigInt(v.lastUpdatedAt) }
@@ -76,7 +101,7 @@ async function persistCapState(ratio: bigint, lastUpdatedAt: bigint): Promise<vo
   try {
     const key = capStateKey()
     const value = { ratio: ratio.toString(), lastUpdatedAt: lastUpdatedAt.toString() }
-    await prisma.chainData.upsert({ where: { key }, update: { value }, create: { key, value } })
+    await getPrisma().chainData.upsert({ where: { key }, update: { value }, create: { key, value } })
   } catch (err: any) {
     console.warn('[StakeLedger] Failed to persist capState (non-fatal):', err?.message ?? err)
   }
@@ -106,6 +131,14 @@ const CAW_CLIENT_ID = (() => {
   return n
 })()
 
+async function acquireRepairSharedLockAndAssertWritable(
+  tx: PrismaTransactionClient,
+): Promise<void> {
+  if (await acquireRepairSharedLock(tx, CAW_CLIENT_ID)) {
+    throw new StakeLedgerRepairRequiredError()
+  }
+}
+
 export interface RuntimeState {
   multiplier: bigint
   totalCaw: bigint
@@ -121,13 +154,53 @@ export interface RuntimeState {
   // actions on warm restart.
   lastBlock: bigint
   lastLogIndex: number
-  // Halts writes after a multiplier-checksum mismatch. Cleared by the
-  // operator once they reseed.
+  // Fail-closed runtime guard. On boot this is restored from the independent
+  // StakeLedgerRepairGuard and is cleared only after an authoritative
+  // repair succeeds.
   halted: boolean
 }
 
 let state: RuntimeState | null = null
 let bootPromise: Promise<RuntimeState> | null = null
+
+/**
+ * Enter fail-closed repair-required state.
+ *
+ * Memory is halted before the durable write so a persistence failure can
+ * never leave the current process continuing to mutate an untrusted ledger.
+ * The durable flag prevents a plain process restart from bypassing the halt.
+ */
+export async function markRepairRequired(): Promise<void> {
+  const s = await ensureBooted()
+  s.halted = true
+
+  await getPrisma().$transaction(async (tx) => {
+    await acquireRepairExclusiveLock(tx, CAW_CLIENT_ID)
+
+    await tx.stakeLedgerRepairGuard.upsert({
+      where: { networkId: CAW_CLIENT_ID },
+      create: {
+        networkId: CAW_CLIENT_ID,
+        repairRequired: true,
+      },
+      update: {
+        repairRequired: true,
+      },
+    })
+  })
+}
+
+/**
+ * Read only the durable repair guard without booting the full StakeLedger.
+ * Used by service startup paths that must fail closed before processing.
+ */
+export async function isRepairRequired(): Promise<boolean> {
+  const persisted = await getPrisma().stakeLedgerRepairGuard.findUnique({
+    where: { networkId: CAW_CLIENT_ID },
+    select: { repairRequired: true },
+  })
+  return persisted?.repairRequired ?? false
+}
 
 /**
  * Idempotent boot. Loads StakeLedgerState + CawOwnershipCurrent into
@@ -141,9 +214,12 @@ export async function ensureBooted(): Promise<RuntimeState> {
   if (state) return state
   if (bootPromise) return bootPromise
   bootPromise = (async () => {
-    const persisted = await prisma.stakeLedgerState.findUnique({ where: { networkId: CAW_CLIENT_ID } })
+    const [persisted, repairGuard] = await Promise.all([
+      getPrisma().stakeLedgerState.findUnique({ where: { networkId: CAW_CLIENT_ID } }),
+      getPrisma().stakeLedgerRepairGuard.findUnique({ where: { networkId: CAW_CLIENT_ID } }),
+    ])
     const ownership = new Map<number, bigint>()
-    const currentRows = await prisma.cawOwnershipCurrent.findMany()
+    const currentRows = await getPrisma().cawOwnershipCurrent.findMany()
     for (const row of currentRows) ownership.set(row.tokenId, BigInt(row.ownership))
 
     // Live RPC read first; on failure fall back to the last persisted read
@@ -177,7 +253,7 @@ export async function ensureBooted(): Promise<RuntimeState> {
           ownership,
           lastBlock: BigInt(persisted.lastBlock),
           lastLogIndex: persisted.lastLogIndex,
-          halted: false,
+          halted: repairGuard?.repairRequired ?? false,
         }
       : {
           multiplier: PRECISION,
@@ -187,7 +263,7 @@ export async function ensureBooted(): Promise<RuntimeState> {
           ownership,
           lastBlock: 0n,
           lastLogIndex: -1,
-          halted: false,
+          halted: repairGuard?.repairRequired ?? false,
         }
     state = next
     return next
@@ -202,6 +278,24 @@ export async function ensureBooted(): Promise<RuntimeState> {
  */
 function ownershipOf(s: RuntimeState, tokenId: number): bigint {
   return s.ownership.get(tokenId) ?? 0n
+}
+
+export class StakeLedgerRepairRequiredError extends Error {
+  constructor(message = '[StakeLedger] repair required; normal writes are blocked') {
+    super(message)
+    this.name = 'StakeLedgerRepairRequiredError'
+  }
+}
+
+export class RecoverableStakeLedgerDriftError extends Error {
+  constructor(
+    message: string,
+    public readonly blockNumber: bigint,
+    public readonly logIndex: number,
+  ) {
+    super(message)
+    this.name = 'RecoverableStakeLedgerDriftError'
+  }
 }
 
 interface RecordParams {
@@ -241,7 +335,9 @@ export async function recordAction(
   params: RecordParams,
 ): Promise<(() => void) | null> {
   const s = await ensureBooted()
-  if (s.halted) return null // Operator must reseed before we resume.
+  if (s.halted) throw new StakeLedgerRepairRequiredError()
+
+  await acquireRepairSharedLockAndAssertWritable(tx)
 
   // Skip already-processed actions on warm restart. ActionProcessor
   // resumes from lastId; we resume from (lastBlock, lastLogIndex).
@@ -327,11 +423,14 @@ export async function recordAction(
     } catch (err: any) {
       if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
         console.error(
-          `[StakeLedger] HALTED — insufficient balance, drift detected at step1 senderId=${senderId} action=${rawTypeName} ` +
-          `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
+          `[StakeLedger] recoverable drift — insufficient balance at step1 senderId=${senderId} action=${rawTypeName} ` +
+          `block=${blockNumber} logIndex=${logIndex}; requesting authoritative L2 reconciliation`,
         )
-        s.halted = true
-        return null
+        throw new RecoverableStakeLedgerDriftError(
+          `insufficient balance at step1 senderId=${senderId} action=${rawTypeName}`,
+          blockNumber,
+          logIndex,
+        )
       }
       throw err
     }
@@ -378,8 +477,11 @@ export async function recordAction(
     const senderBal = balanceOf(senderOwn, localMultiplier)
     if (senderBal < amount) {
       console.error(`[StakeLedger] WITHDRAW: insufficient balance — ledger drift? sender=${senderId} bal=${senderBal} amt=${amount}`)
-      s.halted = true
-      return null
+      throw new RecoverableStakeLedgerDriftError(
+        `insufficient balance at WITHDRAW senderId=${senderId} bal=${senderBal} amt=${amount}`,
+        blockNumber,
+        logIndex,
+      )
     }
     const newBal = senderBal - amount
     const newOwn = ownershipFromBalance(newBal, localMultiplier)
@@ -444,11 +546,14 @@ export async function recordAction(
       } catch (err: any) {
         if (typeof err?.message === 'string' && err.message.includes('Insufficient CAW balance')) {
           console.error(
-            `[StakeLedger] HALTED — insufficient balance, drift detected at step2 senderId=${senderId} action=${rawTypeName} ` +
-            `block=${blockNumber} logIndex=${logIndex}. Run npx tsx scripts/backfill-stake-ledger.ts [--reset] to recover`,
+            `[StakeLedger] recoverable drift — insufficient balance at step2 senderId=${senderId} action=${rawTypeName} ` +
+            `block=${blockNumber} logIndex=${logIndex}; requesting authoritative L2 reconciliation`,
           )
-          s.halted = true
-          return null
+          throw new RecoverableStakeLedgerDriftError(
+            `insufficient balance at step2 senderId=${senderId} action=${rawTypeName}`,
+            blockNumber,
+            logIndex,
+          )
         }
         throw err
       }
@@ -637,7 +742,10 @@ export async function recordDeposit(
   },
 ): Promise<{ tokenId: number; amountWei: bigint; afterOwnership: bigint } | null> {
   const s = await ensureBooted()
-  if (s.halted) return null
+  if (s.halted) throw new StakeLedgerRepairRequiredError()
+
+  await acquireRepairSharedLockAndAssertWritable(tx)
+
   const { tokenId, amountWei, blockNumber, blockTimestamp, txHash, logIndex } = params
 
   // Dedup: a watcher restart catching up may replay the same Deposited
@@ -740,6 +848,162 @@ export async function applyDepositToMemory(tokenId: number, amountWei: bigint, a
   s.ownership.set(tokenId, afterOwnership)
 }
 
+const RECONCILE_CURSOR_SENTINEL = 2_147_483_647
+
+/**
+ * Replace the local StakeLedger current-state mirror with authoritative L2
+ * state at one completed block. Used only for recoverable replay drift.
+ *
+ * All RPC reads happen before the DB transaction. Any failed read or missing
+ * User aborts without changing DB or the in-memory singleton. Snapshots are
+ * intentionally untouched: recovery prioritises authoritative current state.
+ *
+ * The token universe is the union of User, CawOwnershipCurrent, and tokenIds
+ * involved in the drift-triggering action. CawProfileLedger has no enumerable
+ * token-id API, so this is intentionally scoped to the node's tracked universe.
+ */
+export async function reconcileFromL2Block(
+  blockNumber: bigint,
+  involvedTokenIds: number[] = [],
+): Promise<void> {
+  const reconcilePrisma = getReconcilePrisma()
+  if (blockNumber < 0n || blockNumber > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`[StakeLedger] reconcile invalid blockNumber=${blockNumber}`)
+  }
+
+  const H = Number(blockNumber)
+  const contract = getCawProfileLedger()
+
+  const [users, currentRows] = await Promise.all([
+    reconcilePrisma.user.findMany({
+      where: { tokenId: { gt: 0 } },
+      select: { tokenId: true },
+    }),
+    reconcilePrisma.cawOwnershipCurrent.findMany({
+      select: { tokenId: true },
+    }),
+  ])
+
+  const tokenIds = Array.from(new Set([
+    ...users.map(row => row.tokenId),
+    ...currentRows.map(row => row.tokenId),
+    ...involvedTokenIds.filter(id => Number.isSafeInteger(id) && id > 0),
+  ])).sort((a, b) => a - b)
+
+  // Freeze every authoritative L2 read at the same block. No per-token catch:
+  // one failed historical read aborts before any DB mutation.
+  const [multiplierRaw, totalCawRaw] = await Promise.all([
+    contract.rewardMultiplier({ blockTag: H }),
+    contract.totalCaw({ blockTag: H }),
+  ])
+
+  const multiplier = BigInt(multiplierRaw)
+  const totalCaw = BigInt(totalCawRaw)
+  const ownership = new Map<number, bigint>()
+
+  const BATCH = 20
+  for (let start = 0; start < tokenIds.length; start += BATCH) {
+    const ids = tokenIds.slice(start, start + BATCH)
+    const values = await Promise.all(
+      ids.map(async tokenId => {
+        const raw = await contract.cawOwnership(tokenId, { blockTag: H })
+        return [tokenId, BigInt(raw)] as const
+      }),
+    )
+    for (const [tokenId, value] of values) ownership.set(tokenId, value)
+  }
+
+  if (ownership.size !== tokenIds.length) {
+    throw new Error(
+      `[StakeLedger] reconcile ownership scan incomplete: expected=${tokenIds.length} actual=${ownership.size}`,
+    )
+  }
+
+  const previous = await ensureBooted()
+  const now = new Date()
+
+  // Preserve the independently refreshed dynamic-cost cap state. The L2
+  // ownership/multiplier/totalCaw/cursor are replaced from chain@H.
+  const next: RuntimeState = {
+    multiplier,
+    totalCaw,
+    capRatio: previous.capRatio,
+    capLastUpdatedAt: previous.capLastUpdatedAt,
+    ownership,
+    lastBlock: blockNumber,
+    lastLogIndex: RECONCILE_CURSOR_SENTINEL,
+    halted: false,
+  }
+
+  await reconcilePrisma.$transaction(async tx => {
+    await acquireRepairExclusiveLock(tx, CAW_CLIENT_ID)
+
+    await tx.stakeLedgerState.upsert({
+      where: { networkId: CAW_CLIENT_ID },
+      create: {
+        networkId: CAW_CLIENT_ID,
+        multiplier: multiplier.toString(),
+        totalCaw: totalCaw.toString(),
+        lastBlock: blockNumber,
+        lastLogIndex: RECONCILE_CURSOR_SENTINEL,
+      },
+      update: {
+        multiplier: multiplier.toString(),
+        totalCaw: totalCaw.toString(),
+        lastBlock: blockNumber,
+        lastLogIndex: RECONCILE_CURSOR_SENTINEL,
+        updatedAt: now,
+      },
+    })
+
+    await tx.cawOwnershipCurrent.deleteMany({})
+
+    if (tokenIds.length > 0) {
+      await tx.cawOwnershipCurrent.createMany({
+        data: tokenIds.map(tokenId => ({
+          tokenId,
+          ownership: ownership.get(tokenId)!.toString(),
+        })),
+      })
+    }
+
+    for (const tokenId of tokenIds) {
+      const own = ownership.get(tokenId)!
+      const balance = (own * multiplier) / PRECISION
+      await tx.user.updateMany({
+        where: { tokenId },
+        data: {
+          onChainStakeWei: balance.toString(),
+          onChainStakeUpdatedAt: now,
+        },
+      })
+    }
+
+    // Clear the durable repair guard only after every authoritative mirror
+    // write above has succeeded. If this transaction rolls back, the guard
+    // remains set and normal writers stay fail-closed.
+    await tx.stakeLedgerRepairGuard.upsert({
+      where: { networkId: CAW_CLIENT_ID },
+      create: {
+        networkId: CAW_CLIENT_ID,
+        repairRequired: false,
+      },
+      update: {
+        repairRequired: false,
+      },
+    })
+  }, { timeout: 30_000 })
+
+  // Post-commit replacement only. If the transaction fails, the old runtime
+  // state remains intact.
+  state = next
+
+  console.warn(
+    `[StakeLedger] RECOVERED from authoritative L2 block ${H}; ` +
+    `tokens=${tokenIds.length} cursor=(${H},${RECONCILE_CURSOR_SENTINEL})`,
+  )
+}
+
 // Error message substrings that indicate the RPC endpoint does not retain
 // historical state (non-archive node).  When we catch one of these we fall
 // back to a HEAD read rather than halting the ledger.
@@ -796,26 +1060,23 @@ export async function verifyMultiplier(): Promise<void> {
     const msg: string = histErr?.message ?? String(histErr)
 
     if (isNonArchiveError(msg)) {
-      // Non-archive RPC — fall back to HEAD but don't halt.
+      // Historical state at H is unavailable, so divergence cannot be
+      // established authoritatively. HEAD may legitimately be ahead of the
+      // ledger cursor and must never be used as repair evidence.
       if (!_nonArchiveWarnEmitted) {
         console.warn(
-          '[StakeLedger] historical state read failed; falling back to HEAD comparison ' +
-            '(may produce spurious DIVERGENCE under high load — configure an archive RPC to eliminate). ' +
+          '[StakeLedger] historical state read failed; skipping multiplier verification ' +
+            '(configure an archive RPC for authoritative historical checks). ' +
             `Error: ${msg}`,
         )
         _nonArchiveWarnEmitted = true
       }
-      try {
-        onChain = BigInt(await getCawProfileLedger().rewardMultiplier())
-      } catch (headErr: any) {
-        console.warn('[StakeLedger] verifyMultiplier HEAD fallback also failed; skipping check:', headErr?.message ?? headErr)
-        return
-      }
-    } else {
-      // Transient network / timeout error — skip, don't halt.
-      console.warn('[StakeLedger] verifyMultiplier RPC read failed; skipping check:', msg)
       return
     }
+
+    // Transient network / timeout error — skip, don't halt.
+    console.warn('[StakeLedger] verifyMultiplier RPC read failed; skipping check:', msg)
+    return
   }
 
   // Keep capRatio and capLastUpdatedAt fresh in case the oracle pushed a new
@@ -834,9 +1095,12 @@ export async function verifyMultiplier(): Promise<void> {
     console.error(
       `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier} ` +
         `(checked at block ${lastBlock}). ` +
-        `Halting writes — operator must reseed (read CawProfileLedger state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
+        `Halting writes — authoritative repair required (reconcile from CawProfileLedger state before writes resume).`,
     )
-    s.halted = true
+    await markRepairRequired()
+    throw new StakeLedgerRepairRequiredError(
+      `[StakeLedger] authoritative multiplier divergence at block ${lastBlock}`,
+    )
   }
 }
 
@@ -851,11 +1115,17 @@ export function _resetForTests(): void {
   bootPromise = null
   _nonArchiveWarnEmitted = false
   _cawProfileLedgerOverride = null
+  _prismaOverride = null
+  _reconcilePrismaOverride = null
 }
 
 /** For tests: inject a mock contract so verifyMultiplier never hits a real RPC. */
-export function _setContractForTests(mock: { rewardMultiplier: (...args: any[]) => Promise<any> } | null): void {
+export function _setContractForTests(mock: CawProfileLedgerReadContract | null): void {
   _cawProfileLedgerOverride = mock
+}
+
+export function _setReconcilePrismaForTests(mock: any | null): void {
+  _reconcilePrismaOverride = mock
 }
 
 /** For tests: inject a mock CawActions contract to control capState. */

@@ -4,6 +4,7 @@
 // function the top-level orchestrator calls in sequence.
 
 import { execSync, execFileSync } from 'child_process'
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import inquirer from 'inquirer'
@@ -73,6 +74,59 @@ const RISKY_PATTERNS = [
  */
 export function resolveInstallDir(opts, fallback) {
   return path.resolve(opts?.dir || fallback)
+}
+
+export function removeLegacyStakeLedgerCron(installDir) {
+  if (!process.getuid || process.getuid() !== 0) return false
+
+  const slug = installDir.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const tag = crypto.createHash('sha256').update(installDir).digest('hex').slice(0, 8)
+  const scriptPath = path.join(
+    '/usr/local/lib/caw',
+    `reseed-stake-ledger-${slug}-${tag}.sh`,
+  )
+  const legacyPath = path.join(
+    installDir,
+    'scripts',
+    'reseed-stake-ledger.sh',
+  )
+
+  let existing = ''
+  try {
+    existing = execSync(
+      'crontab -l',
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    ).toString()
+  } catch (e) {
+    const stderr = e?.stderr?.toString?.() ?? ''
+    if (!/no crontab for/i.test(stderr)) {
+      throw e
+    }
+    existing = ''
+  }
+
+  const lines = existing.split('\n')
+  const filtered = lines.filter(
+    line => !line.includes(scriptPath) && !line.includes(legacyPath),
+  )
+
+  const changed = filtered.length !== lines.length
+  if (changed) {
+    const newCron = filtered.filter(line => line.length > 0).join('\n')
+    execSync('crontab -', {
+      input: newCron ? `${newCron}\n` : '',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  }
+
+  try { fs.unlinkSync(scriptPath) } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+  try { fs.unlinkSync(legacyPath) } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+
+  return changed
 }
 
 /**
@@ -208,6 +262,23 @@ function runAsInstallUser(cmd, opts = {}) {
     return run(`sudo -u ${installUser} -E env HOME=${home} ${cmd}`, opts)
   }
   return run(cmd, opts)
+}
+
+function runFileAsInstallUser(file, args, opts = {}) {
+  const isRoot = process.getuid && process.getuid() === 0
+  const installUser = process.env.SUDO_USER || 'caw'
+
+  if (isRoot && installUser !== 'root') {
+    assertSafeUsername(installUser)
+    const home = userHome(installUser)
+    return execFileSync(
+      'sudo',
+      ['-u', installUser, '-E', 'env', `HOME=${home}`, file, ...args],
+      { stdio: 'inherit', ...opts },
+    )
+  }
+
+  return execFileSync(file, args, { stdio: 'inherit', ...opts })
 }
 
 /**
@@ -952,6 +1023,105 @@ function pm2State(appName) {
   }
 }
 
+function repairPm2State(appName) {
+  const out = execFileSync('pm2', ['jlist'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const list = JSON.parse(out)
+  const found = list.find(p => p.name === appName)
+
+  if (!found) {
+    throw new Error(`PM2 process not found: ${appName}`)
+  }
+
+  return {
+    status: found.pm2_env?.status || 'unknown',
+    restarts: found.pm2_env?.restart_time ?? 0,
+  }
+}
+
+function stopRepairTarget(appName) {
+  execFileSync('pm2', ['stop', appName], { stdio: 'inherit' })
+
+  const state = repairPm2State(appName)
+  if (state.status !== 'stopped') {
+    throw new Error(
+      `Refusing StakeLedger repair: ${appName} is ${state.status}, not stopped`,
+    )
+  }
+}
+
+async function startRepairTargetAndVerify(appName) {
+  const before = repairPm2State(appName)
+
+  execFileSync('pm2', ['start', appName, '--update-env'], {
+    stdio: 'inherit',
+  })
+
+  await new Promise(resolve => setTimeout(resolve, 3000))
+
+  const after = repairPm2State(appName)
+  if (after.status !== 'online') {
+    throw new Error(
+      `StakeLedger repair completed but ${appName} is ${after.status}, not online`,
+    )
+  }
+
+  if (after.restarts > before.restarts + 1) {
+    throw new Error(
+      `StakeLedger repair completed but ${appName} appears to be in a restart loop`,
+    )
+  }
+}
+
+export async function repairStakeLedger(installDir) {
+  const appName = detectAppName(installDir)
+  if (!appName) {
+    throw new Error(
+      'Refusing StakeLedger repair: could not detect the install-specific PM2 process',
+    )
+  }
+
+  const clientDir = path.join(installDir, 'client')
+  const tsxPath = path.join(clientDir, 'node_modules', '.bin', 'tsx')
+  const repairScript = path.join(clientDir, 'scripts', 'reseed-stake-ledger-safe.ts')
+
+  if (!fs.existsSync(tsxPath)) {
+    throw new Error(`Refusing StakeLedger repair: tsx not found at ${tsxPath}`)
+  }
+  if (!fs.existsSync(repairScript)) {
+    throw new Error(`Refusing StakeLedger repair: repair script not found at ${repairScript}`)
+  }
+
+  // Quiesce this install's API process first. ActionProcessor,
+  // DepositWatcher and StakeLedgerReconciler all run under this process.
+  stopRepairTarget(appName)
+
+  try {
+    runFileAsInstallUser(
+      tsxPath,
+      [repairScript, '--apply'],
+      {
+        cwd: clientDir,
+        env: {
+          ...process.env,
+          CAW_STAKE_LEDGER_REPAIR_QUIESCED: '1',
+        },
+      },
+    )
+  } catch (e) {
+    // Fail closed. Never revive a process whose authoritative repair failed.
+    throw new Error(
+      `StakeLedger repair failed; ${appName} remains stopped: ${e.message}`,
+    )
+  }
+
+  // The repair transaction succeeded and cleared the durable guard.
+  // Start a fresh Node process so no pre-repair in-memory ledger survives.
+  await startRepairTargetAndVerify(appName)
+}
+
 function dumpRecentLogs(appName) {
   try {
     console.log(dim('  Last 30 log lines:'))
@@ -1189,6 +1359,15 @@ export async function runUpdate(installDir, opts = {}) {
 
   if (appName && !opts.skipRestart) {
     await restartAndVerify(appName)
+
+    // Retire the old periodic StakeLedger reseed only after the updated
+    // service has restarted and passed verification. Cleanup failure is
+    // fatal: leaving the old repair authority active would be unsafe.
+    try {
+      removeLegacyStakeLedgerCron(installDir)
+    } catch (e) {
+      throw new Error(`Failed to retire legacy StakeLedger cron: ${e.message}`)
+    }
   }
 
   // Re-establish the /usr/local/bin/caw symlink. Bootstraps operators who

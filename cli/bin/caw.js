@@ -47,7 +47,7 @@ import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
 import { configureMediaNginx } from '../src/steps/mediaNginx.js'
-import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir, readDatabaseUrl } from '../src/steps/update.js'
+import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir, readDatabaseUrl, repairStakeLedger } from '../src/steps/update.js'
 import { ensureManualSqlIndexes, checkManualSqlIndexes } from '../src/steps/ensureManualSql.js'
 import { reportConfigDrift } from '../src/steps/configDrift.js'
 import { reportServiceDrift } from '../src/steps/serviceDrift.js'
@@ -774,6 +774,36 @@ program
       execSync(`pm2 logs ${target} --lines 50`, { stdio: 'inherit' })
     } catch {
       console.log('pm2 is not installed or no services are running.')
+    }
+  })
+
+program
+  .command('repair-stake-ledger')
+  .description('Repair StakeLedger from authoritative chain state with the API quiesced')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--yes', 'Skip the confirmation prompt (for headless use)')
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+
+      if (!opts.yes) {
+        const { confirm } = await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirm',
+          message: 'Stop the CAW API and repair StakeLedger from authoritative chain state?',
+          default: false,
+        }])
+        if (!confirm) {
+          console.log(dim('  StakeLedger repair cancelled.'))
+          return
+        }
+      }
+
+      await repairStakeLedger(installDir)
+    } catch (e) {
+      console.error()
+      console.error('StakeLedger repair failed:', e.message)
+      process.exit(1)
     }
   })
 

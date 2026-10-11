@@ -1028,12 +1028,18 @@ model RewardMultiplierSnapshot {
 /// Persisted running state of the StakeLedger snapshotter so a
 /// process restart resumes without replaying from genesis.
 model StakeLedgerState {
-  totalCaw     String
-  multiplier   String
-  lastBlock    BigInt
-  lastLogIndex Int
-  updatedAt    DateTime @default(now())
-  networkId    Int      @id
+  totalCaw       String
+  multiplier     String
+  lastBlock      BigInt
+  lastLogIndex   Int
+  updatedAt      DateTime @default(now())
+  networkId      Int      @id
+}
+
+model StakeLedgerRepairGuard {
+  networkId      Int      @id
+  repairRequired Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
 }
 
 /// Latest cawOwnership[tokenId] mirroring contract state. Lets the

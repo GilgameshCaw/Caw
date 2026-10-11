@@ -10,9 +10,11 @@ process.env.CLIENT_ID = '1'
 
 import {
   verifyMultiplier,
+  StakeLedgerRepairRequiredError,
   _peekState,
   _resetForTests,
   _setContractForTests,
+  _setPrismaForTests,
   _injectStateForTests,
   _nonArchiveWarnWasEmitted,
   type RuntimeState,
@@ -57,6 +59,17 @@ function mockContract(opts: {
 describe('StakeLedger / verifyMultiplier', () => {
   beforeEach(() => {
     _resetForTests()
+
+    const tx = {
+      $queryRawUnsafe: async () => [],
+      stakeLedgerRepairGuard: {
+        upsert: async () => ({}),
+      },
+    }
+
+    _setPrismaForTests({
+      $transaction: async (fn: any) => await fn(tx),
+    } as any)
   })
 
   afterEach(() => {
@@ -107,7 +120,13 @@ describe('StakeLedger / verifyMultiplier', () => {
       const origError = console.error
       console.error = (...args: any[]) => { logs.push(args.join(' ')) }
       try {
-        await verifyMultiplier()
+        let thrown: any = null
+        try {
+          await verifyMultiplier()
+        } catch (err) {
+          thrown = err
+        }
+        expect(thrown).to.be.instanceOf(StakeLedgerRepairRequiredError)
       } finally {
         console.error = origError
       }
@@ -128,7 +147,13 @@ describe('StakeLedger / verifyMultiplier', () => {
       const origError = console.error
       console.error = (...args: any[]) => { logs.push(args.join(' ')) }
       try {
-        await verifyMultiplier()
+        let thrown: any = null
+        try {
+          await verifyMultiplier()
+        } catch (err) {
+          thrown = err
+        }
+        expect(thrown).to.be.instanceOf(StakeLedgerRepairRequiredError)
       } finally {
         console.error = origError
       }
@@ -150,12 +175,21 @@ describe('StakeLedger / verifyMultiplier', () => {
       const origError = console.error
       console.error = () => {}
       try {
-        await verifyMultiplier() // triggers halt
-        await verifyMultiplier() // should early-return on halted
+        let thrown: any = null
+        try {
+          await verifyMultiplier() // persists repair-required and throws
+        } catch (err) {
+          thrown = err
+        }
+
+        expect(thrown).to.be.instanceOf(StakeLedgerRepairRequiredError)
+
+        await verifyMultiplier() // halted: should early-return without another RPC
       } finally {
         console.error = origError
       }
 
+      expect(_peekState()!.halted).to.equal(true)
       expect(callCount).to.equal(1)
     })
   })
@@ -192,7 +226,7 @@ describe('StakeLedger / verifyMultiplier', () => {
   // Archive RPC failure path: "missing trie node" → fall back to HEAD,
   // emit one-time warn, do NOT halt
   // -----------------------------------------------------------------------
-  describe('archive-RPC-failure — falls back to HEAD comparison', () => {
+  describe('historical RPC unavailable — skips divergence decision', () => {
     it('does not halt when HEAD value matches and block read throws "missing trie node"', async () => {
       _injectStateForTests(makeState({ multiplier: PRECISION, lastBlock: 500n }))
       _setContractForTests(mockContract({
@@ -292,26 +326,35 @@ describe('StakeLedger / verifyMultiplier', () => {
       expect(_nonArchiveWarnWasEmitted()).to.equal(true)
     })
 
-    it('halts when HEAD value also differs (divergence still detectable via HEAD)', async () => {
+    it('does not use a differing HEAD value as proof of historical divergence', async () => {
       _injectStateForTests(makeState({ multiplier: PRECISION, lastBlock: 100n }))
-      _setContractForTests(mockContract({
-        blockTagError: new Error('missing trie node'),
-        headValue: PRECISION * 2n,
-      }))
+
+      let headReads = 0
+      _setContractForTests({
+        rewardMultiplier: async (...args: any[]) => {
+          const hasBlockTag =
+            args.length > 0 &&
+            args[0] != null &&
+            typeof args[0] === 'object' &&
+            'blockTag' in args[0]
+
+          if (hasBlockTag) throw new Error('missing trie node')
+
+          headReads++
+          return PRECISION * 2n
+        },
+      })
 
       const origWarn = console.warn
-      const origError = console.error
       console.warn = () => {}
-      console.error = () => {}
       try {
         await verifyMultiplier()
       } finally {
         console.warn = origWarn
-        console.error = origError
       }
 
-      // HEAD differs from ledger → divergence still caught even without archive
-      expect(_peekState()!.halted).to.equal(true)
+      expect(_peekState()!.halted).to.equal(false)
+      expect(headReads).to.equal(0)
     })
 
     it('skips check (warn + return) on transient non-archive RPC error', async () => {

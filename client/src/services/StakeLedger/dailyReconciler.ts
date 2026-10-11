@@ -15,9 +15,20 @@
 // 24h"), but the chart is a daily-bucket view anyway.
 
 import { prisma } from '../../prismaClient'
+import { getNetworkId } from '../../utils/networkId'
 import { getCawProfileLedger } from './cawProfileLedger'
+import { acquireRepairSharedLock } from './repairGuard'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+const CAW_CLIENT_ID = (() => {
+  const raw = getNetworkId()
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('StakeLedger reconciler: NETWORK_ID is required')
+  }
+  return n
+})()
 
 interface ReconcileResult {
   checked: number
@@ -97,6 +108,13 @@ export async function runDailyReconciliation(): Promise<ReconcileResult> {
       const now = new Date()
 
       await prisma.$transaction(async (tx) => {
+        const repairRequired = await acquireRepairSharedLock(tx, CAW_CLIENT_ID)
+        if (repairRequired) {
+          throw new Error(
+            '[StakeLedger] Reconciler blocked: authoritative repair required',
+          )
+        }
+
         await tx.cawOwnershipSnapshot.create({
           data: {
             tokenId,
