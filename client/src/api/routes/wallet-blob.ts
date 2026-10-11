@@ -62,12 +62,17 @@ const HEX32_RE = /^0x[0-9a-fA-F]{64}$/
 
 /**
  * POST /api/wallet/blob
- * Store (upsert) the encrypted backup blob for an owner address, and optionally
+ * Store the encrypted backup blob for an owner address, and optionally
  * email it as the durable backstop. Body:
  *   { address, blob, email? }
- * `blob` is the BackupBlob JSON envelope (ciphertext only). No auth: the blob is
- * ciphertext and keyed by the owner's own address; storing it grants no access
- * (retrieval is passkey-gated). `username` is used only for the email copy text.
+ * `blob` is the BackupBlob JSON envelope (ciphertext only). No auth for the
+ * FIRST write: it happens pre-mint, before any session exists, and storing
+ * ciphertext grants no access (retrieval is passkey-gated). Re-sending the
+ * identical blob (BackupStep's email send after the pre-mint upload, or a retry)
+ * is also open. REPLACING a stored blob with a different one needs a session
+ * authorized for the address — otherwise anyone could overwrite a victim's
+ * recovery copy with garbage (the same DoS /blob/prf guards against).
+ * `username` is used only for the email copy text.
  */
 router.post('/blob', blobWriteLimit, async (req, res) => {
   try {
@@ -100,11 +105,60 @@ router.post('/blob', blobWriteLimit, async (req, res) => {
     // We DO NOT persist the email. It is used transiently to send the backstop
     // and then discarded — "we don't store your email, it's only for backup".
     // WalletBlob.email is therefore always written null.
-    await prisma.walletBlob.upsert({
-      where: { address: addr },
-      create: { address: addr, blob, email: null },
-      update: { blob, email: null },
+
+    // Does this address already have a minted profile? The legitimate
+    // no-session FIRST write happens pre-mint (CreateAccountStep uploads the
+    // durable copy before the profile exists), so a profile existing here
+    // means we are NOT in that window.
+    const profile = await prisma.user.findFirst({
+      where: { address: { equals: address, mode: 'insensitive' } },
+      select: { tokenId: true },
     })
+
+    // First write is atomic: skipDuplicates means a concurrent writer can't
+    // slip in between an existence check and the insert.
+    const created = await prisma.walletBlob.createMany({
+      data: [{ address: addr, blob, email: null }],
+      skipDuplicates: true,
+    })
+    if (created.count === 1) {
+      // We just stored the FIRST blob for this address. That is only the
+      // legitimate, no-session pre-mint onboarding write when the address has
+      // NO profile yet. If a profile already exists, the durable copy was
+      // uploaded pre-mint, so a brand-new first write now is anomalous — it is
+      // either a pre-emptive overwrite by someone else or a stale client.
+      // Roll back the row we just created and refuse. (Mirrors #181's
+      // first-write-for-an-existing-profile 409.)
+      if (profile) {
+        await prisma.walletBlob.delete({ where: { address: addr } })
+        res.status(409).json({ error: 'A profile already exists for this address; its backup is uploaded during onboarding and cannot be first-written afterwards.' })
+        return
+      }
+    } else {
+      // A blob already exists. Re-sending the IDENTICAL blob is a no-op (the
+      // BackupStep email send after the pre-mint upload, and its retries).
+      // Replacing it with a DIFFERENT blob requires a session authorized for
+      // this address — authorizedAddresses ONLY. A tokenId authorization is
+      // not proof of current ownership (#219): a transfer prunes it and the
+      // prune can be late or lost, so it must not gate a write to the previous
+      // owner's recovery copy.
+      const stored = await prisma.walletBlob.findUnique({
+        where: { address: addr },
+        select: { blob: true },
+      })
+      if (stored?.blob !== blob) {
+        await extractSession(req)
+        const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+        if (!authedAddresses.includes(addr)) {
+          res.status(409).json({ error: 'A backup is already stored for this address; replacing it requires an authorized session.' })
+          return
+        }
+        await prisma.walletBlob.update({
+          where: { address: addr },
+          data: { blob, email: null },
+        })
+      }
+    }
 
     // Durable backstop: email the ciphertext if an email was provided and a mail
     // transport exists (Resend, or the opt-in local sendmail fallback). Non-fatal
