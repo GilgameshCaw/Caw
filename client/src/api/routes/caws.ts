@@ -5,6 +5,9 @@ import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, e
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { safeDecrement } from '../../services/CountManager'
+import rateLimit from 'express-rate-limit'
+import { detectLanguage } from './translate'
+import { parsePoll } from '../../tools/pollMarker'
 
 const router = Router()
 
@@ -935,45 +938,90 @@ router.get('/verify/:userId/:cawonce', async (req, res) => {
   }
 })
 
+// Caws whose detection is running, and caws whose detection recently came
+// back empty (no provider could tell), so repeated POSTs don't re-query.
+const sourceLanguageInFlight = new Set<number>()
+const sourceLanguageFailedAt = new Map<number, number>()
+const SOURCE_LANGUAGE_RETRY_MS = 60 * 60 * 1000
+
+const sourceLanguageRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+})
+
 /**
  * POST /api/caws/:id/source-language
  *
- * Lazy crowd-sourced source-language detection. The first viewer who
- * successfully translates a post POSTs the gtx-detected source code
- * here so subsequent viewers can be auto-translated (or have the inline
+ * Lazy source-language detection. The first viewer who translates a post
+ * POSTs here so later viewers can be auto-translated (or have the inline
  * Translate affordance gated correctly).
  *
- * Write-once: if Caw.sourceLanguage is already set we no-op. The
- * updateMany with WHERE sourceLanguage:null both performs the
- * first-writer-wins check and serves as cheap rate-limiting (no row
- * change on subsequent calls).
+ * The language is detected on the server from the caw's own content, with
+ * the same provider chain as /api/translate. The client's `language` is not
+ * stored: this route is unauthenticated and the column is write-once, so a
+ * client-supplied code could pin any post to a wrong language for good (and
+ * the FE hides Translate when it matches the viewer's language).
  *
- * Unauthenticated by design — gtx is the source of truth, this endpoint
- * just caches its answer.
+ * Write-once: only a caw with no sourceLanguage is touched, so detection runs
+ * at most once per caw. The response does not wait for detection.
  */
-router.post('/:id/source-language', async (req, res) => {
+router.post('/:id/source-language', sourceLanguageRateLimit, async (req, res) => {
   try {
     const id = Number(req.params.id)
-    if (!id || Number.isNaN(id)) {
-      return res.status(400).json({ error: 'Invalid caw id' })
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid caw id' })
+      return
     }
 
-    const lang = String(req.body?.language ?? '').trim().toLowerCase()
-    // BCP-47 primary subtag is 2-3 lowercase letters. Reject anything
-    // else outright so a misbehaving client can't pollute the column.
-    if (!/^[a-z]{2,3}$/.test(lang)) {
-      return res.status(400).json({ error: 'Invalid language code' })
+    const failedAt = sourceLanguageFailedAt.get(id)
+    if (sourceLanguageInFlight.has(id) || (failedAt && Date.now() - failedAt < SOURCE_LANGUAGE_RETRY_MS)) {
+      res.json({ persisted: false })
+      return
     }
 
-    const updated = await prisma.caw.updateMany({
-      where: { id, sourceLanguage: null },
-      data: { sourceLanguage: lang },
+    const caw = await prisma.caw.findFirst({
+      where: { id, sourceLanguage: null, status: 'SUCCESS' },
+      select: { content: true },
     })
+    if (!caw || !caw.content?.trim()) {
+      res.json({ persisted: false })
+      return
+    }
 
-    return res.json({ persisted: updated.count > 0 })
+    // Same text the FE sends to /api/translate: a poll's wire marker
+    // (::poll:a:b::pd:1d::) is not language and skews detection, so replace
+    // it with the options on their own lines.
+    const poll = parsePoll(caw.content)
+    const detectText = poll
+      ? `${(caw.content.slice(0, poll.start) + caw.content.slice(poll.end)).trim()}\n\n${poll.options.join('\n')}`.trim()
+      : caw.content
+
+    sourceLanguageInFlight.add(id)
+    res.status(202).json({ persisted: false, detecting: true })
+
+    try {
+      const lang = await detectLanguage(detectText)
+      if (lang) {
+        sourceLanguageFailedAt.delete(id)
+        await prisma.caw.updateMany({
+          where: { id, sourceLanguage: null },
+          data: { sourceLanguage: lang },
+        })
+      } else {
+        sourceLanguageFailedAt.set(id, Date.now())
+      }
+    } catch (err) {
+      console.error(`POST /api/caws/${id}/source-language detection error:`, err)
+      sourceLanguageFailedAt.set(id, Date.now())
+    } finally {
+      sourceLanguageInFlight.delete(id)
+    }
   } catch (error) {
     console.error('POST /api/caws/:id/source-language error:', error)
-    return res.status(500).json({ error: 'Failed to record source language' })
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to record source language' })
   }
 })
 

@@ -292,6 +292,29 @@ async function translateWithMyMemory(
 }
 
 /**
+ * Detect the language of a text with the same provider chain as
+ * POST /api/translate (translating to English and reading the provider's
+ * detected source). Used by POST /api/caws/:id/source-language so the stored
+ * language comes from the server, not from the client. Returns a 2-3 letter
+ * code, or null when no provider could tell.
+ */
+export async function detectLanguage(text: string): Promise<string | null> {
+  const trimmed = text.trim().slice(0, 2000)
+  if (!trimmed) return null
+  const cacheKey = getCacheKey(trimmed, 'en')
+  let result: { text: string; sourceLanguage: string } | null = getFromCache(cacheKey)
+  if (!result) {
+    result = await translateWithGemini(trimmed, 'en')
+      ?? await translateWithDeepL(trimmed, 'en')
+      ?? await translateWithGoogleCloud(trimmed, 'en')
+      ?? await translateWithMyMemory(trimmed, 'en')
+    if (result) setToCache(cacheKey, { text: result.text, sourceLanguage: result.sourceLanguage, timestamp: Date.now() })
+  }
+  const code = (result?.sourceLanguage || '').split('-')[0].toLowerCase()
+  return /^[a-z]{2,3}$/.test(code) ? code : null
+}
+
+/**
  * POST /api/translate
  * Body: { text: string, targetLang: string, sourceLang?: string, isPrivate?: boolean }
  */
