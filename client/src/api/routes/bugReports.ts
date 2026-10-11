@@ -53,9 +53,11 @@ router.post('/', async (req, res): Promise<void> => {
       username = u?.username ?? null
     }
 
-    const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
-      || req.socket?.remoteAddress
-      || 'unknown'
+    // req.ip, not the leftmost X-Forwarded-For entry: nginx appends the real
+    // peer ($proxy_add_x_forwarded_for), so the leftmost entry is whatever the
+    // client sent. 'trust proxy' = 'loopback' (server.ts) makes req.ip the
+    // address nginx saw; a direct hit falls back to the socket address.
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown'
     if (!(await checkReportRate(ip, userId !== null))) {
       res.status(429).json({ error: 'Rate limit exceeded — please try again later' })
       return
@@ -70,9 +72,10 @@ router.post('/', async (req, res): Promise<void> => {
         type: reportType,
         userId,
         username,
-        stakedAmount: typeof stakedAmount === 'string' ? stakedAmount : null,
+        stakedAmount: typeof stakedAmount === 'string' ? stakedAmount.slice(0, 100) : null,
         description: trimmedDescription,
-        imageUrls: typeof imageUrls === 'string' ? imageUrls : null,
+        // Up to 3 upload URLs joined with '|||' (BugReportModal).
+        imageUrls: typeof imageUrls === 'string' ? imageUrls.slice(0, 3000) : null,
         page: typeof page === 'string' ? page.slice(0, 500) : null,
         userAgent: typeof userAgent === 'string' ? userAgent.slice(0, 500) : null
       }
