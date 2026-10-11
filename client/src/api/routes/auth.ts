@@ -289,12 +289,44 @@ router.post('/verify-dm', async (req, res) => {
     // window (see commits 78deb20f → revert chain — single-sig design
     // is intentional).
     //
+    // NOTE (draft): the "replay value is low" claim below is NOT accurate.
+    // addAuthorization() fans the session out over EVERY tokenId the wallet
+    // owns, and nothing binds this body to this host / this moment / one use,
+    // so a captured body replays on any mirror, cookie-less, for the whole
+    // wallet. The real fix is to stop sending the key-derivation signature as
+    // the auth material at all (see PR description) — that is a protocol
+    // change for Gilgamesh to decide. This route can't be host/once-bound
+    // without changing the signed message, which would change the derived
+    // key and orphan existing DMs.
+    //
     // The replay-attack value here is also low: a captured DM-auth sig
     // only lets the attacker create a session for the same (wallet,
     // tokenId) pair the legitimate user already has — no token attached
     // to an attacker-controlled session, no impersonation. The main
     // /verify route remains replay-guarded since its signed message is
     // a fresh per-call nonce.
+
+    // Bind the submitted DM publicKey to THIS signature. The FE derives
+    //   privateKey = SHA-256(signature); publicKey = secp256k1(priv, compressed)
+    // (DmCryptoService.deriveKeyPair). Without this check the route stored
+    // whatever `publicKey` the body carried, so a replayer could repoint the
+    // victim's DmIdentity at a key of their choosing. We derive-and-discard
+    // here purely to validate the binding — the server keeps no key material.
+    //
+    // (That this check is even possible is itself the deeper problem: the
+    // key-derivation preimage is in the request body, so a node CAN compute
+    // the user's DM private key. Closing that is the protocol change above.)
+    try {
+      const derivedPriv = ethers.sha256(signature)
+      const derivedPub = ethers.SigningKey.computePublicKey(derivedPriv, true).toLowerCase()
+      if (derivedPub !== String(publicKey).toLowerCase()) {
+        res.status(400).json({ error: 'publicKey does not match the DM-enable signature' })
+        return
+      }
+    } catch {
+      res.status(400).json({ error: 'Malformed publicKey or signature' })
+      return
+    }
 
     // Verify the recovered address owns this tokenId.
     //
