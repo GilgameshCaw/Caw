@@ -16,8 +16,16 @@ const router = Router()
  * this, anyone could enumerate every user's pending action data
  * (recipients, amounts, scheduled tips, withdraw amounts, post text).
  * Audit fix 2026-05-09 (Round 5 API CRITICAL-2).
+ *
+ * The check reads senderId from the query string only, the same place the
+ * handler reads it. `field` checks req.body first, so a GET with a JSON
+ * body of the caller's own senderId passed the check while the handler
+ * returned the query's senderId (someone else's queue).
  */
-router.get('/', requireAuth({ field: 'senderId', verifyOwnership: true }), async (req, res) => {
+router.get('/', requireAuth({ lookup: async (req) => {
+  const senderId = req.query.senderId
+  return senderId ? Number(senderId) : undefined
+}, verifyOwnership: true }), async (req, res) => {
   try {
 
 
