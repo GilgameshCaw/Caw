@@ -410,6 +410,22 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: data and signature' })
     }
 
+    // EIP-712 domain binding. The signer is recovered against this client-
+    // supplied domain (below), and a verified signer is then trusted to mint
+    // a passive-auth session for the token owner. Without binding the domain
+    // to THIS contract, any ActionData-shaped signature the owner ever made
+    // for another verifyingContract/chain would recover to their address and
+    // yield a session. A legitimate action must target our CawActions on our
+    // L2 anyway (the validator submits the same sig on-chain, which would
+    // revert otherwise), so rejecting a mismatched domain here is safe.
+    if (
+      !domain || typeof domain !== 'object' ||
+      String(domain.verifyingContract).toLowerCase() !== CAW_ACTIONS_ADDRESS.toLowerCase() ||
+      Number(domain.chainId) !== L2_CHAIN_ID
+    ) {
+      return res.status(400).json({ error: 'Invalid EIP-712 domain' })
+    }
+
     // On-chain CawProfile NFT tokenIds are 1-indexed (tokenId 0 does not
     // exist on-chain). Without this gate, a receiverId of 0 (e.g. an
     // unselected/loading-race client value) reaches the optimistic
@@ -688,16 +704,15 @@ router.post('/', async (req, res) => {
       // 2026-05-13.
       console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
     }
-    // Set the HttpOnly session cookie for the passive-auth session, mirroring the
-    // /api/auth/* login routes. WITHOUT this, passive auth only lived in the FE's
-    // in-memory store (sent as x-session-token) — but extractSession reads the
-    // COOKIE FIRST, so a stale cookie from an old login permanently shadowed the
-    // fresh header token: every follow-up request resolved the dead cookie session
-    // → getSession miss → 401, leaving the user "logged out" right after acting.
-    // Overwriting the cookie here makes the freshly-minted session authoritative.
-    if (authResult) {
-      res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
-    }
+    // NOTE: the HttpOnly session cookie is NOT set here. It (and the `auth`
+    // field in the response body) is delivered only on the genuine-success
+    // path — i.e. when this request actually enqueues a NEW action (the 201
+    // at the bottom of this handler). An action signature is public (it rides
+    // in L2 calldata), so delivering a session on every verified signature let
+    // anyone replay a victim's past action and receive a cookie authorized as
+    // that victim. The dedup / cawonce-collision early-returns below (which is
+    // where a replay lands, since its cawonce is already used) therefore do
+    // NOT hand back a session. See the cookie set at the 201 below.
     mark('passiveAuth')
 
     // Pre-flight gates that decide whether we'll create a TxQueue row at
@@ -739,10 +754,11 @@ router.post('/', async (req, res) => {
       })
       if (dup) {
         console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
-        // Still hand back the passive-auth session we just minted from the
-        // verified signature — otherwise a resubmitted (deduped) action leaves a
-        // logged-out user logged out despite having just proven ownership.
-        return res.json({ txQueueId: dup.id, status: dup.status, ...(authResult ? { auth: authResult } : {}) })
+        // No `auth` on the dedup path: the same signature can be replayed by
+        // anyone from public L2 calldata, so a duplicate submission must not
+        // mint/return a session. A legitimate resubmitter already holds their
+        // session cookie from the original submission.
+        return res.json({ txQueueId: dup.id, status: dup.status })
       }
     }
 
@@ -829,9 +845,7 @@ router.post('/', async (req, res) => {
           status: recentSameContent.status,
           deduped: true,
           reason: 'identical content recently submitted by this sender',
-          // Preserve the passive-auth session minted from the verified signature
-          // so a deduped resubmit still logs a logged-out user back in.
-          ...(authResult ? { auth: authResult } : {}),
+          // No `auth` on the dedup path — see the signedTx dedup return above.
         })
       }
     }
@@ -1757,6 +1771,14 @@ router.post('/', async (req, res) => {
     const total = Date.now() - reqStart
     if (total > 200) {
       console.log(`[Actions] POST /api/actions took ${total}ms breakdown:`, timings)
+    }
+
+    // Deliver the passive-auth session only now that a NEW action has actually
+    // been enqueued (see the passiveAuth block above). Setting the HttpOnly
+    // cookie here mirrors the /api/auth/* login routes and keeps extractSession
+    // (cookie-first) from being shadowed by a stale cookie.
+    if (authResult) {
+      res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
     }
 
     res.status(201).json({
