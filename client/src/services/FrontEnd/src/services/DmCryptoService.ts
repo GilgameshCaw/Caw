@@ -1,4 +1,5 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
+import { keccak256, stringToBytes } from 'viem'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
 /**
@@ -198,9 +199,10 @@ export async function signSenderEnvelope(
   env: SenderEnvelope,
   privateKey: Uint8Array,
 ): Promise<string> {
-  const { keccak256, toUtf8Bytes } = await import('ethers')
   const canonical = canonicalizeSenderEnvelope(env)
-  const hashHex = keccak256(toUtf8Bytes(canonical))
+  // viem rather than ethers: ethers isn't a FrontEnd dependency. Same bytes,
+  // since the canonical string is JSON.stringify output (no lone surrogates).
+  const hashHex = keccak256(stringToBytes(canonical))
   // Strip 0x for noble's expected form
   const hashBytes = hexToBytes(hashHex)
   const sig = secp256k1.sign(hashBytes, privateKey)
