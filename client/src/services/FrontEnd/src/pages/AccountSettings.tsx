@@ -681,6 +681,12 @@ const AccountSettings: React.FC = () => {
     if (named.length > 0) namedTokensByAddress[addr as `0x${string}`] = named
   }
   const allTokens = Object.values(namedTokensByAddress).flat()
+  // Other names owned by the active name's wallet. Log out signs the whole
+  // wallet out (the server session is per owner address), so they go too.
+  const logoutSiblings = activeToken?.address
+    ? (namedTokensByAddress[activeToken.address.toLowerCase() as `0x${string}`] ?? []).filter(t => t.tokenId !== activeTokenId)
+    : []
+  const logoutSiblingNames = logoutSiblings.map(t => `@${t.username}`).join(', ')
   const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
 
   // Hydrate real avatars per tokenId. TokenData itself has no avatar
@@ -760,7 +766,7 @@ const AccountSettings: React.FC = () => {
     window.location.reload()
   }
 
-  const handleLogoutCurrentAccount = () => {
+  const handleLogoutCurrentAccount = async () => {
     if (!activeTokenId) return
     // Clear DM keys for this account only
     clearKeyCache(activeTokenId)
@@ -782,6 +788,37 @@ const AccountSettings: React.FC = () => {
     try { usePinnedProfilesStore.getState().unpin(activeTokenId) } catch { /* best-effort */ }
     // Remove this token from the profile chooser and deactivate it
     useTokenDataStore.getState().removeToken(activeTokenId)
+    // The server session authorizes per owner address, so the call below signs
+    // out every name this wallet owns. Drop the sibling names here too (same
+    // teardown as ProfileChooser's "Sign out"), or they would stay in the
+    // chooser without a session behind them.
+    if (ownerLc) {
+      const pinStore = usePinnedProfilesStore.getState()
+      const siblingIds = new Set<number>()
+      for (const token of useTokenDataStore.getState().tokensByAddress[ownerLc as `0x${string}`] ?? []) {
+        siblingIds.add(token.tokenId)
+      }
+      for (const [tokenIdStr, owner] of Object.entries(pinStore.pinnedOwner)) {
+        if (owner?.toLowerCase() === ownerLc) siblingIds.add(Number(tokenIdStr))
+      }
+      for (const tokenId of siblingIds) {
+        try { clearKeyCache(tokenId) } catch { /* best-effort */ }
+        try { pinStore.unpin(tokenId) } catch { /* best-effort */ }
+      }
+      useTokenDataStore.getState().removeAddress(ownerLc as `0x${string}`)
+    }
+    // Sign this owner out of the server session too. Without it the cookie
+    // keeps the session, and the reload below rebuilds authorizedTokenIds from
+    // it. Best-effort: a network error still clears local state.
+    if (ownerLc) {
+      try {
+        await apiFetch('/api/auth/logout-address', {
+          method: 'POST',
+          body: JSON.stringify({ address: ownerLc }),
+          skipAuthModal: true,
+        })
+      } catch { /* best-effort */ }
+    }
     // Clear auth session
     useAuthStore.getState().clearSession()
     setShowLogoutModal(false)
@@ -1354,7 +1391,9 @@ const AccountSettings: React.FC = () => {
                   {t('account.logout.title', { username: activeToken.username })}
                 </h3>
                 <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  {t('account.logout.description')}
+                  {logoutSiblings.length > 0
+                    ? t('account.logout.descriptionWallet', { names: logoutSiblingNames })
+                    : t('account.logout.description')}
                 </p>
               </div>
               <svg className={`w-5 h-5 ${isDark ? 'text-white/60' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1474,7 +1513,9 @@ const AccountSettings: React.FC = () => {
             </div>
 
             <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-              This will log out the current account from this browser. Other accounts are not affected.
+              {logoutSiblings.length > 0
+                ? `This will log out this wallet from this browser: @${activeToken?.username} and ${logoutSiblingNames}. Other wallets are not affected.`
+                : 'This will log out the current account from this browser. Other accounts are not affected.'}
             </p>
 
             <div className={`text-sm space-y-2 p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
@@ -1490,13 +1531,15 @@ const AccountSettings: React.FC = () => {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-yellow-500 mt-0.5">•</span>
-                  Clear DM encryption keys for this account
+                  {logoutSiblings.length > 0
+                    ? 'Clear DM encryption keys for these accounts'
+                    : 'Clear DM encryption keys for this account'}
                 </li>
               </ul>
             </div>
 
             <p className={`text-xs ${isDark ? 'text-white/60' : 'text-gray-400'}`}>
-              Your muted/blocked lists, preferences, and other accounts are not affected.
+              Your muted/blocked lists, preferences, and other {logoutSiblings.length > 0 ? 'wallets' : 'accounts'} are not affected.
             </p>
 
             <div className="flex gap-3 pt-2">

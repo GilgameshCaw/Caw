@@ -502,6 +502,7 @@
   "account.connect_wallet": "Connect wallet",
   "account.logout.title": "Log Out @{{username}}",
   "account.logout.description": "Clear session data for this account only",
+  "account.logout.descriptionWallet": "Signs out this wallet, including {{names}}",
   "account.clear_data.title": "Clear All Browser Data",
   "account.clear_data.description": "Remove all locally stored data and reset the app",
   "tip.title": "Tip @{{username}}",

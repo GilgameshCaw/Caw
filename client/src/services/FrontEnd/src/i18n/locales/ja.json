@@ -390,6 +390,7 @@
   "account.view_profile.description": "公開プロフィールページを見る",
   "account.logout.title": "@{{username}} をログアウト",
   "account.logout.description": "このアカウントのセッションデータのみをクリア",
+  "account.logout.descriptionWallet": "このウォレットごとログアウト（{{names}} も含む）",
   "account.clear_data.title": "すべてのブラウザデータをクリア",
   "account.clear_data.description": "ローカルに保存されたすべてのデータを削除し、アプリをリセット",
   "tip.title": "@{{username}} さんにチップを贈る",

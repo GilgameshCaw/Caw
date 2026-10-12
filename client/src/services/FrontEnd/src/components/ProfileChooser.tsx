@@ -426,6 +426,13 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     }
     // Clear the Quick Sign session for this owner specifically.
     try { useSessionKeyStore.getState().clearSessionForAddress(normalized) } catch { /* best-effort */ }
+    // Sign this address out of the server session (best-effort), so a reload
+    // doesn't restore its tokens from the cookie.
+    void apiFetch('/api/auth/logout-address', {
+      method: 'POST',
+      body: JSON.stringify({ address: normalized }),
+      skipAuthModal: true,
+    }).catch(() => { /* best-effort */ })
     // Then drop it from the chooser (reuses the active-token reassignment logic).
     handleRemoveAddress(addressToRemove as Address)
     setRemoveModalAddress(null)

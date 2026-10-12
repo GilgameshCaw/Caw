@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
-import { createSession, getSession, addAuthorization, deleteSession, consumeAuthSignatureOnce } from '../sessionStore'
+import { createSession, getSession, addAuthorization, deleteSession, removeAddressFromSession, consumeAuthSignatureOnce } from '../sessionStore'
 import { extractSession, SESSION_COOKIE_NAME, sessionCookieOptions } from '../middleware/auth'
 // Tier 1 + Tier 3 of the "RPC out of API request handlers" refactor
 // (PROJECT_BACKLOG.md): findOrCreateUser, verifyOwnershipOnChain, and
@@ -463,10 +463,58 @@ router.post('/logout', async (req, res) => {
     }
     // Clear the cookie regardless — defensive against the case where Redis
     // already lost the session but the browser still carries the cookie.
-    res.clearCookie(SESSION_COOKIE_NAME, { path: '/' })
+    // Same attributes as when it was set: a __Host- cookie is only replaced
+    // by a Set-Cookie that is Secure with Path=/.
+    res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions())
     res.json({ success: true })
   } catch (error) {
     console.error('POST /api/auth/logout error:', error)
+    res.status(500).json({ error: 'Failed to logout' })
+  }
+})
+
+/**
+ * POST /api/auth/logout-address
+ * Body: { address }. Sign one wallet out of this session: the address and
+ * every token the DB says it owns are removed; other wallets stay signed in.
+ * When no wallet is left the session is deleted and the cookie cleared.
+ * Used by the Settings "log out" and the profile chooser's "sign out".
+ */
+router.post('/logout-address', async (req, res) => {
+  try {
+    const address = typeof req.body?.address === 'string' ? req.body.address.toLowerCase() : ''
+    if (!/^0x[0-9a-f]{40}$/.test(address)) {
+      res.status(400).json({ error: 'address required' })
+      return
+    }
+    // Same resolution as requireAuth / refresh: cookie first, and the
+    // x-session-token header when the cookie's session is dead. Nothing to sign
+    // out of without a live session, so answer before touching the DB.
+    await extractSession(req)
+    if (!req.sessionToken || !req.sessionData) {
+      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions())
+      res.json({ success: true, sessionDeleted: true })
+      return
+    }
+    const token = req.sessionToken
+    const owned = await prisma.user.findMany({
+      where: { address: { equals: address, mode: 'insensitive' } },
+      select: { tokenId: true },
+    })
+    const updated = await removeAddressFromSession(token, address, owned.map(u => u.tokenId))
+    if (!updated) {
+      res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions())
+      res.json({ success: true, sessionDeleted: true })
+      return
+    }
+    res.json({
+      success: true,
+      sessionDeleted: false,
+      authorizedTokenIds: updated.authorizedTokenIds,
+      authorizedAddresses: updated.authorizedAddresses,
+    })
+  } catch (error) {
+    console.error('POST /api/auth/logout-address error:', error)
     res.status(500).json({ error: 'Failed to logout' })
   }
 })

@@ -170,3 +170,39 @@ export async function isAuthorized(token: string, tokenId: number): Promise<bool
 export async function deleteSession(token: string): Promise<void> {
   await redis.del(KEY_PREFIX + token)
 }
+
+/**
+ * Sign one owner address out of a session: drop the address and `tokenIds`
+ * (the caller passes the tokens that address owns) and tidy their reverse
+ * index entries. Other addresses on the session, and their tokens, stay.
+ * If no address is left the session is deleted and null is returned, so the
+ * caller can clear the cookie.
+ */
+export async function removeAddressFromSession(
+  token: string,
+  address: string,
+  tokenIds: number[],
+): Promise<SessionData | null> {
+  const session = await getSession(token)
+  if (!session) return null
+  const addr = address.toLowerCase()
+  const drop = new Set(tokenIds)
+  session.authorizedAddresses = session.authorizedAddresses.filter(a => a.toLowerCase() !== addr)
+  session.authorizedTokenIds = session.authorizedTokenIds.filter(id => !drop.has(id))
+
+  if (drop.size > 0) {
+    const pipeline = redis.pipeline()
+    for (const id of drop) pipeline.srem(TOKEN_AUTH_PREFIX + id, token)
+    await pipeline.exec()
+  }
+
+  if (session.authorizedAddresses.length === 0) {
+    await deleteSession(token)
+    return null
+  }
+  const remainingTtl = await redis.ttl(KEY_PREFIX + token)
+  if (remainingTtl > 0) {
+    await redis.setex(KEY_PREFIX + token, remainingTtl, JSON.stringify(session))
+  }
+  return session
+}
