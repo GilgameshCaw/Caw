@@ -4,8 +4,10 @@
  * Strategy: we instantiate SponsorService directly with a mocked provider
  * (not a real JSON-RPC endpoint) so tests run offline and deterministically.
  * The mock provider intercepts eth_getBalance, eth_chainId, eth_call
- * (for idByUsername), eth_getTransactionCount, eth_feeHistory / eth_gasPrice,
- * and eth_sendRawTransaction.
+ * (idByUsername, lzQuote, networkManager and the three get*FeeAndAddress
+ * reads, answered by selector), eth_getTransactionCount, eth_feeHistory /
+ * eth_gasPrice, and eth_sendRawTransaction (whose response's wait() resolves
+ * to a status-1 receipt).
  *
  * For the rate-limit tests we swap the Redis client out from under the route
  * handler by injecting a lightweight in-memory stub that matches the ioredis
@@ -26,7 +28,7 @@ import { describe, it, before, beforeEach, after } from 'mocha'
 import { expect } from 'chai'
 import request from 'supertest'
 import express, { Express } from 'express'
-import { Wallet, keccak256, toUtf8Bytes, AbiCoder, zeroPadValue, toBeHex } from 'ethers'
+import { Wallet, keccak256, toUtf8Bytes, AbiCoder, zeroPadValue, toBeHex, Interface } from 'ethers'
 import {
   SponsorService,
   isSponsorError,
@@ -36,6 +38,7 @@ import {
 } from '../../../src/services/SponsorService'
 import { ZodError } from 'zod'
 import { BootstrapBodySchema } from '../../../src/api/routes/sponsor'
+import { cawProfileAbi, cawNetworkManagerAbi } from '../../../src/abi/generated'
 
 // ─── Mock provider ────────────────────────────────────────────────────────────
 
@@ -49,7 +52,13 @@ interface MockProviderOpts {
   txCountUser?: number
   simulateRevert?: string // if set, eth_call throws with this message
   broadcastedTxHash?: string
+  lzNativeFee?: bigint    // lzQuote nativeFee (wei)
+  networkFee?: bigint     // each of the mint / deposit / auth fees (wei)
 }
+
+const profileIface = new Interface(cawProfileAbi as any)
+const networkManagerIface = new Interface(cawNetworkManagerAbi as any)
+const MOCK_NETWORK_MANAGER_ADDRESS = '0x' + 'd'.repeat(40)
 
 /**
  * Minimal mock provider implementing only what SponsorService needs.
@@ -63,12 +72,29 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
   // txCountUser defaults to same as sponsor unless explicitly set (used for L-4 tests)
   const txCountUser = opts.txCountUser ?? txCountSponsor
   const txHash = opts.broadcastedTxHash ?? '0xdeadbeef' + '00'.repeat(28)
+  const lzNativeFee = opts.lzNativeFee ?? 1_000_000_000_000_000n  // 0.001 ETH
+  const networkFee = opts.networkFee ?? 0n
 
   // ABI-encode the idByUsername return value (uint32)
   const coder = AbiCoder.defaultAbiCoder()
   const idEncoded = coder.encode(['uint32'], [idByUsername])
   // ABI-encode balance for eth_getBalance (returns hex)
   const balanceHex = toBeHex(balance)
+
+  // Answer eth_call by selector. Anything not listed falls back to the
+  // idByUsername encoding, as before.
+  const callResults: Record<string, string> = {
+    [profileIface.getFunction('lzQuote')!.selector]:
+      profileIface.encodeFunctionResult('lzQuote', [[lzNativeFee, 0n]]),
+    [profileIface.getFunction('networkManager')!.selector]:
+      profileIface.encodeFunctionResult('networkManager', [MOCK_NETWORK_MANAGER_ADDRESS]),
+  }
+  for (const name of ['getMintFeeAndAddress', 'getDepositFeeAndAddress', 'getAuthFeeAndAddress']) {
+    callResults[networkManagerIface.getFunction(name)!.selector] =
+      networkManagerIface.encodeFunctionResult(name, [networkFee, MOCK_NETWORK_MANAGER_ADDRESS])
+  }
+  const callResult = (data: string | undefined): string =>
+    callResults[(data ?? '').slice(0, 10).toLowerCase()] ?? idEncoded
 
   return {
     // Provider interface methods used internally by ethers Contract + Wallet
@@ -98,16 +124,17 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
         err.reason = opts.simulateRevert
         throw err
       }
-      // Return encoded idByUsername result for all calls (simplification)
-      return idEncoded
+      return callResult(tx?.data)
     },
-    async broadcastTransaction(_signedTx: string): Promise<{ hash: string }> {
+    async broadcastTransaction(_signedTx: string): Promise<{ hash: string; wait: () => Promise<any> }> {
       if (opts.simulateRevert) {
         const err: any = new Error(opts.simulateRevert)
         err.reason = opts.simulateRevert
         throw err
       }
-      return { hash: txHash }
+      // sponsorBootstrap waits for the receipt and checks status. No logs, so
+      // no minted tokenId is extracted (and the indexer isn't poked).
+      return { hash: txHash, wait: async () => ({ status: 1, logs: [] }) }
     },
     async estimateGas(): Promise<bigint> {
       return 200_000n
@@ -133,7 +160,7 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
             err.reason = opts.simulateRevert
             throw err
           }
-          return idEncoded
+          return callResult(_params?.[0]?.data)
         case 'eth_sendRawTransaction':
           if (opts.simulateRevert) {
             const err: any = new Error(opts.simulateRevert)

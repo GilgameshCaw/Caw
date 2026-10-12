@@ -349,8 +349,8 @@ export function computeRedemptionBudget(opts: {
  * @param rawCode   The raw code string supplied by the caller.
  * @param params    Bootstrap params (username + depositAmountCAW used for checks).
  * @param ip        The caller's IP address (from req.ip).
- * @param budget    Optional pre-computed budget breakdown. If provided and
- *                  total > code.budgetCapUsdCents, returns BUDGET_EXCEEDED.
+ * @param budget    Optional pre-computed budget breakdown. Currently unused:
+ *                  there is no budget-cap rejection any more (see step 10).
  */
 export async function validateSponsorCode(
   rawCode: string,

@@ -41,8 +41,10 @@ type SponsorCodeRow = {
 let _mockCode: SponsorCodeRow | null = null
 let _createdAttempts: { ip: string }[] = []
 let _attemptCountOverride: number | null = null
-let _updatedCodes: { codeHash: string; usesRemaining?: number }[] = []
+let _updatedCodes: { codeHash: string; usesRemaining?: unknown }[] = []
+let _updateManyCount = 1
 let _createdRedemptions: object[] = []
+let _updatedRedemptions: { id: number; data: Record<string, unknown> }[] = []
 
 const prismaMock = {
   sponsorCode: {
@@ -51,8 +53,13 @@ const prismaMock = {
       return null
     },
     updateMany: async (args: { where: { codeHash: string; usesRemaining?: object }; data: object }) => {
+      if (_updateManyCount === 0) return { count: 0 }
       _updatedCodes.push({ codeHash: args.where.codeHash, ...args.data as object })
-      return { count: 1 }
+      return { count: _updateManyCount }
+    },
+    update: async (args: { where: { codeHash: string }; data: object }) => {
+      _updatedCodes.push({ codeHash: args.where.codeHash, ...args.data as object })
+      return {}
     },
   },
   sponsorCodeAttempt: {
@@ -69,6 +76,10 @@ const prismaMock = {
     create: async (args: { data: object }) => {
       _createdRedemptions.push(args.data)
       return { id: _createdRedemptions.length }
+    },
+    update: async (args: { where: { id: number }; data: Record<string, unknown> }) => {
+      _updatedRedemptions.push({ id: args.where.id, data: args.data })
+      return {}
     },
   },
 }
@@ -125,7 +136,9 @@ class MockRedis {
 
 import {
   validateSponsorCode,
-  commitRedemption,
+  reserveRedemption,
+  finalizeRedemption,
+  refundRedemption,
   computeRedemptionBudget,
   _setRedisForTest,
   _setPrismaForTest,
@@ -277,9 +290,12 @@ describe('validateSponsorCode', () => {
     if (!result2.ok) expect(result2.error).to.equal('IP_BANNED')
   })
 
-  // ── Budget exceeded ──────────────────────────────────────────────────────
+  // ── Budget over the cap ──────────────────────────────────────────────────
+  // Step 10 no longer rejects on budgetCapUsdCents: solvency is covered by the
+  // burn + gas ≤ pot check, and fixed LZ costs exceed small gifts' USD value.
+  // The budget is still computed for the redemption audit row.
 
-  it('budget exceeded → BUDGET_EXCEEDED', async () => {
+  it('budget over budgetCapUsdCents is not rejected (no BUDGET_EXCEEDED gate)', async () => {
     _mockCode = makeCode({ budgetCapUsdCents: 100 })  // $1 cap
     const budget = {
       gasCostUsdCents: 80,
@@ -294,8 +310,7 @@ describe('validateSponsorCode', () => {
       '1.2.3.4',
       budget,
     )
-    expect(result.ok).to.equal(false)
-    if (!result.ok) expect(result.error).to.equal('BUDGET_EXCEEDED')
+    expect(result.ok).to.equal(true)
   })
 
   // ── usesRemaining = 0 ────────────────────────────────────────────────────
@@ -435,10 +450,11 @@ describe('validateSponsorCode', () => {
   })
 })
 
-// ─── commitRedemption tests ───────────────────────────────────────────────────
+// ─── reserve / finalize / refund redemption tests ────────────────────────────
 
-describe('commitRedemption', () => {
+describe('reserveRedemption / finalizeRedemption / refundRedemption', () => {
   before(() => {
+    process.env.SPONSOR_CODE_HMAC_SECRET = TEST_HMAC_SECRET
     _setPrismaForTest(prismaMock as any)
   })
 
@@ -448,13 +464,42 @@ describe('commitRedemption', () => {
 
   beforeEach(() => {
     _updatedCodes = []
+    _updateManyCount = 1
     _createdRedemptions = []
+    _updatedRedemptions = []
     _mockCode = null
   })
 
-  it('commits usesRemaining decrement + redemption row', async () => {
-    await commitRedemption({
-      codeHash: 'abc123',
+  it('reserve: decrements usesRemaining and writes a reserved row', async () => {
+    _mockCode = makeCode({ usesRemaining: 3 })
+    const id = await reserveRedemption({ codeHash: _mockCode.codeHash })
+    expect(id).to.equal(1)
+    expect(_updatedCodes).to.have.length(1)
+    expect(_updatedCodes[0].usesRemaining).to.deep.equal({ decrement: 1 })
+    expect(_createdRedemptions).to.have.length(1)
+    expect((_createdRedemptions[0] as any).status).to.equal('reserved')
+    expect((_createdRedemptions[0] as any).txHash).to.equal(null)
+  })
+
+  it('reserve: no decrement for an unlimited code, row still written', async () => {
+    _mockCode = makeCode({ maxUses: null, usesRemaining: null })
+    const id = await reserveRedemption({ codeHash: _mockCode.codeHash })
+    expect(id).to.equal(1)
+    expect(_updatedCodes).to.have.length(0)
+    expect(_createdRedemptions).to.have.length(1)
+  })
+
+  it('reserve: returns null and writes no row when the code is exhausted', async () => {
+    _mockCode = makeCode({ usesRemaining: 1 })
+    _updateManyCount = 0  // a concurrent reserve took the last use
+    const id = await reserveRedemption({ codeHash: _mockCode.codeHash })
+    expect(id).to.equal(null)
+    expect(_createdRedemptions).to.have.length(0)
+  })
+
+  it('finalize: fills txHash, recipient and budget and marks the row finalized', async () => {
+    await finalizeRedemption({
+      redemptionId: 7,
       recipient: '0x' + 'a'.repeat(40),
       txHash: '0x' + 'b'.repeat(64),
       budget: {
@@ -465,9 +510,22 @@ describe('commitRedemption', () => {
         totalUsdCents: 95,
       },
     })
+    expect(_updatedRedemptions).to.have.length(1)
+    expect(_updatedRedemptions[0].id).to.equal(7)
+    expect(_updatedRedemptions[0].data.status).to.equal('finalized')
+    expect(_updatedRedemptions[0].data.txHash).to.equal('0x' + 'b'.repeat(64))
+    expect(_updatedRedemptions[0].data.recipient).to.equal('0x' + 'a'.repeat(40))
+    expect(_updatedRedemptions[0].data.totalUsdCents).to.equal(95)
+  })
+
+  it('refund: gives the use back and marks the row refunded', async () => {
+    _mockCode = makeCode({ usesRemaining: 2 })
+    await refundRedemption({ redemptionId: 7, codeHash: _mockCode.codeHash })
     expect(_updatedCodes).to.have.length(1)
-    expect(_createdRedemptions).to.have.length(1)
-    expect((_createdRedemptions[0] as any).totalUsdCents).to.equal(95)
+    expect(_updatedCodes[0].usesRemaining).to.deep.equal({ increment: 1 })
+    expect(_updatedRedemptions).to.have.length(1)
+    expect(_updatedRedemptions[0].id).to.equal(7)
+    expect(_updatedRedemptions[0].data.status).to.equal('refunded')
   })
 })
 
