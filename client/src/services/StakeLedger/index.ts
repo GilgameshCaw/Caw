@@ -710,20 +710,26 @@ export async function recordDeposit(
   // causing double-counting on the checkpoint retry.
   // The caller (DepositWatcher) must apply these mutations to `s` ONLY
   // after the transaction resolves successfully (Post-Commit Mutation).
+  //
+  // lastBlock/lastLogIndex are the ACTION cursor: L2 (block, logIndex) of the
+  // last recorded action, which recordAction skips at or below. A deposit
+  // comes from the L1 Deposited event, so its block number is in another
+  // chain's space and must not be written there. Dedup for deposits is the
+  // (txHash, logIndex, 'DEPOSIT') check above. A row created here carries the
+  // in-memory cursor (0 / -1 when nothing has been recorded, as ensureBooted()
+  // sets it when there is no row).
   await tx.stakeLedgerState.upsert({
     where: { networkId: CAW_CLIENT_ID },
     create: {
       networkId: CAW_CLIENT_ID,
       totalCaw: nextTotalCaw.toString(),
       multiplier: s.multiplier.toString(),
-      lastBlock: blockNumber,
-      lastLogIndex: logIndex,
+      lastBlock: s.lastBlock,
+      lastLogIndex: s.lastLogIndex,
     },
     update: {
       totalCaw: nextTotalCaw.toString(),
       multiplier: s.multiplier.toString(),
-      lastBlock: blockNumber,
-      lastLogIndex: logIndex,
       updatedAt: new Date(),
     },
   })
