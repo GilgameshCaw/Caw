@@ -31,17 +31,25 @@ const OUR_CLIENT_ID = (() => {
   return Number.isFinite(n) && n > 0 ? n : null
 })()
 
+// Test seam: swap the user lookup resolveActionUsers uses. null restores it.
+let lookupUser: (tokenId: number) => Promise<number> = (tokenId) => findOrCreateUser(tokenId)
+export function _setFindOrCreateUserForTest(fn: ((tokenId: number) => Promise<number>) | null): void {
+  lookupUser = fn ?? ((tokenId) => findOrCreateUser(tokenId))
+}
+
 /**
  * Resolve every user that the inside-tx code path might need BEFORE the
  * interactive transaction opens. Prevents findOrCreateUser from eating
- * into the 5s tx timeout — every inside-tx call must hit the user cache.
+ * into the tx timeout (30s for ActionProcessor's Tx2, 15s for DataCleaner's
+ * orphan reconcile) — every inside-tx call must hit the user cache.
  *
  * Critical hazard this defends against: findCawId (called from
  * processDomainEffects inside the tx) calls findOrCreateUser on the caw
  * owner. If that caw owner is a brand-new user, the call falls back to
- * an L1 RPC read with a 15s timeout — well past the 5s tx budget. The
- * tx times out, every queued query inside it errors with "Transaction
- * already closed", and the row partial-state is left behind.
+ * an L1 RPC read: 15s, then 15s more on the HTTP fallback, plus whatever
+ * getL1Provider spends connecting. That can outlast the tx. The tx times
+ * out, every queued query inside it errors with "Transaction already
+ * closed", and the domain rows roll back.
  *
  * We pre-resolve:
  *   - sender (always)
@@ -49,6 +57,11 @@ const OUR_CLIENT_ID = (() => {
  *     caw owner via findCawId, and any future receiver-flavored field)
  *   - tip recipients (rawAction.recipients[0]) — handleTipAction calls
  *     findOrCreateUser on it inside the tx
+ *   - CAW-embedded tip recipients (every rawAction.recipients[i] with a
+ *     non-zero amount) — handleCawAction calls findOrCreateUser on each
+ *     inside the tx. Best effort: a failure here is ignored, because the
+ *     in-tx loop already catches a failed recipient and still lands the
+ *     caw. Failing the whole action over one recipient would drop the caw.
  *
  * Worst case: one extra cache entry for a tokenId that wasn't strictly
  * required. Best case (the common case): the inside-tx code path never
@@ -58,22 +71,32 @@ export async function resolveActionUsers(rawAction: RawAction): Promise<Resolved
   // Pre-resolve in parallel — single L1 round-trip latency for the whole
   // set instead of serial. findOrCreateUser is idempotent + cached, so
   // duplicates (sender == receiver) just hit the cache.
-  const senderPromise = findOrCreateUser(rawAction.senderId)
+  const senderPromise = lookupUser(rawAction.senderId)
   const receiverPromise = rawAction.receiverId
-    ? findOrCreateUser(rawAction.receiverId)
+    ? lookupUser(rawAction.receiverId)
     : Promise.resolve(undefined)
   // rawAction.actionType is the raw enum *number* from the unpacked
   // on-chain event (see packActions.ts). Convert once for tip-recipient
   // pre-resolution.
   const type = getActionType(Number(rawAction.actionType))
   const recipientPromise = (type === 'OTHER' && rawAction.recipients?.[0])
-    ? findOrCreateUser(Number(rawAction.recipients[0]))
+    ? lookupUser(Number(rawAction.recipients[0]))
     : Promise.resolve(undefined)
+  // Same gate and filter as the embedded-tip loop in handleCawAction, which
+  // only runs for our network's CAWs (see processDomainEffects).
+  const isOurClient = OUR_CLIENT_ID === null || Number(rawAction.networkId) === OUR_CLIENT_ID
+  const embeddedTipPromises = type === 'CAW' && isOurClient && rawAction.recipients
+    ? rawAction.recipients
+        .map((r, i) => [Number(r), Number(rawAction.amounts?.[i] ?? 0)] as const)
+        .filter(([id, amount]) => id && amount)
+        .map(([id]) => lookupUser(id).catch(() => undefined))
+    : []
 
   const [authorId, receiverId] = await Promise.all([
     senderPromise,
     receiverPromise,
     recipientPromise,
+    ...embeddedTipPromises,
   ])
   return { authorId, receiverId }
 }
