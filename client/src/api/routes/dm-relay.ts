@@ -29,6 +29,7 @@ import { recoverAddressFromCanonical } from '../../services/InstanceRegistryServ
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
 import { peekInboundRelayRate, recordInboundRelayHit } from '../dmRateLimit'
+import { findDmBaselineFollow } from '../../services/DmService/followBaseline'
 
 const router = Router()
 
@@ -325,12 +326,8 @@ router.post('/', async (req, res) => {
     let recipientStatus: 'ACCEPTED' | 'REQUEST' = 'ACCEPTED'
     if (isFirstContact) {
       const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
-        prisma.follow.findFirst({
-          where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
-        }),
-        prisma.follow.findFirst({
-          where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
-        }),
+        findDmBaselineFollow(Number(senderId), Number(recipientId)),
+        findDmBaselineFollow(Number(recipientId), Number(senderId)),
       ])
       if (!senderFollowsRecipient && !recipientFollowsSender) {
         recipientStatus = 'REQUEST'

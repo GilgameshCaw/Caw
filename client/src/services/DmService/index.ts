@@ -1,5 +1,6 @@
 import { prisma } from '../../prismaClient'
 import { deterministicConversationId } from '../DmRelayService'
+import { findDmBaselineFollow } from './followBaseline'
 
 export class DmService {
   /**
@@ -104,22 +105,12 @@ export class DmService {
     // conversation, reaching here always means first contact, so we
     // don't need dm-relay.ts's separate isFirstContact check.
     //
-    // Deliberately mirrors dm-relay.ts's own Follow lookup as-is
-    // (matched on followerId/followingId/action only, not status) so
-    // the two routing paths agree with each other bit-for-bit. Note
-    // for a future pass: neither this nor dm-relay.ts checks
-    // Follow.status, so a not-yet-confirmed (PENDING) follow is
-    // treated the same as a confirmed one here -- a narrow, largely
-    // harmless window (the common case is the follower themselves
-    // messaging right after following, which is expected to land in
-    // Main either way) rather than something this PR changes.
+    // Same lookup as dm-relay.ts (findDmBaselineFollow), so the two
+    // routing paths agree bit-for-bit. A PENDING follow counts, a
+    // FAILED one doesn't -- see followBaseline.ts.
     const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
-      prisma.follow.findFirst({
-        where: { followerId: userIdA, followingId: userIdB, action: 'FOLLOW' }
-      }),
-      prisma.follow.findFirst({
-        where: { followerId: userIdB, followingId: userIdA, action: 'FOLLOW' }
-      }),
+      findDmBaselineFollow(userIdA, userIdB),
+      findDmBaselineFollow(userIdB, userIdA),
     ])
     const recipientStatus: 'ACCEPTED' | 'REQUEST' = (!senderFollowsRecipient && !recipientFollowsSender)
       ? 'REQUEST'

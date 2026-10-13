@@ -18,6 +18,7 @@
 
 import Redis from 'ioredis'
 import { prisma } from '../prismaClient'
+import { findDmBaselineFollow } from '../services/DmService/followBaseline'
 
 const redis = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
@@ -148,14 +149,8 @@ async function isWarm(senderId: number, recipientId: number): Promise<boolean> {
       },
       select: { id: true },
     }),
-    prisma.follow.findFirst({
-      where: { followerId: senderId, followingId: recipientId, action: 'FOLLOW' },
-      select: { id: true },
-    }),
-    prisma.follow.findFirst({
-      where: { followerId: recipientId, followingId: senderId, action: 'FOLLOW' },
-      select: { id: true },
-    }),
+    findDmBaselineFollow(senderId, recipientId),
+    findDmBaselineFollow(recipientId, senderId),
   ])
   return !!(reply || senderFollows || recipientFollows)
 }
