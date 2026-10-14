@@ -254,6 +254,9 @@ contract SponsorRepayTest is Test {
         caw.mint(defaultSender, 1_000_000_000 * 10**24);
         vm.prank(defaultSender);
         caw.approve(address(minter), type(uint256).max);
+        // ...and tx.origin only pays for a contract caller after opting in.
+        vm.prank(defaultSender);
+        minter.setTxOriginFunder(true);
 
         // --- Ledger side ---
         lzEndpoint = new MockLayerZeroEndpoint(40245);

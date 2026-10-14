@@ -1574,6 +1574,45 @@ LINKING_STEPS.push({
   },
 });
 
+// Phase 7.9b — the sponsor opts in as a tx.origin funder. The bootstrap reaches
+// the Minter through the user's SmartEOA, so the sponsor is only tx.origin there;
+// the Minter refuses to charge tx.origin unless it called setTxOriginFunder(true).
+// Same gating as 7.9 (only when this key holds CAW); idempotent via the view.
+LINKING_STEPS.push({
+  name: '[Phase 7.9b] Opt sponsor in as tx.origin funder (sponsored bootstrap)',
+  chain: 'L1',
+  phase: 7,
+  condition: (state) => !!state.addresses.CawProfileMinter && !!state.addresses.MintableCaw,
+  custom: async (state, deployer) => {
+    const l1ChainKey = deployer.getChainKey('L1');
+    const signer = deployer.wallets[l1ChainKey];
+    if (!signer) { console.log('   L1 signer unavailable — skipping tx.origin funder opt-in.'); return; }
+    const sponsor = await signer.getAddress();
+
+    const caw = new ethers.Contract(state.addresses.MintableCaw, ['function balanceOf(address) view returns (uint256)'], signer);
+    if ((await caw.balanceOf(sponsor)) === 0n) {
+      console.log(`   Sponsor ${sponsor} holds 0 CAW — skipping tx.origin funder opt-in (no-op on this env).`);
+      return;
+    }
+
+    const minter = new ethers.Contract(
+      state.addresses.CawProfileMinter,
+      [
+        'function txOriginFunder(address) view returns (bool)',
+        'function setTxOriginFunder(bool)',
+      ],
+      signer,
+    );
+    if (await minter.txOriginFunder(sponsor)) {
+      console.log(`   Sponsor ${sponsor} already opted in as tx.origin funder — skipping.`);
+      return;
+    }
+    const tx = await minter.setTxOriginFunder(true);
+    await tx.wait();
+    console.log(`   ✓ Sponsor ${sponsor} opted in as tx.origin funder (tx ${tx.hash}).`);
+  },
+});
+
 // Phase 8 — seeding: mint well-known bot/system profiles
 // =============================================================================
 //

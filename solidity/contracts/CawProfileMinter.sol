@@ -565,7 +565,8 @@ contract CawProfileMinter is Context {
   ///
   ///         SPONSOR ADDRESS SELECTION: see NatSpec below for the EIP-7702 funding
   ///         model.  Short version: EOA caller → payer = msg.sender; contract caller
-  ///         (SmartEOA 7702 path) → payer = tx.origin (the broadcaster).
+  ///         (SmartEOA 7702 path) → payer = tx.origin (the broadcaster), which
+  ///         must have opted in via setTxOriginFunder.
   ///
   ///         NOTE: `depositAmount = 0` is INTENTIONALLY permitted (matches the
   ///         non-sponsored `mintAndDepositFor` semantics — a user may want to
@@ -602,20 +603,18 @@ contract CawProfileMinter is Context {
   ///      tx.origin — the sponsor server that CHOSE to broadcast this tx, holds the
   ///      CAW pool, and pre-approved an unlimited allowance to this Minter.
   ///
-  ///      SECURITY: tx.origin as payer is safe here because:
-  ///        1. The sponsor pre-approved the Minter.  Without that approval the transfer
-  ///           reverts, so no address can be drained involuntarily.
-  ///        2. The sponsor broadcasts the tx — controlling tx.origin is the same as
-  ///           consenting to the spend.  No third party can set tx.origin to the sponsor.
-  ///        3. The user-signed permit already binds the mint parameters (recipient,
-  ///           username, depositAmount, etc.), so the sponsor cannot redirect the
-  ///           user's registered name or deposit to another token.
-  ///        4. This pattern is equivalent to the *For variants on CawProfile where
-  ///           msg.sender (a router) fronts the CAW on behalf of the recipient.
+  ///      SECURITY: tx.origin pays only if it opted in via setTxOriginFunder.
+  ///        An ERC20 approval to the Minter is NOT consent to this spend: every
+  ///        user who minted with CAW holds a standing approval, and tx.origin is
+  ///        whoever signed the outermost tx — so without the opt-in, any contract
+  ///        such a user calls could route their CAW into its own profile here (the
+  ///        permit only checks the recipient / token owner, which that contract
+  ///        controls). The sponsor server opts in once from its broadcasting EOA.
+  ///        The user-signed permit still binds the mint parameters, so an opted-in
+  ///        sponsor cannot redirect the user's name or deposit.
   ///
-  ///      For non-7702 direct callers the tx.origin == msg.sender, so existing Population-A
-  ///      sponsor flows that call mintAndDepositSponsored directly (not through a 7702 EOA)
-  ///      continue to work without change.
+  ///      Direct callers (msg.sender is an EOA, or msg.sender == tx.origin) pay
+  ///      themselves and need no opt-in. See _sponsoredFunder.
   function mintAndDepositSponsored(
     uint32 networkId,
     address recipient,
@@ -650,16 +649,7 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
-    // EIP-7702 fix: derive the CAW funder address.
-    //   - If msg.sender is an EOA (code.length == 0): payer = msg.sender.
-    //     This is the direct Population-A path: sponsor server calls the Minter
-    //     directly as an EOA, so msg.sender == tx.origin == sponsor.
-    //   - If msg.sender is a contract (code.length > 0): payer = tx.origin.
-    //     This is the Population-B 7702 path: SmartEOA.initialize calls the
-    //     Minter, making msg.sender = SmartEOA (0 CAW). tx.origin = the sponsor
-    //     server EOA that broadcast the type-0x04 tx, holds the CAW pool, and
-    //     pre-approved this Minter. See NatSpec above for full security rationale.
-    address sponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    address sponsor = _sponsoredFunder();
     uint32 newId = _burnAndAssignId(username, depositAmount, sponsor);
     if (depositAmount > 0) {
       CAW.transferFrom(sponsor, address(this), depositAmount);
@@ -749,11 +739,8 @@ contract CawProfileMinter is Context {
     // approve pattern used by mintAndDepositFor. The sponsor server must hold the
     // user's CAW and have pre-approved the Minter for at least `amount`.
     //
-    // EIP-7702 fix: derive the CAW funder the same way as mintAndDepositSponsored:
-    //   msg.sender.code.length == 0  →  funder = msg.sender  (direct EOA call)
-    //   msg.sender.code.length > 0   →  funder = tx.origin   (7702/SmartEOA path)
-    // See mintAndDepositSponsored NatSpec for full security rationale.
-    address depositSponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    // Same funder rule as mintAndDepositSponsored — see _sponsoredFunder.
+    address depositSponsor = _sponsoredFunder();
     CAW.transferFrom(depositSponsor, address(this), amount);
     CAW.approve(address(CawProfile), amount);
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
@@ -808,6 +795,36 @@ contract CawProfileMinter is Context {
     CawProfile.setLzRefundTo(payable(owner));
     CawProfile.authenticateForMinter{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount);
     CawProfile.setLzRefundTo(payable(address(0)));
+  }
+
+  /// @notice Addresses that agreed to fund sponsored calls that reach the Minter
+  ///         through a contract (the EIP-7702 bootstrap, where msg.sender is the
+  ///         user's SmartEOA and the sponsor is only tx.origin).
+  mapping(address => bool) public txOriginFunder;
+
+  event TxOriginFunderSet(address indexed funder, bool enabled);
+  error TxOriginNotFunder();
+
+  /// @notice Opt in (or out) of paying for sponsored calls as tx.origin.
+  ///         A sponsor server calls this once from its broadcasting EOA.
+  function setTxOriginFunder(bool enabled) external {
+    txOriginFunder[_msgSender()] = enabled;
+    emit TxOriginFunderSet(_msgSender(), enabled);
+  }
+
+  /// @dev CAW funder for mintAndDepositSponsored / depositForSponsored.
+  ///      - Direct call (msg.sender is an EOA, or msg.sender == tx.origin, e.g. a
+  ///        7702-delegated EOA sending its own tx): the caller pays.
+  ///      - Call through a contract (the 7702 bootstrap: SmartEOA.initialize →
+  ///        Minter): tx.origin pays, but only if tx.origin opted in via
+  ///        setTxOriginFunder. Signing a tx is not consent to a Minter spend:
+  ///        without the opt-in, any contract a user calls could spend that
+  ///        user's standing CAW allowance to the Minter.
+  function _sponsoredFunder() internal view returns (address) {
+    address caller = _msgSender();
+    if (caller.code.length == 0 || caller == tx.origin) return caller;
+    if (!txOriginFunder[tx.origin]) revert TxOriginNotFunder();
+    return tx.origin;
   }
 
   /// @dev Shared permit-verification logic for all three sponsor entry points.

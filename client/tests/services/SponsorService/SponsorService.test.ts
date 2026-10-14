@@ -49,7 +49,10 @@ interface MockProviderOpts {
   txCountUser?: number
   simulateRevert?: string // if set, eth_call throws with this message
   broadcastedTxHash?: string
+  txOriginFunder?: boolean // Minter.txOriginFunder(sponsor); default true
 }
+
+const TX_ORIGIN_FUNDER_SELECTOR = keccak256(toUtf8Bytes('txOriginFunder(address)')).slice(0, 10)
 
 /**
  * Minimal mock provider implementing only what SponsorService needs.
@@ -98,7 +101,10 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
         err.reason = opts.simulateRevert
         throw err
       }
-      // Return encoded idByUsername result for all calls (simplification)
+      if (typeof tx?.data === 'string' && tx.data.startsWith(TX_ORIGIN_FUNDER_SELECTOR)) {
+        return coder.encode(['bool'], [opts.txOriginFunder ?? true])
+      }
+      // Return encoded idByUsername result for all other calls (simplification)
       return idEncoded
     },
     async broadcastTransaction(_signedTx: string): Promise<{ hash: string }> {
@@ -300,6 +306,15 @@ describe('SponsorService', () => {
       expect(isSponsorError(result)).to.equal(true)
       if (isSponsorError(result)) {
         expect(result.error).to.equal('TREASURY_LOW')
+      }
+    })
+
+    it('sponsor wallet not opted in as tx.origin funder → SPONSOR_NOT_OPTED_IN', async () => {
+      const svc = buildService({ txOriginFunder: false })
+      const result = await svc.sponsorBootstrap(baseBootstrapParams(authSig))
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('SPONSOR_NOT_OPTED_IN')
       }
     })
 

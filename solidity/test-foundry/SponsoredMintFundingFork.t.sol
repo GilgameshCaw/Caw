@@ -258,6 +258,10 @@ contract SponsoredMintFundingForkTest is Test {
         caw.mint(UNIT_SPONSOR, 1_000_000_000 * 10**24);
         vm.prank(UNIT_SPONSOR);
         caw.approve(address(minter), type(uint256).max);
+        // The sponsor server opts in once to fund calls that reach the Minter
+        // through a contract (the 7702 path) as tx.origin.
+        vm.prank(UNIT_SPONSOR);
+        minter.setTxOriginFunder(true);
 
         vm.deal(address(callerProxy), 1 ether);
     }
@@ -401,6 +405,8 @@ contract SponsoredMintFundingForkTest is Test {
     function test_unit_after_fix_zeroCawTxOrigin_reverts() public {
         address zeroCawOrigin = vm.addr(0xdeadbeef);
         assertEq(caw.balanceOf(zeroCawOrigin), 0, "precondition: origin has 0 CAW");
+        vm.prank(zeroCawOrigin);
+        minter.setTxOriginFunder(true); // opted in, but holds nothing
 
         uint256 permitNonce  = userSmartEOA.nonceOf(address(minter), 1);
         uint256 depositAmount = 1_000 * 10**18;
@@ -423,6 +429,61 @@ contract SponsoredMintFundingForkTest is Test {
         // CallerProxy calls Minter; tx.origin = zeroCawOrigin (no CAW, no approval).
         vm.prank(address(callerProxy), zeroCawOrigin);
         vm.expectRevert("You do not have enough CAW to make this purchase");
+        callerProxy.callMinter(address(minter), mintCalldata);
+    }
+
+    /// @notice A user who holds CAW and a standing Minter approval (every user who
+    ///         minted with CAW through the FE) but never opted in cannot be made to
+    ///         pay by a contract they call: otherwise any such contract could route
+    ///         the user's CAW into a profile it controls.
+    function test_unit_contractCaller_cannot_spend_nonOptedIn_origin() public {
+        address user = vm.addr(0xa11ce);
+        caw.mint(user, 5_000 * 10**18);
+        vm.prank(user);
+        caw.approve(address(minter), type(uint256).max);
+
+        bytes memory mintCalldata = abi.encodeWithSelector(
+            CawProfileMinter.mintAndDepositSponsored.selector,
+            uint32(1), address(userSmartEOA), "drainvictim", uint256(1_000 * 10**18),
+            uint32(0), uint256(0), userSmartEOA.nonceOf(address(minter), 1), ANY_SIG,
+            uint8(0), uint32(0), uint256(0)
+        );
+        vm.prank(address(callerProxy), user);
+        vm.expectRevert(CawProfileMinter.TxOriginNotFunder.selector);
+        callerProxy.callMinter(address(minter), mintCalldata);
+
+        // Same for depositForSponsored into an existing token.
+        uint256 targetNonce = userSmartEOA.nonceOf(address(minter), 1);
+        vm.prank(UNIT_SPONSOR, UNIT_SPONSOR);
+        minter.mintAndDepositSponsored(
+            1, address(userSmartEOA), "draintarget", 0, 0, 0, targetNonce, ANY_SIG, 0, 0, 0
+        );
+        bytes memory depositCalldata = abi.encodeWithSelector(
+            CawProfileMinter.depositForSponsored.selector,
+            uint32(1), uint32(1), uint256(1_000 * 10**18), uint32(0), uint256(0),
+            userSmartEOA.nonceOf(address(minter), 2), ANY_SIG
+        );
+        vm.prank(address(callerProxy), user);
+        vm.expectRevert(CawProfileMinter.TxOriginNotFunder.selector);
+        callerProxy.callMinter(address(minter), depositCalldata);
+
+        assertEq(caw.balanceOf(user), 5_000 * 10**18, "user CAW untouched");
+    }
+
+    /// @notice Opting out closes the contract path again for that tx.origin.
+    function test_unit_setTxOriginFunder_optOut() public {
+        vm.prank(UNIT_SPONSOR);
+        minter.setTxOriginFunder(false);
+        assertFalse(minter.txOriginFunder(UNIT_SPONSOR));
+
+        bytes memory mintCalldata = abi.encodeWithSelector(
+            CawProfileMinter.mintAndDepositSponsored.selector,
+            uint32(1), address(userSmartEOA), "optedoutsponsor", uint256(0),
+            uint32(0), uint256(0), userSmartEOA.nonceOf(address(minter), 1), ANY_SIG,
+            uint8(0), uint32(0), uint256(0)
+        );
+        vm.prank(address(callerProxy), UNIT_SPONSOR);
+        vm.expectRevert(CawProfileMinter.TxOriginNotFunder.selector);
         callerProxy.callMinter(address(minter), mintCalldata);
     }
 

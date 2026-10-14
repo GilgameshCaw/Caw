@@ -398,6 +398,10 @@ contract PopBBootstrapE2ETest is Test {
         caw.mint(sponsor, sponsorCaw);
         vm.prank(sponsor);
         caw.approve(address(minter), type(uint256).max);
+        // The bootstrap reaches the Minter through the SmartEOA, so the sponsor
+        // pays as tx.origin — which the Minter only allows after this opt-in.
+        vm.prank(sponsor);
+        minter.setTxOriginFunder(true);
 
         // --- Fund caller proxy ---
         callerProxy = new E2ECallerProxy();
@@ -799,6 +803,8 @@ contract PopBBootstrapE2ETest is Test {
         caw.mint(freshSponsor, 1_000_000_000 * 1e18);
         vm.prank(freshSponsor);
         caw.approve(address(minter), type(uint256).max);
+        vm.prank(freshSponsor);
+        minter.setTxOriginFunder(true);
         vm.deal(freshSponsor, 1 ether);
 
         // Measure gas.
@@ -990,6 +996,8 @@ contract PopBBootstrapE2ETest is Test {
         caw.mint(freshSponsor2, 1_000_000_000 * 1e18);
         vm.prank(freshSponsor2);
         caw.approve(address(minter), type(uint256).max);
+        vm.prank(freshSponsor2);
+        minter.setTxOriginFunder(true);
         vm.deal(freshSponsor2, 1 ether);
 
         // 700k outer budget: above measured ~528k so a non-capped inner call succeeds;
