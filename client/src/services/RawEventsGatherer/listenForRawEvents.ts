@@ -127,10 +127,13 @@ async function fetchRejectedSetFromTx(
   return { kind: 'ok', rejected }
 }
 
-// Max blocks per eth_getLogs window. Default 10K suits Infura/Alchemy, but many
-// public Base Sepolia RPCs cap eth_getLogs far lower (sepolia.base.org: 2000).
-// Operators on a capped RPC set L2_LOG_CHUNK_BLOCKS=1500 (or their RPC's limit)
-// to avoid "eth_getLogs range too large" errors + silently missed ranges.
+// Max blocks per eth_getLogs window. Default 10K suits Infura/Alchemy. Public
+// Base Sepolia RPCs cap eth_getLogs far lower, and the caps move:
+// sepolia.base.org went from 2000 to 1000 to 500 (measured 2026-10-07).
+// Both the historical sync and the live poll go through scanLogsForward,
+// which halves a window the RPC rejects and retries from the same block, so
+// this no longer has to match the smallest cap among L2_RPC_URL_HTTP and its
+// fallbacks; setting it to that cap only skips the failed first attempt.
 // (zinsanjp / nyaromesama co-located V2 bring-up.)
 const L2_LOG_CHUNK_BLOCKS = Number(process.env.L2_LOG_CHUNK_BLOCKS) || 10_000
 
@@ -974,19 +977,31 @@ export default async function listenForRawEvents(
         } else {
           console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
         }
-        const sigEvents = await httpContract.queryFilter(
-          httpContract.filters.ActionsProcessed(config.networkId),
+        // Through scanLogsForward, like the historical sync, so a window an
+        // upstream rejects as too wide is halved and retried instead of
+        // failing the whole poll. Range caps differ per upstream and change
+        // over time, and FallbackProvider can send any call to any configured
+        // URL, so no single MAX_POLL_BLOCKS is safe for every call. The topic
+        // filter is unchanged: ActionsProcessed for this networkId.
+        const sigEvents = await scanLogsForward(
+          httpProvider,
+          CAW_ACTIONS_ADDRESS,
+          await httpContract.filters.ActionsProcessed(config.networkId).getTopicFilter(),
           lastSyncedBlock + 1,
-          toBlock
-        ) as unknown as Log[]
+          toBlock,
+          { chunkBlocks: MAX_POLL_BLOCKS },
+        )
 
         // Also poll the ERC-1271 sibling when deployed.
-        const erc1271Events: Log[] = httpContractERC1271
-          ? (await httpContractERC1271.queryFilter(
-              httpContractERC1271.filters.ActionsProcessed(config.networkId),
+        const erc1271Events: Log[] = httpContractERC1271 && CAW_ACTIONS_ERC1271_ADDRESS
+          ? await scanLogsForward(
+              httpProvider,
+              CAW_ACTIONS_ERC1271_ADDRESS,
+              await httpContractERC1271.filters.ActionsProcessed(config.networkId).getTopicFilter(),
               lastSyncedBlock + 1,
-              toBlock
-            ) as unknown as Log[])
+              toBlock,
+              { chunkBlocks: MAX_POLL_BLOCKS },
+            )
           : []
 
         // Merge and sort by (blockNumber, logIndex) to preserve canonical order.
