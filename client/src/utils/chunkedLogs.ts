@@ -1,18 +1,20 @@
 // Chunked eth_getLogs walker.
 //
-// Public RPCs (publicnode, the canonical Sepolia public-fallback, etc.)
-// universally reject getLogs requests spanning more than ~50K blocks.
-// Even paid tiers cap at 10K-100K depending on the provider. We chunk so
-// the same code path works against any backend without operator-tuned
-// block ranges.
+// RPCs cap the block range of a single eth_getLogs call, and the caps vary
+// widely: paid tiers are around 10K-100K, while sepolia.base.org rejects
+// anything wider than 200 (HTTP 413, reported 2026-10-14; it was 2,000,
+// then 1,000 in 2026-09, then 500 on 2026-10-07). We chunk, and
+// shrink the chunk when a call fails, so the same code path works against
+// any backend without operator-tuned block ranges.
 //
 // Two modes:
 //
 //   scanLogsForward  — ingest every event from `fromBlock` to `toBlock`.
 //                       Used by the indexer's historical sync. Misses
-//                       nothing; if a chunk fails, we halve and retry,
-//                       and only give up after multiple failures (operator
-//                       gets a clear error rather than a silent hole).
+//                       nothing; if a window fails, we shrink it and retry
+//                       from the same block (see shrinkAfterError), and
+//                       throw if it still fails (operator gets a clear
+//                       error rather than a silent hole).
 //
 //   scanLogsBackward — find the most recent N events fast, bail as soon
 //                       as we walk into an empty window after seeing
@@ -25,8 +27,10 @@
 import { AbstractProvider, Log } from 'ethers'
 
 export interface ChunkedScanOptions {
-  /** Block range per request. Default: 10_000 (works on free RPCs;
-   *  paid RPCs handle 50_000+ but the default is safe). */
+  /** Block range per request. Default: 10_000. The forward scan shrinks
+   *  the window when a call fails, so an RPC with a smaller cap
+   *  (sepolia.base.org: 200) still works; setting this to the cap just
+   *  skips the failed attempts. */
   chunkBlocks?: number
   /** Hard ceiling on the number of windows we'll iterate. Defaults are
    *  per-direction: 100 forward, 20 backward. Backstop against
@@ -71,16 +75,79 @@ export interface BackwardScanOptions extends ChunkedScanOptions {
 const DEFAULT_CHUNK = 10_000
 const DEFAULT_MAX_WINDOWS_FORWARD = 100
 const DEFAULT_MAX_WINDOWS_BACKWARD = 20
+// A window that fails for a reason we can't tell is about its size (rate
+// limit, outage) is retried on at most MAX_FORWARD_SHRINKS smaller
+// windows, then the first error is thrown: 1 + 5 calls, so a dead RPC
+// still fails fast. A window the RPC rejected as too wide keeps shrinking
+// down to one block instead (see shrinkAfterError), since a fixed number
+// of halvings stops working as soon as the cap drops below what it
+// reaches (10_000 -> 312 in 5 halvings; sepolia.base.org went to 200).
+const MAX_FORWARD_SHRINKS = 5
+
+// "eth_getLogs is limited to a 200 range" (sepolia.base.org), with or
+// without "-block".
+const RANGE_CAP_RE = /limited to (?:a )?(\d+)[ -]?(?:block )?range/i
+// Errors that say the requested range was too wide, without a usable
+// number. HTTP 413 is matched by its reason phrase, not "413", which also
+// turns up as a JSON-RPC request id in ethers' error message.
+const RANGE_ERROR_RE =
+  /payload too large|limited to [^|]{0,40}range|block range|range (?:is )?too (?:large|wide|big)|exceed\w* (?:the )?(?:max\w* )?(?:block )?range|more than \d+ (?:results|logs)|too many (?:results|logs)/i
+
+// The text an RPC put in a getLogs failure. ethers puts the HTTP status in
+// shortMessage / info.responseStatus and the body in info.responseBody;
+// wrappers (FallbackProvider, eRPC) nest the original under error / cause.
+function errorText(err: any, depth = 0): string {
+  if (err == null || depth > 3) return ''
+  if (typeof err !== 'object') return String(err)
+  const parts: string[] = []
+  for (const v of [err.message, err.shortMessage, err.info?.responseStatus, err.info?.responseBody, err.body]) {
+    if (typeof v === 'string') parts.push(v)
+  }
+  for (const inner of [err.error, err.cause, err.info?.error]) {
+    if (inner && inner !== err) parts.push(errorText(inner, depth + 1))
+  }
+  return parts.join(' | ')
+}
+
+/**
+ * The window to retry with after `span` blocks starting at the cursor
+ * failed with `err`, or undefined to give up and throw.
+ *
+ *  - The RPC named its cap: retry with exactly that many blocks.
+ *  - The RPC said the range was too wide: halve, down to one block
+ *    (bounded by log2(span) calls).
+ *  - Anything else: halve, at most MAX_FORWARD_SHRINKS times.
+ *
+ * Exported for tests.
+ */
+export function shrinkAfterError(err: unknown, span: number, shrinks: number): number | undefined {
+  if (span <= 1) return undefined
+  const text = errorText(err)
+  const cap = RANGE_CAP_RE.exec(text)
+  if (cap) {
+    const n = Number(cap[1])
+    if (Number.isSafeInteger(n) && n >= 1 && n < span) return n
+  }
+  if (!RANGE_ERROR_RE.test(text) && shrinks >= MAX_FORWARD_SHRINKS) return undefined
+  return Math.floor(span / 2)
+}
 
 /**
  * Walk every block from `fromBlock` to `toBlock` inclusive in chunks.
  * Returns logs in chronological order (matches the underlying
  * eth_getLogs ordering within each chunk).
  *
- * Halves the chunk on a single getLogs failure and retries the upper
- * half. If that also fails, throws — losing data on a forward scan
+ * On a getLogs failure, shrinks the window and retries from the same
+ * block (shrinkAfterError). The size that worked is kept for the rest of
+ * the scan, so a capped RPC costs a few failed calls once, not on every
+ * window. If the window still fails (or is already a single block),
+ * throws the first error — losing data on a forward scan
  * would silently desync the indexer, which is much worse than failing
  * loud.
+ *
+ * maxWindows is counted in windows of the requested size: a window half
+ * that size counts as 0.5, so shrinking doesn't reduce how many blocks a
+ * scan may cover.
  *
  * If `fromBlock > toBlock` returns []. Caller is responsible for
  * resolving `toBlock = 'latest'` to a concrete number first.
@@ -95,8 +162,10 @@ export async function scanLogsForward(
 ): Promise<Log[]> {
   if (fromBlock > toBlock) return []
 
-  const chunkBlocks = opts.chunkBlocks ?? DEFAULT_CHUNK
+  const requestedChunk = opts.chunkBlocks ?? DEFAULT_CHUNK
+  let chunkBlocks = requestedChunk
   const maxWindows = opts.maxWindows ?? DEFAULT_MAX_WINDOWS_FORWARD
+  let warnedShrink = false
   const logs: Log[] = []
 
   let cursor = fromBlock
@@ -108,28 +177,35 @@ export async function scanLogsForward(
         `(target=${toBlock}). Increase chunkBlocks or maxWindows in opts.`,
       )
     }
-    const chunkEnd = Math.min(cursor + chunkBlocks - 1, toBlock)
-    let windowLogs: Log[]
-    try {
-      windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: cursor, toBlock: chunkEnd })
-    } catch (err: any) {
-      // Halve the window once. Free RPCs occasionally cap below the
-      // requested chunk on a per-request basis (e.g. when the chunk
-      // happens to span a high-traffic block).
-      const halfEnd = cursor + Math.floor((chunkEnd - cursor) / 2)
-      if (halfEnd <= cursor) throw err // can't halve a 1-block window — give up
+    let chunkEnd = Math.min(cursor + chunkBlocks - 1, toBlock)
+    let windowLogs: Log[] | undefined
+    let firstErr: any
+    for (let shrinks = 0; windowLogs === undefined; shrinks++) {
       try {
-        const upper = await provider.getLogs({ address: addr, topics, fromBlock: cursor, toBlock: halfEnd })
-        const lower = await provider.getLogs({ address: addr, topics, fromBlock: halfEnd + 1, toBlock: chunkEnd })
-        windowLogs = [...upper, ...lower]
-      } catch {
-        throw err // surface the original error
+        windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: cursor, toBlock: chunkEnd })
+      } catch (err: any) {
+        if (firstErr === undefined) firstErr = err
+        // Shrink the window actually requested (it may already be shorter
+        // than chunkBlocks at the end of the range) and retry from the same
+        // block. Judge by the latest error: it is the one about this span.
+        const span = chunkEnd - cursor + 1
+        const next = shrinkAfterError(err, span, shrinks)
+        if (next === undefined) throw firstErr
+        chunkBlocks = next
+        chunkEnd = cursor + chunkBlocks - 1
+        if (!warnedShrink) {
+          warnedShrink = true
+          console.warn(
+            `[chunkedLogs] getLogs ${cursor}..${cursor + span - 1} failed (${firstErr?.shortMessage ?? firstErr?.message ?? firstErr}); ` +
+            `retrying with smaller windows. If the RPC caps the range, set the chunk size to that cap.`,
+          )
+        }
       }
     }
-    logs.push(...windowLogs)
-    opts.onProgress?.(cursor, chunkEnd, windowLogs.length)
+    logs.push(...windowLogs!)
+    opts.onProgress?.(cursor, chunkEnd, windowLogs!.length)
     cursor = chunkEnd + 1
-    windowsUsed++
+    windowsUsed += chunkBlocks / requestedChunk
   }
   return logs
 }
