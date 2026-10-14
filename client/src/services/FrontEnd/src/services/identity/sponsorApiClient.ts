@@ -54,6 +54,8 @@ export interface SponsorBootstrapRequest {
   permitSig: `0x${string}`
   /** Current nonce from SmartEOA.nonceOf(minterAddress, ACTION_MINT_DEPOSIT) */
   permitNonce: string
+  /** User's EOA key over SmartEOA's initialize digest (65-byte r || s || v) */
+  initSig: `0x${string}`
   /**
    * Sponsor-Repay (Phase 2): the repayAmount (wei, decimal string) the FE
    * folded into the signed permit digest. Omitted = plain gift (signed 0).

@@ -3,13 +3,14 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "../contracts/SmartEOA.sol";
+import "./helpers/SmartEOAInit.sol";
 
 /// @title SmartEOAExecuteTest
 /// @notice Tests for SmartEOA.executeBatch — passkey/ecdsaFallback-authorized
 ///         self-custodial fund moves. Mirrors the P-256 mock strategy of
 ///         SmartEOA.t.sol (mock verifier installed at 0x0100; valid sigs are
 ///         pre-registered by their precompile-input hash).
-contract SmartEOAExecuteTest is Test {
+contract SmartEOAExecuteTest is SmartEOAInit {
     // Real NIST P-256 affine coords (same as SmartEOA.t.sol PK1).
     bytes32 constant PK1_X = bytes32(0x4359cf55e848ec6f18a1163aeb2dfe474aad0db80bf5be418b689033e04dd032);
     bytes32 constant PK1_Y = bytes32(0xf18e3dafea96113646f34a71badc522653c4f0bdc86ffc6255db7823b4edd221);
@@ -25,14 +26,20 @@ contract SmartEOAExecuteTest is Test {
     P256MockRegistry internal p256Registry;
     Sink internal sink;
 
+    /// @dev Key of the delegated EOA itself (signs initSig).
+    uint256 internal constant ACCOUNT_PK = 0xa11ce0000000000000000000000000000000000000000000000000000000a11c;
+
     function setUp() public {
         ecdsaAddr = vm.addr(ECDSA_PK);
         p256Registry = new P256MockRegistry();
         MockP256Precompile mock = new MockP256Precompile(address(p256Registry));
         vm.etch(address(0x0100), address(mock).code);
 
-        account = new SmartEOA();
-        account.initialize{value: 0}(PK1_X, PK1_Y, ecdsaAddr, payable(address(0)), new bytes(0));
+        account = _delegatedAccount(ACCOUNT_PK);
+        account.initialize{value: 0}(
+            PK1_X, PK1_Y, ecdsaAddr, payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, ecdsaAddr, address(0), new bytes(0))
+        );
 
         sink = new Sink();
         // Fund the account so it can forward ETH value.

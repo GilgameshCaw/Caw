@@ -486,6 +486,7 @@ export default function Onboarding() {
           ecdsaFallbackAddr: d.ecdsaFallbackAddr,
           authTupleNonce: d.authTupleNonce,
           authTupleSignature: d.authTupleSignature,
+          initSig: d.initSig,
         }),
       })
       // Async IIFE (handleBootstrapDone is a sync useCallback): we don't block

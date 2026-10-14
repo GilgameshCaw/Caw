@@ -61,6 +61,7 @@ contract SmartEOA {
     // =========================================================================
 
     error AlreadyInitialized();
+    error InvalidInitSig();
     error NotInitialized();
     error PasskeyAlreadyEnrolled();
     error PasskeyNotFound();
@@ -201,20 +202,35 @@ contract SmartEOA {
     ///           4. Set ecdsaFallback.
     ///           5. Forward msg.value to minterContract if provided.
     ///
+    ///         The EOA's own key must sign every argument (initSig).  A 7702
+    ///         delegation survives a reverted tx body, and an auth tuple can be
+    ///         copied out of a pending tx into another one, so "same tx as the
+    ///         auth list" alone does not stop someone else from running
+    ///         initialize first with their own passkey and fallback.  Binding
+    ///         minterContract and mintCalldata as well means a copied initSig
+    ///         can only reproduce the exact call the user signed.
+    ///
     /// @param pubkeyX          P-256 passkey X coordinate.
     /// @param pubkeyY          P-256 passkey Y coordinate.
     /// @param ecdsaFallbackAddr secp256k1 address held in user's encrypted backup.
     /// @param minterContract   CawProfileMinter address, or address(0) for standalone test.
     /// @param mintCalldata     Encoded mintAndDepositSponsored call, or empty for standalone.
+    /// @param initSig          65-byte secp256k1 sig by the EOA (address(this)) over
+    ///                         _initializeDigest(...) of the arguments above.
     function initialize(
         bytes32 pubkeyX,
         bytes32 pubkeyY,
         address ecdsaFallbackAddr,
         address payable minterContract,
-        bytes calldata mintCalldata
+        bytes calldata mintCalldata,
+        bytes calldata initSig
     ) external payable {
         // Step 1 + 2: guard then set (CEI — state written before external call).
         if (initialized) revert AlreadyInitialized();
+        bytes32 initDigest = _initializeDigest(
+            pubkeyX, pubkeyY, ecdsaFallbackAddr, minterContract, mintCalldata
+        );
+        if (_recover65(initDigest, initSig) != address(this)) revert InvalidInitSig();
         initialized = true;
 
         // Step 3: enroll initial passkey — active immediately (validFrom = 0).
@@ -630,6 +646,38 @@ contract SmartEOA {
         return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
     }
 
+    /// @dev Digest the EOA's own key signs to authorize initialize.  Same domain
+    ///      as _executeDigest (chain + account), distinct opName "initialize" so
+    ///      the sig cannot be replayed as any other SmartEOA operation.  Binds
+    ///      every initialize argument; mintCalldata by its hash.  No nonce is
+    ///      needed: initialize runs at most once per account.
+    function _initializeDigest(
+        bytes32 pubkeyX,
+        bytes32 pubkeyY,
+        address ecdsaFallbackAddr,
+        address minterContract,
+        bytes calldata mintCalldata
+    )
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 domainSep = keccak256(abi.encode(
+            keccak256("SmartEOA"),
+            block.chainid,
+            address(this)
+        ));
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256(bytes("initialize")),
+            pubkeyX,
+            pubkeyY,
+            ecdsaFallbackAddr,
+            minterContract,
+            keccak256(mintCalldata)
+        ));
+        return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+    }
+
     // =========================================================================
     // ETH receive
     // =========================================================================
@@ -652,17 +700,29 @@ contract SmartEOA {
         view
         returns (bool)
     {
-        if (sig.length != 65) return false;
+        address recovered = _recover65(digest, sig);
+        address fb = ecdsaFallback;
+        return recovered != address(0) && fb != address(0) && recovered == fb;
+    }
+
+    /// @dev Recover the signer of a 65-byte secp256k1 sig (r || s || v).
+    ///      Returns address(0) for a wrong length, a malleable v (only 27/28),
+    ///      a high-s sig (EIP-2), or a sig ecrecover rejects.  Callers compare
+    ///      against a non-zero expected address.
+    function _recover65(bytes32 digest, bytes calldata sig)
+        internal
+        pure
+        returns (address)
+    {
+        if (sig.length != 65) return address(0);
         bytes32 r = bytes32(sig[0:32]);
         bytes32 s = bytes32(sig[32:64]);
         uint8   v = uint8(sig[64]);
         // Reject malleable v without calling ecrecover (v=26 attack surface).
-        if (v != 27 && v != 28) return false;
+        if (v != 27 && v != 28) return address(0);
         // Reject high-s sigs (malleability hardening per EIP-2).
-        if (uint256(s) > uint256(SECP256K1_N_HALF)) return false;
-        address recovered = ecrecover(digest, v, r, s);
-        address fb = ecdsaFallback;
-        return recovered != address(0) && fb != address(0) && recovered == fb;
+        if (uint256(s) > uint256(SECP256K1_N_HALF)) return address(0);
+        return ecrecover(digest, v, r, s);
     }
 
     // =========================================================================
@@ -1120,9 +1180,11 @@ contract SmartEOA {
     //     overhead and the P-256 precompile.
     //   - Any future ERC-1271 consumer: same isValidSignature(bytes32,bytes) ABI.
     //
-    // initialize(bytes32, bytes32, address, address payable, bytes):
+    // initialize(bytes32, bytes32, address, address payable, bytes, bytes):
     //   - Called once by the sponsor server's type-0x04 tx as the tx body.
     //   - NOT callable again (AlreadyInitialized guard).
+    //   - Requires initSig from the EOA's own key over all other arguments, so
+    //     only the key holder decides the first passkey and fallback.
     //
     // addPasskey, removePasskey, cancelPendingPasskey, rotateEcdsaFallback:
     //   - Called by the user (from their FE) after authentication.

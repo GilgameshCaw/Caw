@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "../contracts/SmartEOA.sol";
+import "./helpers/SmartEOAInit.sol";
 
 // SmartEOAGas.t.sol
 // Measures the real gas cost of SmartEOA.isValidSignature on the
@@ -28,7 +29,7 @@ import "../contracts/SmartEOA.sol";
 // Mode B (mock-based): uses the P256MockRegistry pattern from SmartEOA.t.sol
 //   to run the fail-at-50k / pass-at-150k test without a network dependency.
 //   Mode B tests always run.
-contract SmartEOAGasTest is Test {
+contract SmartEOAGasTest is SmartEOAInit {
 
     // =========================================================================
     // Real P-256 test vector (task 1)
@@ -85,6 +86,8 @@ contract SmartEOAGasTest is Test {
 
     /// @dev secp256k1 private key for ecdsaFallback (same as SmartEOA.t.sol).
     uint256 internal constant ECDSA_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    /// @dev Key of the delegated EOA itself (signs initSig).
+    uint256 internal constant ACCOUNT_PK = 0xa11ce0000000000000000000000000000000000000000000000000000000a11c;
 
     // =========================================================================
     // Test: measure gas on Sepolia fork (Mode A)
@@ -116,7 +119,7 @@ contract SmartEOAGasTest is Test {
         emit log_string("INFO: P-256 precompile confirmed at 0x0100");
 
         // Deploy SmartEOA on the fork.
-        SmartEOA account = new SmartEOA();
+        SmartEOA account = _delegatedAccount(ACCOUNT_PK);
         address ecdsaFallback = vm.addr(ECDSA_PK);
 
         // We need REAL P-256 key + real P-256 sig.  We use the RFC 6979 §A.2.5
@@ -127,7 +130,10 @@ contract SmartEOAGasTest is Test {
         bytes32 realPkX = bytes32(0x60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6);
         bytes32 realPkY = bytes32(0x7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299);
 
-        account.initialize{value: 0}(realPkX, realPkY, ecdsaFallback, payable(address(0)), new bytes(0));
+        account.initialize{value: 0}(
+            realPkX, realPkY, ecdsaFallback, payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, realPkX, realPkY, ecdsaFallback, address(0), new bytes(0))
+        );
 
         // Build clientDataJSON + compute the message hash that P-256 signs over.
         bytes memory cdj = _makeCdj(TEST_DIGEST);
@@ -237,9 +243,12 @@ contract SmartEOAGasTest is Test {
         _installMockP256(registry);
 
         // Deploy and initialize SmartEOA.
-        SmartEOA account = new SmartEOA();
+        SmartEOA account = _delegatedAccount(ACCOUNT_PK);
         address ecdsaFallback = vm.addr(ECDSA_PK);
-        account.initialize{value: 0}(PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0));
+        account.initialize{value: 0}(
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0))
+        );
 
         // Build a valid WebAuthn assertion (SIG_R/SIG_S registered for PK1 + TEST_DIGEST).
         bytes memory cdj = _makeCdj(TEST_DIGEST);
@@ -323,7 +332,7 @@ contract SmartEOAGasTest is Test {
         P256MockRegistry registry = new P256MockRegistry();
         _installMockP256(registry);
 
-        SmartEOA account = new SmartEOA();
+        SmartEOA account = _delegatedAccount(ACCOUNT_PK);
         address ecdsaFallback = vm.addr(ECDSA_PK);
 
         bytes32 PK2_X = bytes32(0x2222222222222222222222222222222222222222222222222222222222222222);
@@ -332,7 +341,10 @@ contract SmartEOAGasTest is Test {
         bytes32 PK3_Y = bytes32(0x5555555555555555555555555555555555555555555555555555555555555555);
 
         // Initialize with PK1; this makes PK1 active (no timelock on bootstrap).
-        account.initialize{value: 0}(PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0));
+        account.initialize{value: 0}(
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0))
+        );
 
         // Remove PK1 via ecdsaFallback so we can re-add all 3 via ecdsaFallback
         // (activeCount==0 → secp256k1 path for addPasskey).
@@ -421,8 +433,11 @@ contract SmartEOAGasTest is Test {
         P256MockRegistry registry = new P256MockRegistry();
         _installMockP256(registry);
 
-        SmartEOA account = new SmartEOA();
-        account.initialize{value: 0}(PK1_X, PK1_Y, vm.addr(ECDSA_PK), payable(address(0)), new bytes(0));
+        SmartEOA account = _delegatedAccount(ACCOUNT_PK);
+        account.initialize{value: 0}(
+            PK1_X, PK1_Y, vm.addr(ECDSA_PK), payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, vm.addr(ECDSA_PK), address(0), new bytes(0))
+        );
 
         bytes4 ivsSelector = bytes4(keccak256("isValidSignature(bytes32,bytes)"));
 
@@ -561,8 +576,11 @@ contract SmartEOAGasTest is Test {
         P256MockRegistry registry = new P256MockRegistry();
         _installMockP256(registry);
 
-        SmartEOA account = new SmartEOA();
-        account.initialize{value: 0}(PK1_X, PK1_Y, vm.addr(ECDSA_PK), payable(address(0)), new bytes(0));
+        SmartEOA account = _delegatedAccount(ACCOUNT_PK);
+        account.initialize{value: 0}(
+            PK1_X, PK1_Y, vm.addr(ECDSA_PK), payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, vm.addr(ECDSA_PK), address(0), new bytes(0))
+        );
 
         bytes memory cdj = _makeCdj(TEST_DIGEST);
         bytes32 h = sha256(abi.encodePacked(AUTH_DATA, sha256(cdj)));

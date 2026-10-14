@@ -33,12 +33,14 @@
  */
 
 import { privateKeyToAccount } from 'viem/accounts'
-import { bytesToHex } from 'viem'
+import { bytesToHex, encodeFunctionData } from 'viem'
 import { recoverAuthorizationAddress } from 'viem/utils'
 import { generateSecp256k1Keypair } from './secp256k1Key'
 import { encryptBackupBlob, encryptBackupBlobWithKey, type BackupBlob } from './backupBlob'
 import { signAuthorizationTuple, type SignedAuthorizationTuple } from './eip7702'
 import { buildMintDepositPermitDigest } from './eip712Permits'
+import { signSmartEoaInit, standaloneInitArgs } from './smartEoaInit'
+import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { buildPrfSalt, prfSecretToAesKey, markPrfCapable } from './prf'
 import { signWithPasskey, hexToBytes as passkeyHexToBytes } from './passkey'
 import { wrapSessionKeyWithPrf, saveSessionRoamMeta } from './sessionPrf'
@@ -98,6 +100,12 @@ export type BootstrapParams = {
    * Raw authenticatorData bytes (hex) from the WebAuthn assertion.
    */
   authenticatorData: `0x${string}`
+  /**
+   * 65-byte sig by the user's EOA key over SmartEOA's initialize digest
+   * (passkey, fallback, Minter, keccak256(mintCalldata)). SmartEOA.initialize
+   * reverts without it, so nobody else can initialize the delegated EOA.
+   */
+  initSig: `0x${string}`
 }
 
 /**
@@ -225,6 +233,8 @@ export type BootstrapResult = {
     ecdsaFallbackAddr: `0x${string}`
     authTupleNonce: string
     authTupleSignature: { yParity: number; r: `0x${string}`; s: `0x${string}` }
+    /** EOA key's sig over SmartEOA's initialize digest for the standalone L2 call. */
+    initSig: `0x${string}`
   }
 }
 
@@ -384,6 +394,13 @@ export async function bootstrapNewUser(opts: {
       contractAddress: smartEoaAddress,
       nonce: 0n,   // fresh EOA: nonce 0 on L2 (never transacted there)
     })
+    const l2InitSig = await signSmartEoaInit(keypair.privateKey, standaloneInitArgs({
+      chainId: l2ChainId,
+      account: keypair.address,
+      pubkeyX: passkeyPubkeyX,
+      pubkeyY: passkeyPubkeyY,
+      ecdsaFallback: keypair.address,
+    }))
     l2Delegation = {
       passkeyPubkeyX,
       passkeyPubkeyY,
@@ -394,6 +411,7 @@ export async function bootstrapNewUser(opts: {
         r: l2Auth.signedAuthorization.r,
         s: l2Auth.signedAuthorization.s,
       },
+      initSig: l2InitSig,
     }
   }
 
@@ -466,11 +484,43 @@ export async function bootstrapNewUser(opts: {
   const passkeyAssertion = await passkeySigner(permitDigest, mintPermitPrfSalt)
   const capturedPrfSecret: Uint8Array | undefined = passkeyAssertion.prfSecret
 
+  // Step 5b: Sign SmartEOA.initialize with the EOA key. initSig binds the
+  // passkey, the fallback, the Minter and the exact mintCalldata the sponsor
+  // server will build — byte-identical to SponsorService.sponsorBootstrap's
+  // encodeFunctionData('mintAndDepositSponsored', ...), or the server rejects
+  // it in pre-flight (on-chain it would revert InvalidInitSig).
+  const mintCalldata = encodeFunctionData({
+    abi: cawProfileMinterAbi,
+    functionName: 'mintAndDepositSponsored',
+    args: [
+      networkId,
+      recoveredRecipient,
+      username,
+      depositAmountCAW,
+      lzDestId,
+      lzTokenAmount,
+      permitNonce,
+      passkeyAssertion.permitSig,
+      kycLevel,
+      sponsorTokenId,
+      repayAmount,
+    ],
+  })
+  const initSig = await signSmartEoaInit(keypair.privateKey, {
+    chainId,
+    account: recoveredRecipient,
+    pubkeyX: passkeyPubkeyX,
+    pubkeyY: passkeyPubkeyY,
+    ecdsaFallback: keypair.address,
+    minterContract: minterAddress,
+    mintCalldata,
+  })
+
   // Step 6: Assemble and submit the bootstrap params to the sponsor API.
   // The sponsor server builds the single type-0x04 tx:
   //   authorizationList: [authResult.signedAuthorization]
   //   to: keypair.address (the delegated EOA)
-  //   calldata: SmartEOA.initialize(pkX, pkY, ecdsaFallback, mintParams)
+  //   calldata: SmartEOA.initialize(pkX, pkY, ecdsaFallback, minter, mintCalldata, initSig)
   // which internally calls CawProfileMinter.mintAndDepositSponsored.
   const bootstrapParams: BootstrapParams = {
     ...(code ? { code } : {}),
@@ -486,6 +536,7 @@ export async function bootstrapNewUser(opts: {
     permitSig: passkeyAssertion.permitSig,
     clientDataJSON: passkeyAssertion.clientDataJSON,
     authenticatorData: passkeyAssertion.authenticatorData,
+    initSig,
   }
 
   // DURABILITY: make the profile recoverable BEFORE the irreversible mint. Upload

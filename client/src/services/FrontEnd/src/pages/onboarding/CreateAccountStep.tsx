@@ -231,6 +231,7 @@ export default function CreateAccountStep({
             authTupleNonce: params.authTupleSignature.nonce.toString(),
             permitSig: params.permitSig,
             permitNonce: BOOTSTRAP_PERMIT_NONCE.toString(),
+            initSig: params.initSig,
             // Sponsor-Repay (Phase 2): tell the server the repayAmount we folded
             // into the signed digest so it can confirm it matches the code's
             // policy. Omit when 0 (plain gift) for byte-identical legacy behaviour.

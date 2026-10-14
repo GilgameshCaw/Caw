@@ -46,6 +46,7 @@ import { CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, SMART_EOA_ADDRESS } from '
 import { pokeIndexTokenId } from '../../api/util/indexerPoke'
 import { getCawPriceCache, getEthPriceCache } from '../ChainSyncService'
 import { weiEthToWeiCaw } from './inviteQuote'
+import { recoverSmartEoaInitSigner } from './smartEoaInit'
 
 // ─── Param types ────────────────────────────────────────────────────────────
 
@@ -65,6 +66,9 @@ export interface DelegateL2Params {
   authTupleSignature: AuthTupleSignature
   /** User's EOA nonce on L2 at sign time (0 on a fresh EOA). */
   authTupleNonce: bigint
+  /** 65-byte sig by the user's EOA key over SmartEOA's initialize digest for the
+   *  standalone call on L2 (minterContract = 0, mintCalldata = 0x). */
+  initSig: `0x${string}`
 }
 
 export interface BootstrapParams {
@@ -82,6 +86,9 @@ export interface BootstrapParams {
   // EIP-712 permit sig from the user (passkey or secp256k1)
   permitSig: `0x${string}`
   permitNonce: bigint      // current SmartEOA.nonceOf(Minter, ACTION_MINT_DEPOSIT)
+  // 65-byte sig by the user's EOA key over SmartEOA's initialize digest, binding
+  // the passkey, the fallback, the Minter and keccak256(mintCalldata).
+  initSig: `0x${string}`
   // Phase 2 Sponsor Repay — all default to 0 / unused.
   // - kycLevel withdraw gate (set at mint, stored per-tokenId on Minter):
   //     0 = no gate (gift / repay-only / casual sponsorship — default)
@@ -556,6 +563,29 @@ export class SponsorService {
         params.repayAmount    ?? 0n,
       ])
 
+      // ── initSig pre-flight ───────────────────────────────────────────
+      // SmartEOA.initialize reverts InvalidInitSig unless the user's EOA key
+      // signed exactly these arguments (including this mintCalldata), so a
+      // mismatch is a certain revert — reject before spending gas.
+      const initSigner = recoverSmartEoaInitSigner({
+        chainId,
+        account: userEoaAddress,
+        pubkeyX: params.passkeyPubkeyX,
+        pubkeyY: params.passkeyPubkeyY,
+        ecdsaFallback: params.ecdsaFallbackAddr,
+        minterContract: this.minterAddress,
+        mintCalldata,
+      }, params.initSig)
+      if (!initSigner || initSigner.toLowerCase() !== userEoaAddress.toLowerCase()) {
+        return {
+          error: 'BAD_SIG',
+          detail:
+            `initSig recovers to ${initSigner ?? '(malformed)'}, not the delegated EOA ${userEoaAddress}. ` +
+            `The frontend must sign SmartEOA's initialize digest over the same passkey, fallback, ` +
+            `Minter and mintCalldata the server builds.`,
+        }
+      }
+
       // ── Build SmartEOA.initialize calldata ───────────────────────────
       const smartEoaIface = new Interface(smartEoaAbi as any)
       const initCalldata = smartEoaIface.encodeFunctionData('initialize', [
@@ -564,6 +594,7 @@ export class SponsorService {
         params.ecdsaFallbackAddr,
         this.minterAddress,
         mintCalldata,
+        params.initSig,
       ])
 
       // ── Assemble EIP-7702 type-4 transaction ─────────────────────────
@@ -774,10 +805,13 @@ export class SponsorService {
    * — the STANDALONE enroll-only path (minterContract == address(0)) that enrolls
    * the passkey and does NOT mint. value: 0 (no LZ, no deposit on this leg).
    *
-   * The user must have signed an L2 auth tuple (chainId = L2) with their
-   * secp256k1 key. Idempotent-ish: if the EOA is already delegated on L2, the
-   * 7702 entry is a no-op nonce bump but initialize would revert AlreadyInitialized
-   * — so we pre-check delegation and short-circuit.
+   * The user must have signed an L2 auth tuple (chainId = L2) and an initSig
+   * (SmartEOA's initialize digest for this standalone call) with their secp256k1
+   * key. Idempotent: if the EOA is already delegated to our SmartEOA AND
+   * initialized, return success. If it is delegated but NOT initialized (a
+   * previous delegation tx whose body reverted — the 7702 delegation survives
+   * the revert), finish it with a plain tx calling initialize; initSig means
+   * only the user's own passkey/fallback can land there.
    */
   async sponsorDelegateL2(params: DelegateL2Params): Promise<SponsorResult> {
     if (!this.l2Provider || !this.l2Wallet) {
@@ -813,25 +847,36 @@ export class SponsorService {
       //    than re-delegate (we can't anyway — a 7702 re-point needs a fresh auth
       //    tuple at the bumped nonce) or mask it.
       const existingCode = (await this.l2Provider.getCode(userEoaAddress)).toLowerCase()
+      let alreadyDelegated = false
       if (existingCode && existingCode !== '0x') {
         const want = `0xef0100${this.smartEoaAddress.slice(2).toLowerCase()}`
-        if (existingCode === want) {
-          // Already delegated to our SmartEOA + initialized — no-op success.
+        if (existingCode !== want) {
+          return {
+            error: 'ALREADY_DELEGATED_ELSEWHERE',
+            detail: `EOA ${userEoaAddress} is delegated to ${existingCode.slice(0, 48)} on L2, not our SmartEOA`,
+          }
+        }
+        // Delegated to our SmartEOA — but delegation alone is not initialization.
+        // SmartEOA storage slot 0 packs `bool initialized` (offset 0, lowest byte)
+        // with `address ecdsaFallback` (offset 1); SmartEOA has no view for it.
+        const slot0 = await this.l2Provider.getStorage(userEoaAddress, 0)
+        if ((BigInt(slot0) & 0xffn) !== 0n) {
+          // Delegated + initialized — no-op success.
           return { txHash: '', recipient: userEoaAddress }
         }
-        return {
-          error: 'ALREADY_DELEGATED_ELSEWHERE',
-          detail: `EOA ${userEoaAddress} is delegated to ${existingCode.slice(0, 48)} on L2, not our SmartEOA`,
-        }
+        alreadyDelegated = true
       }
 
       // 3. Confirm FE-supplied nonce matches the EOA's current L2 nonce (a stale
       //    nonce silently drops the 7702 entry → un-delegated EOA, wasted gas).
-      const currentEoaNonce = await this.l2Provider.getTransactionCount(userEoaAddress, 'pending')
-      if (BigInt(currentEoaNonce) !== params.authTupleNonce) {
-        return {
-          error: 'NONCE_MISMATCH',
-          detail: `L2 authTupleNonce ${params.authTupleNonce} != EOA L2 nonce ${currentEoaNonce}`,
+      //    Not needed when already delegated: the tx below carries no auth list.
+      if (!alreadyDelegated) {
+        const currentEoaNonce = await this.l2Provider.getTransactionCount(userEoaAddress, 'pending')
+        if (BigInt(currentEoaNonce) !== params.authTupleNonce) {
+          return {
+            error: 'NONCE_MISMATCH',
+            detail: `L2 authTupleNonce ${params.authTupleNonce} != EOA L2 nonce ${currentEoaNonce}`,
+          }
         }
       }
 
@@ -844,8 +889,24 @@ export class SponsorService {
         }
       }
 
-      // 5. Build SmartEOA.initialize(pkX, pkY, fallback, address(0), "") — the
-      //    standalone enroll-only path (no mint).
+      // 5. Build SmartEOA.initialize(pkX, pkY, fallback, address(0), "", initSig)
+      //    — the standalone enroll-only path (no mint). Pre-flight initSig: a
+      //    mismatch is a certain InvalidInitSig revert.
+      const initSigner = recoverSmartEoaInitSigner({
+        chainId: l2ChainId,
+        account: userEoaAddress,
+        pubkeyX: params.passkeyPubkeyX,
+        pubkeyY: params.passkeyPubkeyY,
+        ecdsaFallback: params.ecdsaFallbackAddr,
+        minterContract: ZeroAddress,
+        mintCalldata: '0x',
+      }, params.initSig)
+      if (!initSigner || initSigner.toLowerCase() !== userEoaAddress.toLowerCase()) {
+        return {
+          error: 'BAD_SIG',
+          detail: `L2 initSig recovers to ${initSigner ?? '(malformed)'}, not the delegated EOA ${userEoaAddress}`,
+        }
+      }
       const smartEoaIface = new Interface(smartEoaAbi as any)
       const initCalldata = smartEoaIface.encodeFunctionData('initialize', [
         params.passkeyPubkeyX,
@@ -853,6 +914,7 @@ export class SponsorService {
         params.ecdsaFallbackAddr,
         ZeroAddress,   // minterContract == 0 → standalone, no mint
         '0x',          // empty mintCalldata
+        params.initSig,
       ])
 
       // 6. Assemble + send the type-4 tx on L2.
@@ -882,7 +944,8 @@ export class SponsorService {
       const txResponse = await withWalletLock(l2w.address, async () => {
         const sponsorNonce = await l2p.getTransactionCount(l2w.address, 'pending')
         const tx = new Transaction()
-        tx.type = 4
+        // Already delegated (previous body reverted): a plain call finishes init.
+        tx.type = alreadyDelegated ? 2 : 4
         tx.to = userEoaAddress
         tx.data = initCalldata
         tx.value = 0n
@@ -891,7 +954,7 @@ export class SponsorService {
         tx.gasLimit = GAS_LIMIT_DELEGATE_L2
         tx.maxFeePerGas = feeData.maxFeePerGas ?? (feeData.gasPrice ?? 2_000_000_000n)
         tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 1_000_000n
-        tx.authorizationList = [authEntry]
+        if (!alreadyDelegated) tx.authorizationList = [authEntry]
         const signedTx = await l2w.signTransaction(tx)
         return l2p.broadcastTransaction(signedTx)
       })

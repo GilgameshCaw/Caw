@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "../contracts/SmartEOA.sol";
+import "./helpers/SmartEOAInit.sol";
 
 /// @title SmartEOATest
 /// @notice Tests §7 items 1-12 + 25 of plan-smart-eoa-passkey-sponsorship.md.
@@ -34,7 +35,7 @@ import "../contracts/SmartEOA.sol";
 /// @dev P-256 key coordinates (PK1_X, PK1_Y) are real NIST P-256 affine coordinates.
 ///      Generated offline: python3 test-foundry/helpers/gen_p256_vectors.py
 ///      Private scalar: 0xBC...D2 (documented in helpers/gen_p256_vectors.py).
-contract SmartEOATest is Test {
+contract SmartEOATest is SmartEOAInit {
 
     // =========================================================================
     // P-256 passkey coordinates
@@ -96,6 +97,10 @@ contract SmartEOATest is Test {
     uint256 internal constant OTHER_PK = 0xde9be858da4a475276426320d5e9262ecfc3ba460bfac56360bfa6c4c28b4ee0;
     address internal otherAddr;
 
+    /// @dev Keys of the delegated EOAs themselves (they sign initSig).
+    uint256 internal constant ACCOUNT_PK = 0xa11ce0000000000000000000000000000000000000000000000000000000a11c;
+    uint256 internal constant FRESH_PK   = 0xf4e5400000000000000000000000000000000000000000000000000000f4e54;
+
     function setUp() public {
         ecdsaAddr = vm.addr(ECDSA_PK);
         otherAddr = vm.addr(OTHER_PK);
@@ -104,13 +109,14 @@ contract SmartEOATest is Test {
         p256Registry = new P256MockRegistry();
         _installMockP256(address(p256Registry));
 
-        // Deploy a fresh SmartEOA.
-        account = new SmartEOA();
+        // Deploy a fresh SmartEOA at an EOA whose key we hold.
+        account = _delegatedAccount(ACCOUNT_PK);
 
         // Initialize: PK1 enrolled active, ecdsaFallback = ecdsaAddr.
         account.initialize{value: 0}(
             PK1_X, PK1_Y, ecdsaAddr,
-            payable(address(0)), new bytes(0)
+            payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, PK1_X, PK1_Y, ecdsaAddr, address(0), new bytes(0))
         );
 
         // Register the valid P-256 input for TEST_DIGEST + PK1 + SIG_A.
@@ -191,8 +197,11 @@ contract SmartEOATest is Test {
 
     function test_3_wrong_pubkey_registered_returns_fail() public {
         // Deploy a fresh account with PK2 instead of PK1.
-        SmartEOA freshAccount = new SmartEOA();
-        freshAccount.initialize{value: 0}(PK2_X, PK2_Y, ecdsaAddr, payable(address(0)), new bytes(0));
+        SmartEOA freshAccount = _delegatedAccount(FRESH_PK);
+        freshAccount.initialize{value: 0}(
+            PK2_X, PK2_Y, ecdsaAddr, payable(address(0)), new bytes(0),
+            _initSig(FRESH_PK, PK2_X, PK2_Y, ecdsaAddr, address(0), new bytes(0))
+        );
 
         // Register SIG_A for PK2 (not PK1).
         _registerP256(TEST_DIGEST, SIG_R_A, SIG_S_A, PK2_X, PK2_Y);
@@ -514,8 +523,9 @@ contract SmartEOATest is Test {
     // =========================================================================
 
     function test_initialize_twice_reverts() public {
+        bytes memory sig = _initSig(ACCOUNT_PK, PK1_X, PK1_Y, ecdsaAddr, address(0), new bytes(0));
         vm.expectRevert(SmartEOA.AlreadyInitialized.selector);
-        account.initialize{value: 0}(PK1_X, PK1_Y, ecdsaAddr, payable(address(0)), new bytes(0));
+        account.initialize{value: 0}(PK1_X, PK1_Y, ecdsaAddr, payable(address(0)), new bytes(0), sig);
     }
 
     // =========================================================================
@@ -602,9 +612,10 @@ contract SmartEOATest is Test {
     // =========================================================================
 
     function test_M1_zero_ecdsaFallback_reverts() public {
-        SmartEOA fresh = new SmartEOA();
+        SmartEOA fresh = _delegatedAccount(FRESH_PK);
+        bytes memory sig = _initSig(FRESH_PK, PK1_X, PK1_Y, address(0), address(0), new bytes(0));
         vm.expectRevert(SmartEOA.ZeroAddress.selector);
-        fresh.initialize{value: 0}(PK1_X, PK1_Y, address(0), payable(address(0)), new bytes(0));
+        fresh.initialize{value: 0}(PK1_X, PK1_Y, address(0), payable(address(0)), new bytes(0), sig);
     }
 
     // =========================================================================
@@ -919,13 +930,21 @@ contract PendingKeyHarness {
 
     SmartEOA public account;
 
+    /// @dev Key of the harness's delegated EOA (signs initSig).
+    uint256 internal constant HARNESS_ACCOUNT_PK = 0x4a2e550000000000000000000000000000000000000000000000000000004a2e;
+
     function init(bytes32 pkX, bytes32 pkY, address fallback_) external {
-        account = new SmartEOA();
+        account = SmartEOA(payable(vm_().addr(HARNESS_ACCOUNT_PK)));
+        vm_().etch(address(account), address(new SmartEOA()).code);
         // Initialize with a DUMMY passkey first (we'll remove it after).
         // The dummy passkey is PK2-equivalent: a non-real point that we control.
         bytes32 dummyX = bytes32(0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0);
         bytes32 dummyY = bytes32(0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0);
-        account.initialize{value: 0}(dummyX, dummyY, fallback_, payable(address(0)), new bytes(0));
+        bytes32 initDigest = _initDigest(address(account), dummyX, dummyY, fallback_);
+        (uint8 v0, bytes32 r0, bytes32 s0) = vm_().sign(HARNESS_ACCOUNT_PK, initDigest);
+        account.initialize{value: 0}(
+            dummyX, dummyY, fallback_, payable(address(0)), new bytes(0), abi.encodePacked(r0, s0, v0)
+        );
 
         // Remove the dummy passkey via ecdsaFallback (65-byte sig).
         bytes32 dummyHash = keccak256(abi.encodePacked(dummyX, dummyY));
@@ -961,6 +980,19 @@ contract PendingKeyHarness {
         return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
     }
 
+    /// @dev SmartEOA._initializeDigest for a standalone initialize (no Minter call).
+    function _initDigest(address acct, bytes32 pkX, bytes32 pkY, address fallback_)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 domainSep = keccak256(abi.encode(keccak256("SmartEOA"), block.chainid, acct));
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256(bytes("initialize")), pkX, pkY, fallback_, address(0), keccak256(new bytes(0))
+        ));
+        return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+    }
+
     function vm_() internal pure returns (IVmSign) {
         return IVmSign(address(uint160(uint256(keccak256("hevm cheat code")))));
     }
@@ -969,6 +1001,8 @@ contract PendingKeyHarness {
 // Cheatcode interface for the harness (inheriting Test is not available in non-test contracts)
 interface IVmSign {
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+    function addr(uint256 privateKey) external pure returns (address);
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
 }
 
 // =============================================================================

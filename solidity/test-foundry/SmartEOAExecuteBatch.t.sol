@@ -3,6 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 import "../contracts/SmartEOA.sol";
+import "./helpers/SmartEOAInit.sol";
 
 /// @title SmartEOAExecuteBatchTest
 /// @notice Tests for the payable executeBatch function (relayer-fronted ETH model).
@@ -15,7 +16,7 @@ import "../contracts/SmartEOA.sol";
 ///      the call loop only the UNSPENT portion of msg.value (msg.value - totalValueForwarded)
 ///      is returned to msg.sender.  Inbound ETH during the loop (LZ refunds, DeFi
 ///      redemptions, etc.) stays in the user's account — it is NOT swept to msg.sender.
-contract SmartEOAExecuteBatchTest is Test {
+contract SmartEOAExecuteBatchTest is SmartEOAInit {
 
     // =========================================================================
     // secp256k1 key used for all execute sigs
@@ -44,6 +45,9 @@ contract SmartEOAExecuteBatchTest is Test {
     bytes32 constant DUMMY_PK_X = bytes32(uint256(0xd0d0d0d0d0d0));
     bytes32 constant DUMMY_PK_Y = bytes32(uint256(0xe0e0e0e0e0e0));
 
+    /// @dev Key of the delegated EOA itself (signs initSig).
+    uint256 internal constant ACCOUNT_PK = 0xa11ce0000000000000000000000000000000000000000000000000000000a11c;
+
     // =========================================================================
     // Setup
     // =========================================================================
@@ -56,10 +60,11 @@ contract SmartEOAExecuteBatchTest is Test {
         // We only use the 65-byte ECDSA path in these tests so it never matters.
         _installStubP256();
 
-        account = new SmartEOA();
+        account = _delegatedAccount(ACCOUNT_PK);
         account.initialize{value: 0}(
             DUMMY_PK_X, DUMMY_PK_Y, ecdsaAddr,
-            payable(address(0)), new bytes(0)
+            payable(address(0)), new bytes(0),
+            _initSig(ACCOUNT_PK, DUMMY_PK_X, DUMMY_PK_Y, ecdsaAddr, address(0), new bytes(0))
         );
 
         // Fund the relayer with 10 ETH for value attachment.

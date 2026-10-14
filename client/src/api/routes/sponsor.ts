@@ -205,6 +205,8 @@ const sigHexSchema = z.string()
   .regex(/^0x[0-9a-fA-F]+$/, 'must be 0x-prefixed hex')
   .refine(s => s.length % 2 === 0, 'odd-length hex')
   .refine(s => s.length <= 8194, 'sig too long; max 8194 chars (~4 KB)')
+// SmartEOA.initialize's initSig: exactly one 65-byte secp256k1 sig (r || s || v).
+const initSigSchema = z.string().regex(/^0x[0-9a-fA-F]{130}$/, 'must be a 0x-prefixed 65-byte secp256k1 sig')
 // bigint from string/number (JSON doesn't support BigInt natively)
 const bigintSchema = z.union([
   z.string().regex(/^\d+$/).transform(v => BigInt(v)),
@@ -235,6 +237,8 @@ const BootstrapBodySchema = z.object({
   authTupleNonce:     bigintSchema,
   permitSig:          sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
   permitNonce:        bigintSchema,
+  // User's EOA key over SmartEOA's initialize digest (see SponsorService/smartEoaInit.ts).
+  initSig:            initSigSchema as z.ZodType<`0x${string}`>,
   // Gate (exactly one required): either an invite `code` OR an
   // `xQualifiedToken` from the open X-signup flow (/api/verify/x/signup-*).
   // Both optional at the schema level; the handler enforces exactly-one and
@@ -661,6 +665,8 @@ const DelegateL2BodySchema = z.object({
   ) as z.ZodType<`0x${string}`>),
   authTupleSignature: authTupleSignatureSchema,
   authTupleNonce:     bigintSchema,
+  // User's EOA key over SmartEOA's initialize digest for the standalone L2 call.
+  initSig:            initSigSchema as z.ZodType<`0x${string}`>,
 })
 
 router.post('/delegate-l2', async (req, res) => {

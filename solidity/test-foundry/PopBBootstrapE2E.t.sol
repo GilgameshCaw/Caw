@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 import "../contracts/SmartEOA.sol";
 import "../contracts/CawProfileMinter.sol";
+import "./helpers/SmartEOAInit.sol";
 
 // =============================================================================
 // PopBBootstrapE2E.t.sol
@@ -285,7 +286,7 @@ contract E2ECallerProxy {
 // Main test
 // =============================================================================
 
-contract PopBBootstrapE2ETest is Test {
+contract PopBBootstrapE2ETest is SmartEOAInit {
 
     // =========================================================================
     // P-256 key constants (same real NIST P-256 point as SmartEOA.t.sol §7)
@@ -570,13 +571,17 @@ contract PopBBootstrapE2ETest is Test {
         //   tx.to     = userEOA (delegated to SmartEOA)
         //   calldata  = initialize(...)
         // -------------------------------------------------------
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(minter), mintCalldata
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: LZ_FEE}(
             PK1_X,
             PK1_Y,
             ecdsaFallback,
             payable(address(minter)),
-            mintCalldata
+            mintCalldata,
+            initSig
         );
 
         // -------------------------------------------------------
@@ -625,8 +630,11 @@ contract PopBBootstrapE2ETest is Test {
         assertEq(profile.simulatedLzFeeReceived(), LZ_FEE, "G: LZ fee must be forwarded to profile");
 
         // Assertion H: SmartEOA is initialized (prevents re-entry).
+        bytes memory reinitSig = _initSig(ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0));
         vm.expectRevert(SmartEOA.AlreadyInitialized.selector);
-        SmartEOA(userEOA).initialize{value: 0}(PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0));
+        SmartEOA(userEOA).initialize{value: 0}(
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0), reinitSig
+        );
 
         // Assertion I: nonce was consumed (now = 1).
         assertEq(SmartEOA(userEOA).nonceOf(address(minter), 1), 1, "I: nonce must be 1 after mint");
@@ -656,9 +664,12 @@ contract PopBBootstrapE2ETest is Test {
     ///         SmartEOA from this test (1 enrolled passkey).
     function test_erc1271_gas_limit_regression_50k_fails_150k_passes() public {
         // Initialize the SmartEOA so the passkey is enrolled.
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0)
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: 0}(
-            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0)
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0), initSig
         );
 
         // Build and register a test vector.
@@ -801,6 +812,10 @@ contract PopBBootstrapE2ETest is Test {
         caw.approve(address(minter), type(uint256).max);
         vm.deal(freshSponsor, 1 ether);
 
+        bytes memory initSig = _initSig(
+            0xdeadbeef001, PK1_X, PK1_Y, vm.addr(0xdeadbeef003), address(minter), mintCalldata
+        );
+
         // Measure gas.
         uint256 gasBefore = gasleft();
         vm.prank(freshSponsor, freshSponsor);
@@ -808,7 +823,8 @@ contract PopBBootstrapE2ETest is Test {
             PK1_X, PK1_Y,
             vm.addr(0xdeadbeef003), // ecdsaFallback (different address)
             payable(address(minter)),
-            mintCalldata
+            mintCalldata,
+            initSig
         );
         uint256 gasUsed = gasBefore - gasleft();
 
@@ -840,9 +856,12 @@ contract PopBBootstrapE2ETest is Test {
 
     function test_nonce_ordering_correct() public {
         // Initialize SmartEOA without a Minter call so we start fresh.
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0)
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: 0}(
-            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0)
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0), initSig
         );
 
         uint256 nonceBeforeCall = SmartEOA(userEOA).nonceOf(address(minter), 1);
@@ -926,11 +945,15 @@ contract PopBBootstrapE2ETest is Test {
 
         uint256 profileEthBefore = address(profile).balance;
 
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(minter), mintCalldata
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: testLzFee}(
             PK1_X, PK1_Y, ecdsaFallback,
             payable(address(minter)),
-            mintCalldata
+            mintCalldata,
+            initSig
         );
 
         // The profile should have received testLzFee.
@@ -995,9 +1018,12 @@ contract PopBBootstrapE2ETest is Test {
         // 700k outer budget: above measured ~528k so a non-capped inner call succeeds;
         // below 1.2M sponsor budget to validate headroom. If SmartEOA.initialize
         // ever hard-codes a gas cap on its inner .call that is too small, this fails.
+        bytes memory initSig = _initSig(
+            0xbeef001, PK1_X, PK1_Y, vm.addr(0xbeef003), address(minter), mintCalldata
+        );
         bool ok;
         vm.prank(freshSponsor2, freshSponsor2);
-        try this._callInitialize{gas: 700_000}(freshEOA2, freshSponsor2, mintCalldata) {
+        try this._callInitialize{gas: 700_000}(freshEOA2, freshSponsor2, mintCalldata, initSig) {
             ok = true;
         } catch {
             ok = false;
@@ -1007,14 +1033,20 @@ contract PopBBootstrapE2ETest is Test {
     }
 
     /// @dev External wrapper so try/catch can capture reverts with the gas budget.
-    function _callInitialize(address payable eoa, address sp, bytes calldata mintCalldata) external {
+    function _callInitialize(
+        address payable eoa,
+        address sp,
+        bytes calldata mintCalldata,
+        bytes calldata initSig
+    ) external {
         // We need to prank from inside this call; use vm directly.
         vm.prank(sp, sp);
         SmartEOA(eoa).initialize{value: 0}(
             PK1_X, PK1_Y,
             vm.addr(0xbeef003),    // fresh ecdsaFallback (not same as eoa)
             payable(address(minter)),
-            mintCalldata
+            mintCalldata,
+            initSig
         );
     }
 
@@ -1024,9 +1056,12 @@ contract PopBBootstrapE2ETest is Test {
 
     function test_permit_replay_rejected() public {
         // Initialize SmartEOA.
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0)
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: 0}(
-            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0)
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0), initSig
         );
 
         // Build a valid permit at nonce=0.
@@ -1063,9 +1098,12 @@ contract PopBBootstrapE2ETest is Test {
 
     function test_wrong_sig_reverts_mint() public {
         // Initialize SmartEOA.
+        bytes memory initSig = _initSig(
+            ECDSA_PK, PK1_X, PK1_Y, ecdsaFallback, address(0), new bytes(0)
+        );
         vm.prank(sponsor, sponsor);
         SmartEOA(userEOA).initialize{value: 0}(
-            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0)
+            PK1_X, PK1_Y, ecdsaFallback, payable(address(0)), new bytes(0), initSig
         );
 
         // Build the real digest but DON'T register any P-256 vector.

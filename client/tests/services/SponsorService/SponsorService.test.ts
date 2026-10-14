@@ -26,7 +26,7 @@ import { describe, it, before, beforeEach, after } from 'mocha'
 import { expect } from 'chai'
 import request from 'supertest'
 import express, { Express } from 'express'
-import { Wallet, keccak256, toUtf8Bytes, AbiCoder, zeroPadValue, toBeHex } from 'ethers'
+import { Wallet, keccak256, toUtf8Bytes, AbiCoder, zeroPadValue, toBeHex, Interface, Transaction, ZeroAddress } from 'ethers'
 import {
   SponsorService,
   isSponsorError,
@@ -36,6 +36,8 @@ import {
 } from '../../../src/services/SponsorService'
 import { ZodError } from 'zod'
 import { BootstrapBodySchema } from '../../../src/api/routes/sponsor'
+import { smartEoaInitDigest, type SmartEoaInitArgs } from '../../../src/services/SponsorService/smartEoaInit'
+import { cawProfileMinterAbi } from '../../../src/abi/generated'
 
 // ─── Mock provider ────────────────────────────────────────────────────────────
 
@@ -191,8 +193,21 @@ async function buildAuthTupleSig(nonce: bigint, chainId: number) {
   }
 }
 
+// SmartEOA initSig: the user's EOA key over SmartEOA's initialize digest.
+function signInit(args: SmartEoaInitArgs, wallet: Wallet = userWallet): `0x${string}` {
+  return wallet.signingKey.sign(smartEoaInitDigest(args)).serialized as `0x${string}`
+}
+
+// The mintCalldata sponsorBootstrap builds (recipient = the recovered user EOA).
+function bootstrapMintCalldata(p: Omit<BootstrapParams, 'initSig'>): string {
+  return new Interface(cawProfileMinterAbi as any).encodeFunctionData('mintAndDepositSponsored', [
+    p.networkId, userWallet.address, p.username, p.depositAmountCAW, p.lzDestId,
+    p.lzTokenAmount, p.permitNonce, p.permitSig, p.kycLevel ?? 0, p.sponsorTokenId ?? 0, p.repayAmount ?? 0n,
+  ])
+}
+
 function baseBootstrapParams(authSig: Awaited<ReturnType<typeof buildAuthTupleSig>>): BootstrapParams {
-  return {
+  const p = {
     passkeyPubkeyX: ('0x' + 'aa'.repeat(32)) as `0x${string}`,
     passkeyPubkeyY: ('0x' + 'bb'.repeat(32)) as `0x${string}`,
     ecdsaFallbackAddr: userWallet.address as `0x${string}`,
@@ -206,6 +221,16 @@ function baseBootstrapParams(authSig: Awaited<ReturnType<typeof buildAuthTupleSi
     permitSig: ('0x' + 'ff'.repeat(65)) as `0x${string}`,
     permitNonce: 0n,
   }
+  const initSig = signInit({
+    chainId: 11155111,
+    account: userWallet.address,
+    pubkeyX: p.passkeyPubkeyX,
+    pubkeyY: p.passkeyPubkeyY,
+    ecdsaFallback: p.ecdsaFallbackAddr,
+    minterContract: MOCK_MINTER_ADDRESS,
+    mintCalldata: bootstrapMintCalldata(p),
+  })
+  return { ...p, initSig }
 }
 
 // ─── Reusable service factory ─────────────────────────────────────────────────
@@ -397,6 +422,44 @@ describe('SponsorService', () => {
 
   // ── Deposit ───────────────────────────────────────────────────────────────
 
+  describe('sponsorBootstrap initSig pre-flight', () => {
+    it('initSig from another key → BAD_SIG before broadcast', async () => {
+      const svc = buildService()
+      const base = baseBootstrapParams(authSig)
+      const other = new Wallet('0x' + '3'.repeat(64))
+      const { initSig: _ignored, ...rest } = base
+      const initSig = signInit({
+        chainId: 11155111,
+        account: userWallet.address,
+        pubkeyX: base.passkeyPubkeyX,
+        pubkeyY: base.passkeyPubkeyY,
+        ecdsaFallback: base.ecdsaFallbackAddr,
+        minterContract: MOCK_MINTER_ADDRESS,
+        mintCalldata: bootstrapMintCalldata(rest),
+      }, other)
+      const result = await svc.sponsorBootstrap({ ...base, initSig })
+      expect(isSponsorError(result)).to.be.true
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('BAD_SIG')
+        expect(result.detail).to.include('initSig')
+      }
+    })
+
+    it('initSig over a different passkey → BAD_SIG before broadcast', async () => {
+      const svc = buildService()
+      const base = baseBootstrapParams(authSig)
+      const result = await svc.sponsorBootstrap({
+        ...base,
+        passkeyPubkeyX: ('0x' + 'cc'.repeat(32)) as `0x${string}`,
+      })
+      expect(isSponsorError(result)).to.be.true
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('BAD_SIG')
+        expect(result.detail).to.include('initSig')
+      }
+    })
+  })
+
   describe('sponsorDeposit', () => {
     const depositParams: DepositParams = {
       tokenId: 42,
@@ -553,6 +616,147 @@ describe('SponsorService', () => {
 // Redis client as a parameter (dependency injection). Deferred to avoid
 // over-engineering the production code path.
 
+// ─── SmartEOA initSig digest ──────────────────────────────────────────────────
+
+// Pinned vectors. The same digests are checked against the contract itself in
+// solidity/test-foundry/SmartEOAInitialize.t.sol (test_clientVectors_*) and
+// against the FE's viem copy in FrontEnd/src/services/identity/smartEoaInit.test.ts.
+describe('smartEoaInitDigest', () => {
+  const key = new Wallet('0x' + '22'.repeat(32))
+  const base = {
+    account: key.address,
+    pubkeyX: '0x' + 'aa'.repeat(32),
+    pubkeyY: '0x' + 'bb'.repeat(32),
+    ecdsaFallback: key.address,
+  }
+
+  it('standalone L2 vector', () => {
+    expect(key.address).to.equal('0x1563915e194D8CfBA1943570603F7606A3115508')
+    expect(smartEoaInitDigest({ ...base, chainId: 84532, minterContract: ZeroAddress, mintCalldata: '0x' }))
+      .to.equal('0x8080ee3c40d30fd736595d2e6ef66fcc83a055c72108abba5a7b11c904f60d47')
+  })
+
+  it('bootstrap vector (Minter + calldata bound)', () => {
+    expect(smartEoaInitDigest({
+      ...base,
+      chainId: 11155111,
+      minterContract: '0x' + '00'.repeat(18) + 'aaaa',
+      mintCalldata: '0xa0712d680000000000000000000000000000000000000000000000000000000000000007',
+    })).to.equal('0xb45c2e9ab761a654bdfdc63c3c254091078b35f9a17cf69ec1c400a6eca37298')
+  })
+})
+
+// ─── sponsorDelegateL2 ────────────────────────────────────────────────────────
+
+describe('SponsorService.sponsorDelegateL2', () => {
+  const L2_CHAIN_ID = 84532
+  const DELEGATED_CODE = '0xef0100' + 'c'.repeat(40)   // → MOCK_SMART_EOA_ADDRESS
+  const ZERO_SLOT = '0x' + '00'.repeat(32)
+  // initialized = true (lowest byte) packed with ecdsaFallback (offset 1).
+  const INITIALIZED_SLOT = '0x' + '00'.repeat(11) + userWallet.address.slice(2).toLowerCase() + '01'
+
+  let l2AuthSig: Awaited<ReturnType<typeof buildAuthTupleSig>>
+  before(async () => {
+    l2AuthSig = await buildAuthTupleSig(0n, L2_CHAIN_ID)
+  })
+
+  function buildL2Service(l2: { code?: string; slot0?: string }) {
+    const svc = buildService()
+    const sent: string[] = []
+    const l2Provider = makeMockProvider({ chainId: L2_CHAIN_ID })
+    l2Provider.getCode = async () => l2.code ?? '0x'
+    l2Provider.getStorage = async () => l2.slot0 ?? ZERO_SLOT
+    l2Provider.broadcastTransaction = async (signed: string) => {
+      sent.push(signed)
+      return { hash: '0x' + 'ab'.repeat(32), wait: async () => ({ status: 1 }) }
+    }
+    ;(svc as any).l2Provider = l2Provider
+    ;(svc as any).l2Wallet = new Wallet(SPONSOR_PRIVATE_KEY, l2Provider)
+    ;(svc as any).l2ChainId = L2_CHAIN_ID
+    return { svc, sent }
+  }
+
+  function delegateParams(signer: Wallet = userWallet) {
+    const p = {
+      passkeyPubkeyX: ('0x' + 'aa'.repeat(32)) as `0x${string}`,
+      passkeyPubkeyY: ('0x' + 'bb'.repeat(32)) as `0x${string}`,
+      ecdsaFallbackAddr: userWallet.address as `0x${string}`,
+      authTupleSignature: l2AuthSig,
+      authTupleNonce: 0n,
+    }
+    const initSig = signInit({
+      chainId: L2_CHAIN_ID,
+      account: userWallet.address,
+      pubkeyX: p.passkeyPubkeyX,
+      pubkeyY: p.passkeyPubkeyY,
+      ecdsaFallback: p.ecdsaFallbackAddr,
+      minterContract: ZeroAddress,
+      mintCalldata: '0x',
+    }, signer)
+    return { ...p, initSig }
+  }
+
+  function decodeInitialize(signed: string) {
+    const tx = Transaction.from(signed)
+    const args = new Interface(['function initialize(bytes32,bytes32,address,address,bytes,bytes)'])
+      .decodeFunctionData('initialize', tx.data)
+    return { tx, args }
+  }
+
+  it('fresh EOA → type-4 tx with the auth tuple and initSig', async () => {
+    const { svc, sent } = buildL2Service({})
+    const params = delegateParams()
+    const result = await svc.sponsorDelegateL2(params)
+    expect(isSponsorError(result), JSON.stringify(result)).to.be.false
+    expect(sent).to.have.length(1)
+    const { tx, args } = decodeInitialize(sent[0])
+    expect(tx.type).to.equal(4)
+    expect(tx.authorizationList).to.have.length(1)
+    expect(tx.to).to.equal(userWallet.address)
+    expect(args[5]).to.equal(params.initSig)
+  })
+
+  it('delegated + initialized → success, no tx', async () => {
+    const { svc, sent } = buildL2Service({ code: DELEGATED_CODE, slot0: INITIALIZED_SLOT })
+    const result = await svc.sponsorDelegateL2(delegateParams())
+    expect(isSponsorError(result)).to.be.false
+    if (!isSponsorError(result)) expect(result.txHash).to.equal('')
+    expect(sent).to.have.length(0)
+  })
+
+  it('delegated but NOT initialized → finishes initialize with a plain tx (no auth list)', async () => {
+    const { svc, sent } = buildL2Service({ code: DELEGATED_CODE, slot0: ZERO_SLOT })
+    const params = delegateParams()
+    const result = await svc.sponsorDelegateL2(params)
+    expect(isSponsorError(result), JSON.stringify(result)).to.be.false
+    expect(sent).to.have.length(1)
+    const { tx, args } = decodeInitialize(sent[0])
+    expect(tx.type).to.equal(2)
+    expect(tx.authorizationList ?? []).to.have.length(0)
+    expect(tx.to).to.equal(userWallet.address)
+    expect(args[5]).to.equal(params.initSig)
+  })
+
+  it('initSig from another key → BAD_SIG, no tx', async () => {
+    const { svc, sent } = buildL2Service({})
+    const result = await svc.sponsorDelegateL2(delegateParams(new Wallet('0x' + '3'.repeat(64))))
+    expect(isSponsorError(result)).to.be.true
+    if (isSponsorError(result)) {
+      expect(result.error).to.equal('BAD_SIG')
+      expect(result.detail).to.include('initSig')
+    }
+    expect(sent).to.have.length(0)
+  })
+
+  it('delegated elsewhere → ALREADY_DELEGATED_ELSEWHERE, no tx', async () => {
+    const { svc, sent } = buildL2Service({ code: '0xef0100' + 'd'.repeat(40) })
+    const result = await svc.sponsorDelegateL2(delegateParams())
+    expect(isSponsorError(result)).to.be.true
+    if (isSponsorError(result)) expect(result.error).to.equal('ALREADY_DELEGATED_ELSEWHERE')
+    expect(sent).to.have.length(0)
+  })
+})
+
 describe('Sponsor route layer', () => {
   let app: Express
   const originalEnv = process.env.SPONSOR_ENABLED
@@ -658,6 +862,7 @@ describe('BootstrapBodySchema — L-3 username regex', () => {
     authTupleNonce: '0',
     permitSig: '0x' + 'ff'.repeat(65),
     permitNonce: '0',
+    initSig: '0x' + '11'.repeat(65),
   }
 
   it('L-3: uppercase username → ZodError (username must be lowercase alphanumeric)', () => {
@@ -721,6 +926,7 @@ describe('Sponsor delegate-l2 route', () => {
     ecdsaFallbackAddr: '0x' + 'cc'.repeat(20),
     authTupleSignature: { yParity: 0, r: '0x' + 'aa'.repeat(32), s: '0x' + 'bb'.repeat(32) },
     authTupleNonce: '0',
+    initSig: '0x' + '11'.repeat(65),
   }
 
   it('returns 503 when sponsor disabled', async () => {
@@ -757,5 +963,12 @@ describe('Sponsor delegate-l2 route', () => {
   it('schema: accepts a well-formed delegate-l2 body', () => {
     const { DelegateL2BodySchema } = require('../../../src/api/routes/sponsor')
     expect(() => DelegateL2BodySchema.parse(validDelegateBody)).to.not.throw()
+  })
+
+  it('schema: rejects a missing or non-65-byte initSig', () => {
+    const { DelegateL2BodySchema } = require('../../../src/api/routes/sponsor')
+    const { initSig: _omit, ...withoutInitSig } = validDelegateBody
+    expect(() => DelegateL2BodySchema.parse(withoutInitSig)).to.throw()
+    expect(() => DelegateL2BodySchema.parse({ ...validDelegateBody, initSig: '0x' + '11'.repeat(64) })).to.throw()
   })
 })

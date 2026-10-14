@@ -17,6 +17,7 @@ import { cawProfileLedgerAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/wagmiConfig'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
 import { signAuthorizationTuple } from '~/services/identity/eip7702'
+import { signSmartEoaInit, standaloneInitArgs } from '~/services/identity/smartEoaInit'
 import { enrollPasskey, signWithPasskey, hexToBytes as passkeyHexToBytes } from '~/services/identity/passkey'
 import { getPasskeyCredential, isPasskeyAddress } from '~/constants/passkeyStorage'
 import { buildPrfSalt, markPrfCapable } from '~/services/identity/prf'
@@ -215,8 +216,17 @@ export function useCreateSession() {
         const wantPrefix = (`0xef0100${SMART_EOA_ADDRESS.slice(2).toLowerCase()}`)
         const isDelegated = typeof currentCode === 'string' &&
           currentCode.toLowerCase() === wantPrefix
+        // Delegation alone is not initialization: a delegation tx whose body
+        // reverted leaves the EOA delegated but uninitialized. SmartEOA slot 0
+        // packs `bool initialized` in its lowest byte (no view for it).
+        const isInitializedAt = async (): Promise<boolean> => {
+          if (!l2Client) return false
+          const slot0 = await l2Client.getStorageAt({ address: ownerAddr, slot: '0x0' })
+          return !!slot0 && (BigInt(slot0) & 0xffn) !== 0n
+        }
+        const isReady = isDelegated && await isInitializedAt()
 
-        if (!isDelegated) {
+        if (!isReady) {
           onProgress?.('Submitting…')
 
           // ecdsaFallbackAddr = the secp256k1 key's address (= recovery.address).
@@ -257,6 +267,16 @@ export function useCreateSession() {
             nonce: BigInt(l2Nonce),
           })
 
+          // SmartEOA.initialize requires the EOA key's own sig over its args.
+          // account = the key's address (what the server recovers from the tuple).
+          const initSig = await signSmartEoaInit(keyBytes, standaloneInitArgs({
+            chainId: baseSepolia.id,
+            account: ecdsaFallbackAddr as `0x${string}`,
+            pubkeyX: passkey.pubkeyX,
+            pubkeyY: passkey.pubkeyY,
+            ecdsaFallback: ecdsaFallbackAddr as `0x${string}`,
+          }))
+
           // POST to sponsor — same body shape as Onboarding.tsx:478.
           await apiFetch('/api/sponsor/delegate-l2', {
             method: 'POST',
@@ -271,15 +291,16 @@ export function useCreateSession() {
                 r: authResult.signedAuthorization.r,
                 s: authResult.signedAuthorization.s,
               },
+              initSig,
             }),
           })
 
-          // Poll L2 getCode until delegation lands (max ~30 s, 10 × 3 s).
+          // Poll L2 until the delegation lands AND initialize ran (max ~30 s, 10 × 3 s).
           if (l2Client) {
             for (let i = 0; i < 10; i++) {
               await new Promise(r => setTimeout(r, 3000))
               const code = await l2Client.getCode({ address: ownerAddr })
-              if (typeof code === 'string' && code.toLowerCase() === wantPrefix) break
+              if (typeof code === 'string' && code.toLowerCase() === wantPrefix && await isInitializedAt()) break
             }
           }
         }
