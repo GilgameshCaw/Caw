@@ -52,6 +52,10 @@ const label          = getArg('label')
 // Sponsor-Repay (Phase 2): basis points of the deposit the user must repay on
 // first withdrawal. 0 = plain gift, 10000 = 1x deposit, 20000 = 2x (the cap the
 // contract enforces). requireKycLevel gates withdrawal behind KYC (0 = none).
+// repayBps > 0 only works on a Network whose profiles are stored on L1:
+// CawProfile.mintAndDeposit reverts RepayCrossChainUnsupported when the signup
+// targets an L2, and the sponsor bootstrap rejects such a signup up front
+// (REPAY_CROSS_CHAIN_UNSUPPORTED).
 const repayBps         = getArgNum('repayBps', 0)!
 const requireKycLevel  = getArgNum('requireKycLevel', 0)!
 

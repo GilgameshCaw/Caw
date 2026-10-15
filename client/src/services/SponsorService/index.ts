@@ -133,6 +133,7 @@ export type SponsorErrorCode =
   | 'L2_DISABLED'
   | 'ALREADY_DELEGATED_ELSEWHERE'
   | 'RECIPIENT_NOT_DELEGATED'
+  | 'REPAY_CROSS_CHAIN_UNSUPPORTED'
   | 'TX_REVERTED'
   | 'SIMULATION_FAILED'
   | 'INTERNAL'
@@ -242,6 +243,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   L2_DISABLED:             [],    // generated locally, never from contract
   ALREADY_DELEGATED_ELSEWHERE: [],  // generated locally, never from contract
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
+  REPAY_CROSS_CHAIN_UNSUPPORTED: [],  // generated locally (pre-flight 3b)
   TX_REVERTED:             [],    // fallback for unmatched reverts
   SIMULATION_FAILED:       [],    // generated locally (pre-submit staticCall revert)
   INTERNAL:                [],    // internal service errors
@@ -432,6 +434,33 @@ export class SponsorService {
       const existingId: bigint = await minterReadOnly.idByUsername(params.username)
       if (existingId !== 0n) {
         return { error: 'USERNAME_TAKEN', detail: `Username "${params.username}" is already taken (id=${existingId})` }
+      }
+
+      // 3b. Sponsor-repay is only registered on the same-chain branch of
+      //     CawProfile.mintAndDeposit (lzDestId == mainnetLzId). The cross-chain
+      //     branch reverts RepayCrossChainUnsupported, so a repay mint aimed at
+      //     an L2 is a certain revert: reject it here instead of broadcasting
+      //     (the revert would still cost sponsor gas and, under EIP-7702, leave
+      //     the user's EOA delegated but not initialized).
+      if ((params.repayAmount ?? 0n) > 0n) {
+        let mainnetLzId: bigint
+        try {
+          const cawProfileReadOnly = new Contract(this.cawProfileAddress, cawProfileAbi as any, this.provider)
+          mainnetLzId = BigInt(await cawProfileReadOnly.mainnetLzId())
+        } catch (e) {
+          return {
+            error: 'INTERNAL',
+            detail: `Could not read CawProfile.mainnetLzId to check the repay destination: ${e}`,
+          }
+        }
+        if (BigInt(params.lzDestId) !== mainnetLzId) {
+          return {
+            error: 'REPAY_CROSS_CHAIN_UNSUPPORTED',
+            detail: `This invite code carries a sponsor repay, which CawProfile only supports when the ` +
+              `profile is stored on L1 (lzDestId ${mainnetLzId}); this signup targets lzDestId ` +
+              `${params.lzDestId}. The mint would revert with RepayCrossChainUnsupported.`,
+          }
+        }
       }
 
       // 4. Treasury balance check

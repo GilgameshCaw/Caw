@@ -49,7 +49,13 @@ interface MockProviderOpts {
   txCountUser?: number
   simulateRevert?: string // if set, eth_call throws with this message
   broadcastedTxHash?: string
+  /** Value returned for CawProfile.mainnetLzId() (default 40161, Sepolia). */
+  mainnetLzId?: number
+  /** Incremented on every broadcast, so a test can assert nothing was sent. */
+  broadcasts?: { count: number }
 }
+
+const MAINNET_LZ_ID_SELECTOR = keccak256(toUtf8Bytes('mainnetLzId()')).slice(0, 10)
 
 /**
  * Minimal mock provider implementing only what SponsorService needs.
@@ -98,10 +104,14 @@ function makeMockProvider(opts: MockProviderOpts = {}): any {
         err.reason = opts.simulateRevert
         throw err
       }
-      // Return encoded idByUsername result for all calls (simplification)
+      if (typeof tx?.data === 'string' && tx.data.startsWith(MAINNET_LZ_ID_SELECTOR)) {
+        return coder.encode(['uint32'], [opts.mainnetLzId ?? 40161])
+      }
+      // Return encoded idByUsername result for all other calls (simplification)
       return idEncoded
     },
     async broadcastTransaction(_signedTx: string): Promise<{ hash: string }> {
+      if (opts.broadcasts) opts.broadcasts.count++
       if (opts.simulateRevert) {
         const err: any = new Error(opts.simulateRevert)
         err.reason = opts.simulateRevert
@@ -391,6 +401,41 @@ describe('SponsorService', () => {
         expect(result.error).to.equal('NONCE_MISMATCH')
         // Confirm it's the server-side preflight check, not an on-chain revert.
         expect(result.detail).to.include('authTupleNonce')
+      }
+    })
+
+    // ── Sponsor repay: same-chain only ───────────────────────────────────────
+
+    it('repay with an L2 lzDestId → REPAY_CROSS_CHAIN_UNSUPPORTED, nothing broadcast', async () => {
+      // CawProfile.mintAndDeposit reverts RepayCrossChainUnsupported on the
+      // cross-chain branch, so the bootstrap must stop before sending.
+      const broadcasts = { count: 0 }
+      const svc = buildService({ mainnetLzId: 40161, broadcasts })
+      const params = {
+        ...baseBootstrapParams(authSig),   // lzDestId 40245 (Base Sepolia)
+        sponsorTokenId: 1,
+        repayAmount: 10n ** 18n,
+      }
+      const result = await svc.sponsorBootstrap(params)
+      expect(isSponsorError(result)).to.equal(true)
+      if (isSponsorError(result)) {
+        expect(result.error).to.equal('REPAY_CROSS_CHAIN_UNSUPPORTED')
+      }
+      expect(broadcasts.count).to.equal(0)
+    })
+
+    it('repay with lzDestId == mainnetLzId passes the repay pre-flight', async () => {
+      const svc = buildService({ mainnetLzId: 40245 })
+      const params = {
+        ...baseBootstrapParams(authSig),
+        sponsorTokenId: 1,
+        repayAmount: 10n ** 18n,
+      }
+      const result = await svc.sponsorBootstrap(params)
+      // Later steps may still fail against the mock (see the happy-path test);
+      // this only asserts the repay check let it through.
+      if (isSponsorError(result)) {
+        expect(result.error).to.not.equal('REPAY_CROSS_CHAIN_UNSUPPORTED')
       }
     })
   })
