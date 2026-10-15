@@ -146,19 +146,22 @@ const BuyModal: React.FC = () => {
   // sale itself is the sync.
   //
   // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
-  // relayed value) against tokenId=0 / address(0) like SyncTransferModal
-  // used to (the transfer isn't queued yet at quote time — this just needs
-  // the L2 eid's current LZ price), and against chains.l2.layerZero
-  // specifically since that's the eid actually passed to the sale call now.
+  // relayed value) against chains.l2.layerZero specifically since that's
+  // the eid actually passed to the sale call now. Quote WITH the listed
+  // tokenId and the buyer, like TransferNFTModal: the transfer isn't queued
+  // yet at quote time, and tokenId=0 / address(0) only prices what's
+  // already in the queue — 0 when the queue is empty, which makes the
+  // sale's own LZ send revert (LZ_InsufficientFee).
+  const buyer = eoaAccount ?? address
   const [syncLzFee, setSyncLzFee] = useState<bigint | null>(null)
   useEffect(() => {
-    if (!isOpen || !listing) { setSyncLzFee(null); return }
+    if (!isOpen || !listing || !buyer) { setSyncLzFee(null); return }
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+      args: [listing.tokenId, buyer, chains.l2.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       if (cancelled) return
@@ -168,7 +171,7 @@ const BuyModal: React.FC = () => {
       if (!cancelled) setSyncLzFee(null)
     })
     return () => { cancelled = true }
-  }, [isOpen, listing?.listingId])
+  }, [isOpen, listing?.listingId, buyer])
 
   // The sale's own msg.value now carries the LZ sync fee (contract does
   // msg.value - price = lzFee for an ETH buy, or msg.value = lzFee for

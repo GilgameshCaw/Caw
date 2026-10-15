@@ -171,16 +171,17 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   // SyncTransferModal / relayed syncTransfer leg is needed anymore.
   //
   // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
-  // relayed value) — see BuyModal's identical pattern.
+  // relayed value) with the listed tokenId and the winner — see BuyModal's
+  // identical pattern (tokenId=0 / address(0) quotes 0 on an empty queue).
   const [settleSyncLzFee, setSettleSyncLzFee] = useState<bigint | null>(null)
   useEffect(() => {
-    if (!canSettle) { setSettleSyncLzFee(null); return }
+    if (!canSettle || !listing.highestBidder) { setSettleSyncLzFee(null); return }
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+      args: [listing.tokenId, listing.highestBidder as `0x${string}`, chains.l2.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       if (cancelled) return
@@ -190,7 +191,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
       if (!cancelled) setSettleSyncLzFee(null)
     })
     return () => { cancelled = true }
-  }, [canSettle, listing.listingId])
+  }, [canSettle, listing.listingId, listing.tokenId, listing.highestBidder])
 
   // The settle call's own msg.value now carries the native L2 sync fee.
   const settleLzFee = settleSyncLzFee ?? 0n

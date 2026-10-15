@@ -116,16 +116,21 @@ const ViewOffersModal: React.FC = () => {
   const [pendingAcceptAfterApprove, setPendingAcceptAfterApprove] = useState<MarketplaceOffer | null>(null)
 
   // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
-  // relayed value). See BuyModal's identical pattern.
+  // relayed value). See BuyModal's identical pattern: quote WITH tokenId
+  // and a non-zero owner (tokenId=0 / address(0) quotes 0 on an empty
+  // queue). The offer isn't picked yet here; the owner is a fixed-size
+  // word in the payload, so any non-zero address prices the same as the
+  // eventual offerer.
+  const quoteOwner = eoaAccount ?? address
   const [acceptSyncLzFee, setAcceptSyncLzFee] = useState<bigint | null>(null)
   useEffect(() => {
-    if (!isOpen || !isOwner) { setAcceptSyncLzFee(null); return }
+    if (!isOpen || !isOwner || !tokenId || !quoteOwner) { setAcceptSyncLzFee(null); return }
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+      args: [tokenId, quoteOwner, chains.l2.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       if (cancelled) return
@@ -135,7 +140,7 @@ const ViewOffersModal: React.FC = () => {
       if (!cancelled) setAcceptSyncLzFee(null)
     })
     return () => { cancelled = true }
-  }, [isOpen, isOwner, tokenId])
+  }, [isOpen, isOwner, tokenId, quoteOwner])
 
   // The accept call's own msg.value now carries the native L2 sync fee.
   const lzFee = acceptSyncLzFee ?? 0n

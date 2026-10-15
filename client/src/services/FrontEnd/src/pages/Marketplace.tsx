@@ -591,11 +591,13 @@ const MyOffersTab: React.FC = () => {
     setAcceptingId(offer.offerId)
     let syncFee = 0n
     try {
+      // Quote with the offer's tokenId and the offerer (the new owner):
+      // tokenId=0 / address(0) quotes 0 on an empty queue.
       const quote: any = await readContract(wagmiConfig, {
         address: CAW_NAME_QUOTER_ADDRESS,
         abi: cawProfileQuoterAbi,
         functionName: 'syncTransferQuote',
-        args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+        args: [offer.tokenId, offer.offerer as `0x${string}`, chains.l2.layerZero, false],
         chainId: chains.l1.chainId,
       })
       syncFee = (quote.nativeFee * 110n) / 100n
