@@ -20,6 +20,9 @@ const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const CawActionVerifier = artifacts.require("CawActionVerifier");
 const CawTipResponder = artifacts.require("CawTipResponder");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 const { ethers } = require('ethers');
 
@@ -178,32 +181,25 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   // ── Nonce prediction ──────────────────────────────────────────────────
-  // Deploy order: 9 contracts above, then Ledger(+9), Profile(+10), Minter(+11), Actions(+12).
+  // Deploy order from the snapshot: Ledger(+0), Profile(+1), Minter(+2), Quoter(+3), Actions(+4),
+  // back to back with no other tx in between; the wiring txs come after.
   const deployer = accounts[0];
   const baseNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 10 });
-  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 12 });
-  const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 1 });
+  const predictedMinter      = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 2 });
+  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 4 });
+  // The deployer owns the OApps (no PathwayExpander in tests), so it can setPeer.
+  const dummyPathwayExpander = deployer;
 
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false,
+    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEaD", false,
     dummyPathwayExpander
   );
-  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
-
-  const cpNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedMinter = ethers.getCreateAddress({ from: deployer, nonce: cpNonce + 1 });
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpander, predictedMinter);
   assert.equal(cawProfile.address.toLowerCase(), predictedCawProfile.toLowerCase(), "cawProfile nonce prediction mismatch");
-  await buyAndBurn.setCawProfile(cawProfile.address);
-  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
-
-  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
-  const networkId = 1;
-
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
   assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
   const quoter = await CawProfileQuoter.new(cawProfile.address);
@@ -212,9 +208,17 @@ async function fullSetup(accounts) {
     "0x0000000000000000000000000000000000000000",
     "0x0000000000000000000000000000000000000000000000000000000000000000",
     "0x0000000000000000000000000000000000000000",
-    "0x0000000000000000000000000000000000000000"
+    "0x0000000000000000000000000000000000000000", 0, 0
   );
   assert.equal(cawActions.address.toLowerCase(), predictedCawActions.toLowerCase(), "cawActions nonce prediction mismatch");
+
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+  await buyAndBurn.setCawProfile(cawProfile.address);
+  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
+
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
+  const networkId = 1;
 
   return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }

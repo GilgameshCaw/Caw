@@ -20,6 +20,9 @@ const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const { ethers } = require('ethers');
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
 const l1 = 30101;
 const l2 = 8453;
 
@@ -63,30 +66,32 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
     networkManager = await CawNetworkManager.new(buyAndBurn.address);
     uriGen = await deployURI();
 
+    await linkSessionMessageParser();
     // ── Nonce prediction for circular ctor deps ─────────────────────────────
-    // +9=cawProfileL2, +10=cawProfileL2Mainnet, +11=cawProfile, +12=minter
+    // From the snapshot: +0=cawProfileL2, +1=cawProfileL2Mainnet, +2=cawProfile, +3=minter,
+    // back to back; the wiring txs come after.
     const deployerZ = accounts[0];
     const baseNonceZ = await web3.eth.getTransactionCount(deployerZ);
     const predictedCawProfileZ = ethers.getCreateAddress({ from: deployerZ, nonce: baseNonceZ + 2 });
-    const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+    // The deployer owns the OApps (no PathwayExpander in tests), so it can setPeer.
+    const dummyPathwayExpander = deployerZ;
 
     // L2-storage mirror (cross-chain, bypassLZ=false)
     cawProfileL2 = await CawProfileLedger.new(
       l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
       predictedCawProfileZ,
-      "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (zap test doesn't process actions)
-      "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
+      "0x000000000000000000000000000000000000dEaD", // _cawActions: dummy (zap test doesn't process actions)
+      "0x000000000000000000000000000000000000cafE", // _erc1271Sibling: dummy
       false,
       dummyPathwayExpander
     );
-    await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
 
     // L1-co-deployed mirror (bypassLZ=true)
     cawProfileL2Mainnet = await CawProfileLedger.new(
       l1, l1Endpoint.address, "0x0000000000000000000000000000000000000000",
       predictedCawProfileZ,
-      "0x000000000000000000000000000000000000dEAD",
-      "0x000000000000000000000000000000000000cAFE",
+      "0x000000000000000000000000000000000000dEaD",
+      "0x000000000000000000000000000000000000cafE",
       true,
       dummyPathwayExpander
     );
@@ -97,15 +102,17 @@ contract("CawProfileMinter — ZAP (pay-with-ETH) flows", function(accounts) {
       token.address, uriGen.address, buyAndBurn.address,
       networkManager.address, l1Endpoint.address, l1,
       "0x0000000000000000000000000000000000000000",
-      cawProfileL2.address, dummyPathwayExpander, predictedMinter
+      // The bypassLZ mirror is the immutable cawProfileLedger CawProfile calls
+      // directly for mainnetLzId; the cross-chain mirror is an LZ peer (setPeer below).
+      cawProfileL2Mainnet.address, dummyPathwayExpander, predictedMinter
     );
     assert.equal(cawProfile.address.toLowerCase(), predictedCawProfileZ.toLowerCase(), "cawProfile nonce prediction mismatch");
     minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
     assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch");
+    await l1Endpoint.setDestLzEndpoint(cawProfileL2.address, l2Endpoint.address);
     await buyAndBurn.setCawProfile(cawProfile.address);
     await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-    await cawProfile.setL2Peer(l2, cawProfileL2.address);
-    await cawProfile.setL2Peer(l1, cawProfileL2Mainnet.address);
+    await cawProfile.setPeer(l2, toBytes32(cawProfileL2.address));
 
     // Two networks to exercise both branches (zero fees to keep ETH math clean)
     await networkManager.createNetwork("L2 Network", accounts[0], l2, 0, 0, 0, 0, 0);

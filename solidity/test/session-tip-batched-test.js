@@ -31,6 +31,9 @@ const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
 const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 const { ethers } = require('ethers');
 
@@ -227,37 +230,39 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   // ── Nonce prediction ─────────────────────────────────────────────────────
-  // Order: +9=Ledger, +10=Profile, +11=Minter, +12=Quoter, +13=Actions
+  // Deploy order from the snapshot: Ledger(+0), Profile(+1), Minter(+2), Quoter(+3), Actions(+4),
+  // back to back with no other tx in between; the wiring txs come after.
   const deployer = accounts[0];
   const baseNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 10 });
-  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 13 });
-  const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 1 });
+  const predictedMinter     = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 2 });
+  const predictedCawActions = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 4 });
+  // The deployer owns the OApps (no PathwayExpander in tests), so it can setPeer.
+  const dummyPathwayExpander = deployer;
 
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false,
+    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEaD", false,
     dummyPathwayExpander
   );
-  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
-  const cpNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedMinter = ethers.getCreateAddress({ from: deployer, nonce: cpNonce + 1 });
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpander, predictedMinter);
   assert.equal(cawProfile.address.toLowerCase(), predictedCawProfile.toLowerCase(), "cawProfile nonce prediction mismatch");
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
   assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch");
-  await buyAndBurn.setCawProfile(cawProfile.address);
-  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
-
-  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
-  const networkId = 1;
 
   const quoter = await CawProfileQuoter.new(cawProfile.address);
-  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
   assert.equal(cawActions.address.toLowerCase(), predictedCawActions.toLowerCase(), "cawActions nonce prediction mismatch");
+
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+  await buyAndBurn.setCawProfile(cawProfile.address);
+  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
+  const networkId = 1;
 
   return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
@@ -285,7 +290,7 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
 }
 
 async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate) {
-  const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
+  const nonce = Number(await setup.cawProfileLedger.sessionNonce(owner));
   const chainId = await web3.eth.getChainId();
   const data = {
     primaryType: 'SessionDelegation',
@@ -294,7 +299,7 @@ async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, ex
     message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
-  await setup.cawProfileL2.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
+  await setup.cawProfileLedger.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
 }
 
 // ============================================
@@ -335,14 +340,14 @@ contract('CawActions — session-tip + batched-accumulator integration', functio
   // So: amount_credited ≈ (ownership_after - ownership_before) * multiplier_after / precision.
   // (≈ because integer division loses up to 1 unit per multiplier denomination.)
   async function validatorCreditWei(snapshotBefore) {
-    const ownershipAfter = BigInt((await setup.cawProfileL2.cawOwnership(validatorTokenId)).toString());
-    const multiplierAfter = BigInt((await setup.cawProfileL2.rewardMultiplier()).toString());
-    const precision = BigInt((await setup.cawProfileL2.precision()).toString());
+    const ownershipAfter = BigInt((await setup.cawProfileLedger.cawOwnership(validatorTokenId)).toString());
+    const multiplierAfter = BigInt((await setup.cawProfileLedger.rewardMultiplier()).toString());
+    const precision = BigInt((await setup.cawProfileLedger.precision()).toString());
     return (ownershipAfter - snapshotBefore.ownership) * multiplierAfter / precision;
   }
   async function snapshotValidator() {
     return {
-      ownership: BigInt((await setup.cawProfileL2.cawOwnership(validatorTokenId)).toString()),
+      ownership: BigInt((await setup.cawProfileLedger.cawOwnership(validatorTokenId)).toString()),
     };
   }
   // Allow up to ~1e6 wei (a few attoCAW) of rounding drift from share-math

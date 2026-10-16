@@ -24,6 +24,9 @@ const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
 const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
+const { linkSessionMessageParser } = require('./helpers/link-libraries');
+const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
+
 const { signTypedData, SignTypedDataVersion } = require('@metamask/eth-sig-util');
 const { ethers } = require('ethers');
 
@@ -225,7 +228,7 @@ async function depositAndAuth(user, tokenId, amountWholeCaw) {
 async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, expiry, perActionTipRate = 0) {
   // Build the SessionDelegation EIP-712 payload, sign with the owner's
   // wallet, then call registerSession (anyone can submit).
-  const nonce = Number(await setup.cawProfileL2.sessionNonce(owner));
+  const nonce = Number(await setup.cawProfileLedger.sessionNonce(owner));
   const chainId = await web3.eth.getChainId();
   const data = {
     primaryType: 'SessionDelegation',
@@ -244,7 +247,7 @@ async function registerSessionFor(owner, sessionKey, scopeBitmap, spendLimit, ex
     message: { sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce },
   };
   const sigHex = signTypedData({ data, privateKey: privFor(owner), version: SignTypedDataVersion.V4 });
-  await setup.cawProfileL2.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
+  await setup.cawProfileLedger.registerSession(owner, sessionKey, expiry, scopeBitmap, spendLimit, perActionTipRate, nonce, sigHex);
 }
 
 async function fullSetup(accounts) {
@@ -262,40 +265,42 @@ async function fullSetup(accounts) {
   const fontB = await CawFontDataB.new();
   const uri = await CawProfileURI.new(fontA.address, fontB.address);
 
+  await linkSessionMessageParser();
   // ── Nonce prediction ─────────────────────────────────────────────────────
+  // Deploy order from the snapshot: Ledger(+0), Profile(+1), Minter(+2), Quoter(+3), Actions(+4),
+  // back to back with no other tx in between; the wiring txs come after.
   const deployer = accounts[0];
   const baseNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 10 });
-  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 12 });
-  const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+  const predictedCawProfile = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 1 });
+  const predictedMinter      = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 2 });
+  const predictedCawActions  = ethers.getCreateAddress({ from: deployer, nonce: baseNonce + 4 });
+  // The deployer owns the OApps (no PathwayExpander in tests), so it can setPeer.
+  const dummyPathwayExpander = deployer;
 
   const cawProfileLedger = await CawProfileLedger.new(
     l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
-    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEAD", false,
+    predictedCawProfile, predictedCawActions, "0x000000000000000000000000000000000000dEaD", false,
     dummyPathwayExpander
   );
-  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
-
-  const cpNonce = await web3.eth.getTransactionCount(deployer);
-  const predictedMinter = ethers.getCreateAddress({ from: deployer, nonce: cpNonce + 1 });
   const cawProfile = await CawProfile.new(token.address, uri.address, buyAndBurn.address, networkManager.address, l1Endpoint.address, l1, "0x0000000000000000000000000000000000000000", cawProfileLedger.address, dummyPathwayExpander, predictedMinter);
   assert.equal(cawProfile.address.toLowerCase(), predictedCawProfile.toLowerCase(), "cawProfile nonce prediction mismatch");
-  await buyAndBurn.setCawProfile(cawProfile.address);
-  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
-  await cawProfile.setL2Peer(l2, cawProfileLedger.address);
-
-  // Create a network. createNetwork signature is (name, oversight, l2ChainId, mintFee, depositFee, authFee, withdrawFee).
-  // Use 0 fees to keep tests focused on action processing, not fees.
-  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
-  const networkId = 1;
-
   const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address, dummyPathwayExpander);
   assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
 
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 
-  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000");
+  const cawActions = await CawActions.new(cawProfileLedger.address, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000", 0, 0);
   assert.equal(cawActions.address.toLowerCase(), predictedCawActions.toLowerCase(), "cawActions nonce prediction mismatch");
+
+  await l1Endpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
+  await buyAndBurn.setCawProfile(cawProfile.address);
+  await l2Endpoint.setDestLzEndpoint(cawProfile.address, l1Endpoint.address);
+  await cawProfile.setPeer(l2, toBytes32(cawProfileLedger.address));
+
+  // Create a network. createNetwork signature is (name, oversight, l2ChainId, mintFee, depositFee, authFee, withdrawFee).
+  // Use 0 fees to keep tests focused on action processing, not fees.
+  await networkManager.createNetwork("Test Network", accounts[0], l2, 0, 0, 0, 0, 0);
+  const networkId = 1;
 
   return { token, cawProfile, cawProfileLedger, cawProfileL2: cawProfileLedger, minter, quoter, cawActions, networkManager, networkId };
 }
@@ -560,8 +565,12 @@ contract('CawActions — batched signatures', function (accounts) {
     expect(Number(result.successCount)).to.equal(0);
     expect(result.rejections.length).to.equal(2);
     expect(result.rejections[0]).to.equal(result.rejections[1]); // same reason for whole group
-    const selfFollowMsg = result.rejections[0];
-    expect(selfFollowMsg.includes('Cannot follow yourself') || selfFollowMsg.includes('SelfFollow') || selfFollowMsg.includes('Low-level exception')).to.equal(true, 'Expected self-follow rejection');
+    // rejections are now raw revert bytes (4-byte custom-error selector + abi-encoded args,
+    // or 0x08c379a0 + abi-encoded string for legacy Error(string) reverts). SelfFollow()
+    // has zero args, so the entire payload is just its 4-byte selector.
+    const SELF_FOLLOW_SELECTOR = '0x773685ef';
+    expect(result.rejections[0].toLowerCase().startsWith(SELF_FOLLOW_SELECTOR)).to.equal(true,
+      `Expected SelfFollow() selector (${SELF_FOLLOW_SELECTOR}); got ${result.rejections[0]}`);
   });
 
   // --------------------------------------------

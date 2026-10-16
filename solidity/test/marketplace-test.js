@@ -7,6 +7,7 @@ const MintableCaw = artifacts.require("MintableCaw");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const MockSwapRouter = artifacts.require("MockSwapRouter");
 const RevertingBidder = artifacts.require("RevertingBidder");
+const toBytes32 = (addr) => "0x000000000000000000000000" + addr.slice(2).toLowerCase();
 
 const truffleAssert = require('truffle-assertions');
 const { BN, expectRevert, time } = require('@openzeppelin/test-helpers');
@@ -35,7 +36,8 @@ contract("CawProfileMarketplace", (accounts) => {
     uriGenerator = await CawProfileURI.new(fontA.address, fontB.address);
     networkManager = await CawNetworkManager.new(deployer);
 
-    const dummyPathwayExpander = "0x000000000000000000000000000000000000bEEF";
+    // The deployer owns the OApps (no PathwayExpander in tests), so it can setPeer.
+    const dummyPathwayExpander = deployer;
     const cpDeployer = deployer;
 
     // L2 endpoint + ledger for the CawProfile constructor.
@@ -49,12 +51,11 @@ contract("CawProfileMarketplace", (accounts) => {
     const cawProfileLedger = await CawProfileLedger.new(
       l1Eid, l2Endpoint.address, "0x0000000000000000000000000000000000000000",
       predictedCawProfiles,
-      "0x000000000000000000000000000000000000dEAD", // _cawActions: dummy (marketplace doesn't use it)
-      "0x000000000000000000000000000000000000cAFE", // _erc1271Sibling: dummy
+      "0x000000000000000000000000000000000000dEaD", // _cawActions: dummy (marketplace doesn't use it)
+      "0x000000000000000000000000000000000000cafE", // _erc1271Sibling: dummy
       false,
       accounts[0] // _pathwayExpander: dummy non-zero
     );
-    await lzEndpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
 
     // MockSwapRouter deployed before nonce snapshot so it doesn't break the CawProfile→Minter pair
     const mockRouter = await MockSwapRouter.new(token.address);
@@ -84,14 +85,17 @@ contract("CawProfileMarketplace", (accounts) => {
       dummyPathwayExpander
     );
     assert.equal(minter.address.toLowerCase(), predictedMinter.toLowerCase(), "minter address prediction mismatch — extra tx between CawProfile and Minter deploys?");
+    // Wiring comes after the predicted deploys.
+    await lzEndpoint.setDestLzEndpoint(cawProfileLedger.address, l2Endpoint.address);
     await l2Endpoint.setDestLzEndpoint(cawProfiles.address, lzEndpoint.address);
 
-    // Set up a dummy L2 peer (needed for mint to not revert on peerWithMaxPendingTransfers)
+    // Set up a dummy L2 peer (mint path needs at least one peer registered).
     const dummyL2Eid = 40245;
-    await cawProfiles.setL2Peer(dummyL2Eid, cawProfileLedger.address);
+    await cawProfiles.setPeer(dummyL2Eid, toBytes32(cawProfileLedger.address));
 
     // Create a network (needed for minting)
-    await networkManager.createNetwork("Test Network", deployer, dummyL2Eid, 0, 0, 0, 0, 0);
+    // feeAddress must differ from buyAndBurn, which is `deployer` here (all fees are 0).
+    await networkManager.createNetwork("Test Network", accounts[9], dummyL2Eid, 0, 0, 0, 0, 0);
 
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
