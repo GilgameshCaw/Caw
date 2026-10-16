@@ -48,6 +48,10 @@ export function recoverDmSenderAddress(canonical: string, signature: string): st
   // but we normalize explicitly to {27,28} to match the SignatureLike
   // shape ethers prefers.
   let sig = signature
+  // Frontends built before the double-prefix fix in signSenderEnvelope
+  // send "0x0x" + 130 hex chars. The bytes after the second prefix are
+  // the real signature, so accept that shape too.
+  if (sig.length === 134 && sig.startsWith('0x0x')) sig = sig.slice(2)
   if (sig.length === 132) {
     const last = sig.slice(-2)
     const v = parseInt(last, 16)

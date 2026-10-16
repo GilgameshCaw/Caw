@@ -209,7 +209,10 @@ export async function signSenderEnvelope(
   const out = new Uint8Array(65)
   out.set(compact, 0)
   out[64] = v
-  return '0x' + bytesToHex(out)
+  // bytesToHex already prefixes 0x. Prefixing again gave "0x0x…" (134
+  // chars), which the server's verifier could never parse, so every
+  // message was stored with verifiedSender = false.
+  return bytesToHex(out)
 }
 
 /**
