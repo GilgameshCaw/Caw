@@ -539,14 +539,20 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'payload', internalType: 'bytes', type: 'bytes' }],
+    inputs: [
+      { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
+    ],
     name: '_processChallenge',
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
-    inputs: [{ name: 'payload', internalType: 'bytes', type: 'bytes' }],
+    inputs: [
+      { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
+    ],
     name: '_processNonExistence',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -593,6 +599,7 @@ export const cawActionsArchiveAbi = [
     type: 'function',
     inputs: [
       { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
       { name: '', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'checkpointClaimReopensAt',
@@ -602,6 +609,7 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
       { name: '', internalType: 'uint32', type: 'uint32' },
       { name: '', internalType: 'uint256', type: 'uint256' },
     ],
@@ -696,6 +704,7 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'sourceEid', internalType: 'uint32', type: 'uint32' },
       { name: 'networkId', internalType: 'uint32', type: 'uint32' },
       { name: 'start', internalType: 'uint256', type: 'uint256' },
       { name: 'end', internalType: 'uint256', type: 'uint256' },
@@ -706,7 +715,10 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
+    ],
     name: 'lastFinalizedCheckpoint',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -846,6 +858,13 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'submissionSourceEid',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     name: 'submissions',
     outputs: [
       { name: 'submitter', internalType: 'address', type: 'address' },
@@ -873,6 +892,7 @@ export const cawActionsArchiveAbi = [
       { name: 'r', internalType: 'bytes32[]', type: 'bytes32[]' },
       { name: 'merkleRoot', internalType: 'bytes32', type: 'bytes32' },
       { name: 'entryHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'sourceEid', internalType: 'uint32', type: 'uint32' },
     ],
     name: 'submitReplication',
     outputs: [],

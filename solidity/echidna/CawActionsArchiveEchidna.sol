@@ -28,12 +28,15 @@ pragma solidity ^0.8.22;
 ///             slash transfers reward out to msg.sender; so address(this).balance == sum(stakes))
 ///        6. A SLASHED submission never reverts to PENDING.
 ///        7. checkpointClaimed re-opens after a slash (claim cleared) — confirms slash-loop walks all subs.
+///        8. Claims are per (sourceEid, networkId) stream, as in production: two
+///           streams of the same network never block each other.
 contract CawActionsArchiveEchidna {
 
     enum Status { PENDING, FINALIZED, SLASHED }
 
     struct Submission {
         address submitter;
+        uint32 sourceEid;
         uint32 networkId;
         uint64 startCheckpointId;
         uint64 endCheckpointId;
@@ -51,7 +54,7 @@ contract CawActionsArchiveEchidna {
     mapping(address => uint256) public pendingCount;
     mapping(address => uint256[]) public validatorSubmissions;
     mapping(uint256 => uint256) internal validatorSubmissionsIndexPlusOne;
-    mapping(uint32 => mapping(uint256 => uint256)) public checkpointClaimed;
+    mapping(uint32 => mapping(uint32 => mapping(uint256 => uint256))) public checkpointClaimed;
 
     // Echidna-side bookkeeping
     address[] internal seenValidators;
@@ -89,10 +92,11 @@ contract CawActionsArchiveEchidna {
         require(ok, "transfer");
     }
 
-    function submitReplication(uint32 networkId, uint64 startCp, uint64 numCps) external {
+    function submitReplication(uint32 sourceEid, uint32 networkId, uint64 startCp, uint64 numCps) external {
         if (stakes[msg.sender] < MIN_STAKE) return;
         if (startCp == 0) return;
         // Bound to small ranges so we don't blow the gas-per-call budget.
+        sourceEid = uint32(sourceEid % 2); // 2 source L2s
         networkId = uint32(networkId % 3); // 3 networks
         startCp = uint64(startCp % 64);
         if (startCp == 0) startCp = 1;
@@ -102,12 +106,13 @@ contract CawActionsArchiveEchidna {
 
         // Check no overlap with existing claims.
         for (uint64 cp = startCp; cp <= endCp; cp++) {
-            if (checkpointClaimed[networkId][cp] != 0) return;
+            if (checkpointClaimed[sourceEid][networkId][cp] != 0) return;
         }
 
         uint256 sid = nextSubmissionId++;
         submissions[sid] = Submission({
             submitter: msg.sender,
+            sourceEid: sourceEid,
             networkId: networkId,
             startCheckpointId: startCp,
             endCheckpointId: endCp,
@@ -115,7 +120,7 @@ contract CawActionsArchiveEchidna {
             status: Status.PENDING
         });
         for (uint64 cp = startCp; cp <= endCp; cp++) {
-            checkpointClaimed[networkId][cp] = sid;
+            checkpointClaimed[sourceEid][networkId][cp] = sid;
         }
         pendingCount[msg.sender]++;
         validatorSubmissions[msg.sender].push(sid);
@@ -171,7 +176,7 @@ contract CawActionsArchiveEchidna {
                 s.status = Status.SLASHED;
                 sawSlashed[sid] = true;
                 for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; cp++) {
-                    checkpointClaimed[s.networkId][cp] = 0;
+                    checkpointClaimed[s.sourceEid][s.networkId][cp] = 0;
                 }
             }
         }
@@ -239,7 +244,7 @@ contract CawActionsArchiveEchidna {
     ///         (uniqueness of checkpointClaimed).
     ///
     ///         Encoded as: for each (sid_a, sid_b) covering overlapping cps
-    ///         on the same network, at most one is PENDING.
+    ///         on the same (sourceEid, network) stream, at most one is PENDING.
     function echidna_no_overlapping_pending() external view returns (bool) {
         for (uint256 i = 0; i < allSubmissionIds.length; i++) {
             uint256 a = allSubmissionIds[i];
@@ -249,7 +254,7 @@ contract CawActionsArchiveEchidna {
                 uint256 b = allSubmissionIds[j];
                 Submission storage sb = submissions[b];
                 if (sb.status != Status.PENDING) continue;
-                if (sa.networkId != sb.networkId) continue;
+                if (sa.sourceEid != sb.sourceEid || sa.networkId != sb.networkId) continue;
                 bool overlap = !(sa.endCheckpointId < sb.startCheckpointId || sb.endCheckpointId < sa.startCheckpointId);
                 if (overlap) return false;
             }

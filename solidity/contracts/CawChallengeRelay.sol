@@ -143,6 +143,8 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ///         Anyone can call it; the height is read canonically from CawActions
   ///         on this (source) chain. The archive verifies the submission really
   ///         does over-reach before slashing, so a wrong submissionId is a no-op.
+  ///         So is a submission that copies another L2's stream for the network
+  ///         (its sourceEid is not this chain): ChallengeDropped, reason 5.
   function relayNonExistence(
     uint32 destEid,
     uint256 submissionId,
@@ -167,6 +169,8 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ///      the LZ fee is spent for nothing. Read the submission's networkId from
   ///      the archive (getSubmission) and pass that exact value. The relay cannot
   ///      validate it here (the submission lives on the destination chain).
+  ///      Likewise, only relay against submissions whose submissionSourceEid is
+  ///      this chain's eid; any other is dropped with reason 5.
   function relayChallenge(
     uint32 destEid,
     uint256 submissionId,

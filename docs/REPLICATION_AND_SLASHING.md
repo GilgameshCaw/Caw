@@ -91,11 +91,15 @@ the first replication cycle that has work to do, then it goes quiet:
 
 `optimisticReplicationLoop()` in `ValidatorService` looks for unclaimed
 checkpoint ranges on the archive and calls
-`submitReplication(clientId, startCp, endCp, packedActions, r[], merkleRoot, entryHash)`.
+`submitReplication(clientId, startCp, endCp, packedActions, r[], merkleRoot, entryHash, sourceEid)`.
 The contract:
 
 - Requires `stakes[msg.sender] >= MIN_STAKE`
-- Requires the range is unclaimed
+- Requires a peer relay for `sourceEid` (the LZ eid of the L2 whose stream
+  it copies) and records it; fraud proofs for this submission (challenge
+  hashes and non-existence) are only accepted from that relay
+- Requires the range is unclaimed for `(sourceEid, networkId)` — each L2's
+  stream for a Network is claimed separately
 - Stores a `dataCommitment = keccak256(keccak(packed), keccak(r), entryHash)`
 - Sets `finalizedAt = block.timestamp + 2 days`
 - Emits `SubmissionCreated` and `ActionsArchived`

@@ -7,7 +7,7 @@ import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
-import { deployments, type Env, type ChainKey } from '../../abi/deployments'
+import { deployments, lzEids, type Env, type ChainKey } from '../../abi/deployments'
 import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
@@ -4326,6 +4326,23 @@ console.log("succeededKeys", succeededKeys)
       return { address, chainId: meta.chainId }
     }
 
+    // LZ eid of the L2 this validator reads actions from. The archive keys
+    // every claim by (sourceEid, networkId) — each L2 has its own stream for a
+    // network — and only accepts fraud proofs from that eid's relay. Read the
+    // chainId from the RPC itself: replicationHttpProvider pins its network.
+    let sourceEid: number | null = null
+    async function getSourceEid(): Promise<number> {
+      if (sourceEid !== null) return sourceEid
+      const chainId = Number(await replicationHttpProvider.send('eth_chainId', []))
+      const meta = Object.values(REPLICATION_CHAIN_META).find(m => m.chainId === chainId)
+      const eid = meta ? lzEids[meta.env]?.[meta.chainKey] : undefined
+      if (!eid) {
+        throw new Error(`[OptimisticReplication] no LZ eid for source chainId ${chainId} — add it to REPLICATION_CHAIN_META and lzEids`)
+      }
+      sourceEid = eid
+      return eid
+    }
+
     // Resolved once getL2bContracts() runs. The fallback to the install-time
     // constant is for CLI / debug paths that read OPTIMISTIC_ARCHIVE_ADDRESS
     // before getL2bContracts() has been called — only correct when the
@@ -4358,10 +4375,11 @@ console.log("succeededKeys", succeededKeys)
       'function pendingCount(address) view returns (uint256)',
       'function deposit() payable',
       'function withdraw(uint256)',
-      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash, uint32 sourceEid)',
       'function finalizeSubmission(uint256 submissionId)',
-      'function checkpointClaimed(uint32, uint256) view returns (uint256)',
-      'function isRangeAvailable(uint32 networkId, uint256 start, uint256 end) view returns (bool)',
+      'function checkpointClaimed(uint32, uint32, uint256) view returns (uint256)',
+      'function isRangeAvailable(uint32 sourceEid, uint32 networkId, uint256 start, uint256 end) view returns (bool)',
+      'function submissionSourceEid(uint256) view returns (uint32)',
       'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
       'function nextSubmissionId() view returns (uint256)',
       'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
@@ -4377,7 +4395,7 @@ console.log("succeededKeys", succeededKeys)
      * event" path now that the event only carries commitments.
      */
     const archiveSubmitIface = new Interface([
-      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+      'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash, uint32 sourceEid)',
     ])
     async function decodeArchiveSubmissionFromTx(
       provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
@@ -4973,6 +4991,7 @@ console.log("succeededKeys", succeededKeys)
 
 
         const httpProvider = replicationHttpProvider
+        const srcEid = await getSourceEid()
         // V1→V2 rename: clientActionCount → networkActionCount. Calling the
         // old name reverts with no data, which ethers wraps as a bare "Call
         // exception" and the outer catch surfaces as "Failed for network N:
@@ -4989,7 +5008,7 @@ console.log("succeededKeys", succeededKeys)
             // 3. Find unreplicated checkpoint range on L2b archive
             let startCheckpointId = 0
             for (let cp = 1; cp <= totalCheckpoints; cp++) {
-              const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              const claimed = Number(await archive.checkpointClaimed(srcEid, client.id, cp))
               if (claimed === 0) {
                 startCheckpointId = cp
                 break
@@ -5002,13 +5021,13 @@ console.log("succeededKeys", succeededKeys)
             let endCheckpointId = startCheckpointId
             const maxEnd = Math.min(totalCheckpoints, startCheckpointId + 255)
             for (let cp = startCheckpointId + 1; cp <= maxEnd; cp++) {
-              const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              const claimed = Number(await archive.checkpointClaimed(srcEid, client.id, cp))
               if (claimed !== 0) break
               endCheckpointId = cp
             }
 
             // Verify range is still available (atomic check)
-            const rangeAvailable = await archive.isRangeAvailable(client.id, startCheckpointId, endCheckpointId)
+            const rangeAvailable = await archive.isRangeAvailable(srcEid, client.id, startCheckpointId, endCheckpointId)
             if (!rangeAvailable) {
               console.log(`[OptimisticReplication] Network ${client.id}: range ${startCheckpointId}..${endCheckpointId} no longer available, skipping`)
               continue
@@ -5116,7 +5135,7 @@ console.log("succeededKeys", succeededKeys)
             try {
               await archiveW.submitReplication.staticCall(
                 client.id, startCheckpointId, endCheckpointId,
-                packedHex, data.allR, merkleRoot, data.entryHash
+                packedHex, data.allR, merkleRoot, data.entryHash, srcEid
               )
             } catch (simErr: any) {
               const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
@@ -5129,7 +5148,7 @@ console.log("succeededKeys", succeededKeys)
             try {
               const estimated = await archiveW.submitReplication.estimateGas(
                 client.id, startCheckpointId, endCheckpointId,
-                packedHex, data.allR, merkleRoot, data.entryHash
+                packedHex, data.allR, merkleRoot, data.entryHash, srcEid
               )
               gasLimit = (estimated * 120n) / 100n // 20% buffer for L2b
               if (gasLimit > 30_000_000n) gasLimit = 30_000_000n
@@ -5140,7 +5159,7 @@ console.log("succeededKeys", succeededKeys)
 
             const tx = await archiveW.submitReplication(
               client.id, startCheckpointId, endCheckpointId,
-              packedHex, data.allR, merkleRoot, data.entryHash,
+              packedHex, data.allR, merkleRoot, data.entryHash, srcEid,
               { gasLimit }
             )
             const receipt = await tx.wait()
@@ -5429,6 +5448,11 @@ console.log("succeededKeys", succeededKeys)
      * Checks that submitted checkpoint hashes match L2's on-chain hashes.
      * Logs warnings on mismatch (actual challenge submission is a follow-up).
      */
+    // Submissions that copy another L2's stream. Their checkpoint hashes come
+    // from that L2, not ours, and the archive drops our relay's fraud proofs
+    // against them (ChallengeDropped reason 5), so they are skipped for good.
+    const otherStreamSubmissions = new Set<number>()
+
     async function monitorOptimisticSubmissions() {
       try {
         // Same gate as the replication loop: without the archive RPC there
@@ -5456,6 +5480,7 @@ console.log("succeededKeys", succeededKeys)
         const httpProvider = replicationHttpProvider
         const hashCheckAbi = ['function networkHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
         const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
+        const srcEid = await getSourceEid()
 
         // Persistent cache of submissions whose status is permanently
         // resolved (slashed / finalized / invalidated). Each monitor
@@ -5488,6 +5513,13 @@ console.log("succeededKeys", succeededKeys)
           // Skip submissions we already know are resolved (saves a
           // getSubmission view call per cycle).
           if (resolvedSet.has(submissionId)) continue
+          if (otherStreamSubmissions.has(submissionId)) continue
+          try {
+            if (Number(await archive.submissionSourceEid(submissionId)) !== srcEid) {
+              otherStreamSubmissions.add(submissionId)
+              continue
+            }
+          } catch { continue }
 
           // Check if still pending
           let merkleRoot: string

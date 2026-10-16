@@ -25,6 +25,8 @@ contract ArchiveLookaheadTest is Test {
         lzEp = new MockLayerZeroEndpoint(L2_EID);
         // OApp ctor sets owner = msg.sender = this; pathwayExpander is the delegate.
         archive = new CawActionsArchive(address(lzEp), pathwayExpander);
+        // submitReplication requires a peer relay for the declared sourceEid.
+        archive.setPeer(L2_EID, bytes32(uint256(uint160(makeAddr("relay")))));
         vm.deal(validator, 1 ether);
         vm.prank(validator);
         archive.deposit{value: 0.05 ether}();
@@ -39,7 +41,7 @@ contract ArchiveLookaheadTest is Test {
         uint256 farStart = archive.LOOKAHEAD_WINDOW() + 1; // 1 past the bound
         vm.prank(validator);
         vm.expectRevert("Checkpoint too far ahead");
-        archive.submitReplication(NETWORK_ID, farStart, farStart, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0));
+        archive.submitReplication(NETWORK_ID, farStart, farStart, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0), L2_EID);
     }
 
     // A submission at the edge of the window passes the bound (and then fails
@@ -52,16 +54,26 @@ contract ArchiveLookaheadTest is Test {
         // Passes the lookahead bound; reverts later (no valid action data). The
         // point is the revert is NOT "Checkpoint too far ahead".
         vm.expectRevert(bytes("Action count mismatch"));
-        archive.submitReplication(NETWORK_ID, edge, edge, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0));
+        archive.submitReplication(NETWORK_ID, edge, edge, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0), L2_EID);
     }
 
-    // The bound is per-network and starts from 0 (genesis): a genesis submission
-    // for cp 1 is well within the window.
+    // The bound is per (sourceEid, network) stream and starts from 0 (genesis):
+    // a genesis submission for cp 1 is well within the window.
     function test_genesis_smallSubmission_passesBound() public {
         bytes memory emptyActions = "";
         bytes32[] memory emptyR = new bytes32[](0);
         vm.prank(validator);
         vm.expectRevert(bytes("Action count mismatch")); // passed the bound; fails on data
-        archive.submitReplication(NETWORK_ID, 1, 1, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0));
+        archive.submitReplication(NETWORK_ID, 1, 1, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0), L2_EID);
+    }
+
+    // A source eid with no peer relay could never deliver a fraud proof, so the
+    // submission is refused before anything else is checked.
+    function test_unpeeredSourceEid_reverts() public {
+        bytes memory emptyActions = "";
+        bytes32[] memory emptyR = new bytes32[](0);
+        vm.prank(validator);
+        vm.expectRevert(bytes("No relay for source eid"));
+        archive.submitReplication(NETWORK_ID, 1, 1, emptyActions, emptyR, bytes32(uint256(1)), bytes32(0), L2_EID + 1);
     }
 }

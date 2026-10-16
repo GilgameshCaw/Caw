@@ -252,6 +252,7 @@ contract ProcessChallengeHarness {
     mapping(uint256 => uint32) public subNetworkId;
     mapping(uint256 => uint256) public subStart;
     mapping(uint256 => uint256) public subEnd;
+    mapping(uint256 => uint32) public subSourceEid;
 
     mapping(uint256 => mapping(uint256 => bytes32)) public challengeHash;
     mapping(uint256 => mapping(uint256 => bool)) public challengeDelivered;
@@ -268,6 +269,7 @@ contract ProcessChallengeHarness {
         subNetworkId[submissionId] = networkId;
         subStart[submissionId]     = startCpId;
         subEnd[submissionId]       = endCpId;
+        subSourceEid[submissionId] = 40245;
     }
 
     function simulate(
@@ -282,6 +284,7 @@ contract ProcessChallengeHarness {
         if (subStatus[submissionId] != 1) { return gasBefore - gasleft(); }
         if (subNetworkId[submissionId] != networkId) { return gasBefore - gasleft(); }
         if (cps.length != hashes.length) { return gasBefore - gasleft(); }
+        if (subSourceEid[submissionId] != 40245) { return gasBefore - gasleft(); }
 
         uint256 start = subStart[submissionId];
         uint256 end   = subEnd[submissionId];

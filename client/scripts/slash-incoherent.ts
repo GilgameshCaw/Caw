@@ -71,7 +71,10 @@ async function main() {
     // the originating submitReplication tx's calldata. We fetch them below.
     'event ActionsArchived(uint256 indexed submissionId, uint32 indexed networkId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
   ]
+  // Both shapes: the current archive takes a trailing sourceEid, archives
+  // deployed before it don't. parseTransaction picks by selector.
   const submitReplicationIface = new ethers.Interface([
+    'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash, uint32 sourceEid)',
     'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
   ])
   const cawActionsAbi = ['function networkHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
