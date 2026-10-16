@@ -36,8 +36,10 @@ const CONTRACTS = [
  *   "t_mapping(t_uint32,t_struct(CawNetwork)457_storage)" → normalised recursively
  */
 function normaliseType(t) {
-  // Replace )NNN_ (AST ID embedded between closing paren and underscore) with )_
-  return t.replace(/\)(\d+)_/g, ')_');
+  // Strip the AST ID solc appends to a named type: t_struct(X)NNN_storage,
+  // t_contract(X)NNN, t_enum(X)NNN, t_userDefinedValueType(X)NNN. Leave other
+  // digits after a ')' alone: in t_array(T)NNN_storage they are the length.
+  return t.replace(/(t_(?:struct|contract|enum|userDefinedValueType)\([^()]*\))\d+/g, '$1');
 }
 
 function getStorageLayout(contractName) {
