@@ -18,6 +18,7 @@ import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { getIndexerStats } from '../../utils/indexerHealth'
+import { batchGroupKey, adjacentGroupSizes } from '../../utils/batchGroupKey'
 import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -1572,8 +1573,8 @@ export const validatorService: Service = {
       const PER_ACTION_OVERHEAD = 90 // packed fixed fields (25) + sig (65)
       let runningSize = 500 // base overhead for the outer function call
       const bounded: typeof candidates = []
-      const groupAccumulators: Array<{ batchId: number; startIdx: number; bytes: number }> = []
-      let currentGroup: { batchId: number; startIdx: number; bytes: number } | null = null
+      const groupAccumulators: Array<{ key: string; batchId: number; startIdx: number; bytes: number }> = []
+      let currentGroup: { key: string; batchId: number; startIdx: number; bytes: number } | null = null
 
       const entrySize = (entry: typeof candidates[number]) => {
         const data = (entry.payload as any)?.data
@@ -1601,7 +1602,7 @@ export const validatorService: Service = {
           // back the partial group entirely (it'll be retried next poll
           // when it's the first thing in line). If THIS entry's group
           // happens to be the in-progress one, just stop here.
-          if (currentGroup && currentGroup.batchId === (entry as any).batchId) {
+          if (currentGroup && currentGroup.key === batchGroupKey(entry)) {
             // Drop the partial group from `bounded`.
             bounded.length = currentGroup.startIdx
             runningSize -= currentGroup.bytes
@@ -1613,10 +1614,11 @@ export const validatorService: Service = {
         }
 
         // Track group transitions so we can roll back a partial group on overflow.
-        const eBatchId = (entry as any).batchId as number | null | undefined
-        if (eBatchId != null) {
-          if (!currentGroup || currentGroup.batchId !== eBatchId) {
-            currentGroup = { batchId: eBatchId, startIdx: bounded.length, bytes: 0 }
+        // Same grouping as buildMultiActionData (batchGroupKey).
+        const eKey = batchGroupKey(entry)
+        if (eKey != null) {
+          if (!currentGroup || currentGroup.key !== eKey) {
+            currentGroup = { key: eKey, batchId: entry.batchId as number, startIdx: bounded.length, bytes: 0 }
             groupAccumulators.push(currentGroup)
           }
           currentGroup.bytes += sz
@@ -1637,10 +1639,6 @@ export const validatorService: Service = {
     ) {
       const actions: any[]    = []
       const sigParts: Array<{ v: number; r: string; s: string }> = []
-      // groups[] mirrors actions[]: group[i] is the (batchId-or-tempUnique, runningGroupSize)
-      // we'll fold into the grouped sigs payload below.
-      const groups: Array<{ groupSize: number; v: number; r: string; s: string }> = []
-      let lastBatchId: number | null | undefined = undefined
 
       for (const entry of queueEntries) {
         const signature = entry.signedTx
@@ -1651,17 +1649,6 @@ export const validatorService: Service = {
           v: parseInt(hex.slice(128, 130), 16),
         }
         sigParts.push(sig)
-
-        // Group adjacent txqueue rows that share a batchId. Rows with no
-        // batchId always get their own group of size 1. Rows with a batchId
-        // must share the SAME signedTx — the validator trusts the API to
-        // have stored the batch sig consistently across the group's rows.
-        if (entry.batchId != null && entry.batchId === lastBatchId && groups.length > 0) {
-          groups[groups.length - 1].groupSize += 1
-        } else {
-          groups.push({ groupSize: 1, ...sig })
-        }
-        lastBatchId = entry.batchId ?? null
 
         // Ensure amounts are properly formatted
         const actionData = (entry.payload as any).data
@@ -1693,6 +1680,21 @@ export const validatorService: Service = {
           recipients,
           amounts,
         })
+      }
+
+      // Group adjacent txqueue rows of one batch (batchGroupKey: sender,
+      // batchId and batch sig, since batchId alone can repeat). Every other
+      // row is its own group of size 1. A group's sig is its first row's —
+      // the API stores the batch sig on every row of the batch.
+      const groups: Array<{ groupSize: number; v: number; r: string; s: string }> = []
+      let groupStart = 0
+      for (const groupSize of adjacentGroupSizes(queueEntries.map(entry => ({
+        senderId: Number((entry.payload as any).data.senderId),
+        batchId: entry.batchId,
+        signedTx: entry.signedTx,
+      })))) {
+        groups.push({ groupSize, ...sigParts[groupStart] })
+        groupStart += groupSize
       }
 
       // Build packed format
