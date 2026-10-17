@@ -148,6 +148,11 @@ export type SponsorErrorCode =
 export interface SponsorError {
   error: SponsorErrorCode
   detail: string
+  /** Bootstrap path only. Set when the failure came after the signed mint tx
+   *  was handed to the RPC and it is not a mined revert: the broadcast call
+   *  or the receipt wait threw, so the mint may still land. Callers must not
+   *  free anything that the mint consumes. */
+  sentTxHash?: string
 }
 
 export interface SponsorSuccess {
@@ -355,6 +360,9 @@ export class SponsorService {
    *   b. An EIP-712 MintAndDeposit permit via their passkey or secp256k1 key.
    */
   async sponsorBootstrap(params: BootstrapParams): Promise<SponsorResult> {
+    // Hash of the signed mint tx, set just before it goes to the RPC. From
+    // then on an error is no longer proof that nothing was minted.
+    let sentTxHash: string | undefined
     try {
       const chainId = await this.getChainId()
 
@@ -722,6 +730,7 @@ export class SponsorService {
 
         // Sign with sponsor's key.
         const signedTx = await this.wallet.signTransaction(tx)
+        sentTxHash = Transaction.from(signedTx).hash ?? undefined
         return this.provider.broadcastTransaction(signedTx)
       })
 
@@ -755,7 +764,14 @@ export class SponsorService {
       return { txHash: txResponse.hash, tokenId: mintedTokenId ?? undefined, recipient: userEoaAddress }
     } catch (err) {
       // Distinguish between pre-submit and on-chain reverts for caller.
-      return parseRevertError(err)
+      const parsed = parseRevertError(err)
+      // After the broadcast, only a mined revert (ethers' wait() throws
+      // CALL_EXCEPTION with the status-0 receipt) proves the mint did not
+      // happen. A broadcast that threw (no answer, "already known") or a
+      // receipt wait that threw leaves it unknown.
+      const minedRevert = (err as any)?.code === 'CALL_EXCEPTION' && (err as any)?.receipt?.status === 0
+      if (sentTxHash && !minedRevert) return { ...parsed, sentTxHash }
+      return parsed
     }
   }
 

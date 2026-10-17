@@ -13,8 +13,9 @@
  *      = the free mint is already spent, in either direction).
  *   4. On success, mints a short-lived single-use "X-qualified" token (Redis)
  *      bound to the xUserId. The FE hands that token to POST /api/sponsor/bootstrap,
- *      which consumes it as an alternative to a sponsor code and writes the
- *      WalletXLink after the mint (burning the xUserId for any future claim).
+ *      which consumes it as an alternative to a sponsor code, reserves the
+ *      xUserId before the mint (reserveXSpend), and writes the WalletXLink
+ *      after it (burning the xUserId for any future claim).
  *
  * The token is the trust handoff between this verification and the mint. It is
  * Redis-backed (matches the existing sponsor rate-limit infra) rather than a
@@ -23,7 +24,7 @@
 import { Router } from 'express'
 import crypto from 'crypto'
 import Redis from 'ioredis'
-import { prisma } from '../../prismaClient'
+import { prisma as _prismaDefault } from '../../prismaClient'
 import {
   buildAuthUrl,
   closePagePostMessage as renderClosePage,
@@ -42,9 +43,25 @@ import {
 
 const router = Router()
 
-const redis = process.env.REDIS_URL
+const _redisDefault = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
   : new Redis({ port: 6379, host: '127.0.0.1' })
+
+// Test seams, same shape as validateSponsorCode.ts.
+let _redisOverride: Redis | null = null
+export function _setRedisForTest(r: Redis | null): void {
+  _redisOverride = r
+}
+function getRedis(): Redis {
+  return _redisOverride ?? _redisDefault
+}
+let _prismaOverride: typeof _prismaDefault | null = null
+export function _setPrismaForTest(p: typeof _prismaDefault | null): void {
+  _prismaOverride = p
+}
+function getPrisma(): typeof _prismaDefault {
+  return _prismaOverride ?? _prismaDefault
+}
 
 // Signup flow uses its OWN state prefix + close-page localStorage key so it
 // never collides with the account-linking flow's signals.
@@ -70,7 +87,7 @@ const redirectPage = (payload: Record<string, any>, returnTo: string) =>
  */
 export async function issueXQualifiedToken(xUserId: string, xHandle: string): Promise<string> {
   const token = crypto.randomBytes(24).toString('base64url')
-  await redis.setex(
+  await getRedis().setex(
     QUALIFIED_PREFIX + token,
     QUALIFIED_TTL_SEC,
     JSON.stringify({ xUserId, xHandle, at: Date.now() }),
@@ -85,9 +102,12 @@ export async function issueXQualifiedToken(xUserId: string, xHandle: string): Pr
  */
 export async function consumeXQualifiedToken(token: string): Promise<{ xUserId: string; xHandle: string } | null> {
   const key = QUALIFIED_PREFIX + token
-  const raw = await redis.get(key)
+  // GET and DEL in one MULTI, so two concurrent consumes of the same token
+  // cannot both read it before either deletes it. (MULTI rather than GETDEL:
+  // GETDEL needs Redis 6.2+.)
+  const replies = await getRedis().multi().get(key).del(key).exec()
+  const raw = replies?.[0]?.[1] as string | null | undefined
   if (!raw) return null
-  await redis.del(key)
   try {
     const parsed = JSON.parse(raw) as { xUserId: string; xHandle: string }
     if (!parsed.xUserId || !parsed.xHandle) return null
@@ -95,6 +115,60 @@ export async function consumeXQualifiedToken(token: string): Promise<{ xUserId: 
   } catch {
     return null
   }
+}
+
+// Per-xUserId spend marker. Each OAuth round-trip issues a fresh token, and the
+// callback's already-linked check only sees mints that have finished writing
+// their WalletXLink, so a token proves "this X account qualified", not "this X
+// account has not minted". The mint reserves the xUserId here before it runs.
+// No TTL: the WalletXLink row is the durable record, and this marker covers the
+// window before it lands and the case where that write fails after the mint.
+//
+// The marker fails closed: a crash between the reservation and the mint, or a
+// mint whose outcome is unknown, leaves the X account blocked rather than open
+// to a second mint. Its value is what an operator needs to unblock it by hand:
+//   { at, username }          reserved; no mint tx known
+//   { at, username, txHash }  the mint tx was sent, and its outcome is unknown
+// Safe to DEL only when there is no WalletXLink for the xUserId, the mint is
+// not on chain (the txHash has no receipt and the sponsor's nonce has moved
+// past it; without a txHash, CawProfileMinter.idByUsername(username) is 0
+// after long enough that no sent mint can still be pending).
+const SPENT_PREFIX = 'sponsor:xspent:'
+
+export interface XSpendMarker {
+  at: number
+  username: string
+  txHash?: string
+}
+
+/**
+ * Reserve an xUserId for one sponsored mint of `username`. 'taken' if it is
+ * already linked in WalletXLink or another mint holds the reservation. Throws
+ * on a Redis or DB error; the caller must not mint in that case.
+ */
+export async function reserveXSpend(xUserId: string, username: string): Promise<'ok' | 'taken'> {
+  const linked = await getPrisma().walletXLink.findUnique({
+    where:  { xUserId },
+    select: { xUserId: true },
+  })
+  if (linked) return 'taken'
+  const marker: XSpendMarker = { at: Date.now(), username }
+  const set = await getRedis().set(SPENT_PREFIX + xUserId, JSON.stringify(marker), 'NX')
+  return set ? 'ok' : 'taken'
+}
+
+/**
+ * Keep the reservation of a mint whose tx was sent but whose outcome is
+ * unknown, and record the tx on it. Only overwrites an existing marker.
+ */
+export async function keepXSpendForSentTx(xUserId: string, username: string, txHash: string): Promise<void> {
+  const marker: XSpendMarker = { at: Date.now(), username, txHash }
+  await getRedis().set(SPENT_PREFIX + xUserId, JSON.stringify(marker), 'XX')
+}
+
+/** Give back a reservation whose mint did not happen. */
+export async function releaseXSpend(xUserId: string): Promise<void> {
+  await getRedis().del(SPENT_PREFIX + xUserId)
 }
 
 /**
@@ -174,7 +248,7 @@ router.get('/x/signup-callback', async (req, res) => {
     // Already-linked check: any existing WalletXLink for this xUserId means the
     // free sponsored mint is already spent (linked via signup OR via an existing
     // account). The mint's @unique write is the authoritative backstop.
-    const existing = await prisma.walletXLink.findUnique({
+    const existing = await getPrisma().walletXLink.findUnique({
       where:  { xUserId: xProfile.xUserId },
       select: { xUserId: true },
     })

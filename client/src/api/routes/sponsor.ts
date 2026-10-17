@@ -43,7 +43,7 @@ import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypt
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { requireAuth } from '../middleware/auth'
-import { consumeXQualifiedToken } from './xSignup'
+import { consumeXQualifiedToken, keepXSpendForSentTx, releaseXSpend, reserveXSpend } from './xSignup'
 
 const router = Router()
 
@@ -476,6 +476,24 @@ router.post('/bootstrap', async (req, res) => {
       return res.status(400).json({ error: 'CODE_EXHAUSTED', detail: 'This invite code has no uses remaining.' })
     }
   }
+  // X-path counterpart: reserve the xUserId BEFORE the irreversible mint. The
+  // token only proves the X account qualified when it was issued; one X account
+  // can collect several tokens before any of their mints has written a
+  // WalletXLink, so the spent check has to happen here, not at issue time.
+  // Released below if the mint did not happen; kept on success, and kept when
+  // the mint tx was sent and its outcome is unknown (see reserveXSpend).
+  if (xGate) {
+    let reserved: 'ok' | 'taken'
+    try {
+      reserved = await reserveXSpend(xGate.xUserId, params.username)
+    } catch (err) {
+      console.error('[sponsor/bootstrap] X spend reservation failed:', err)
+      return res.status(503).json({ error: 'X_RESERVE_FAILED', detail: 'Could not reserve this X account for signup. Try again shortly.' })
+    }
+    if (reserved === 'taken') {
+      return res.status(400).json({ error: 'X_ALREADY_USED', detail: 'This X account has already been used for a sponsored signup.' })
+    }
+  }
 
   // ── Dispatch ──────────────────────────────────────────────────────────────
   const result = await service.sponsorBootstrap({
@@ -493,6 +511,20 @@ router.post('/bootstrap', async (req, res) => {
     if (redemptionId !== null && codeHash) {
       await refundRedemption({ redemptionId, codeHash })
     }
+    if (xGate && result.sentTxHash) {
+      // The mint tx went out and may still land: releasing would let a fresh
+      // X token for the same account mint again. Keep the reservation, with
+      // the tx on it for whoever reconciles it.
+      console.warn(
+        `[sponsor/bootstrap] X spend kept: mint tx ${result.sentTxHash} for xUserId=${xGate.xUserId} ` +
+        `username=${params.username} failed after broadcast (${result.error}); outcome unknown`,
+      )
+      await keepXSpendForSentTx(xGate.xUserId, params.username, result.sentTxHash).catch(err =>
+        console.error('[sponsor/bootstrap] X spend tx record failed:', err))
+    } else if (xGate) {
+      await releaseXSpend(xGate.xUserId).catch(err =>
+        console.error('[sponsor/bootstrap] X spend release failed:', err))
+    }
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
@@ -500,10 +532,11 @@ router.post('/bootstrap', async (req, res) => {
   // X-gate: burn the X account's free-mint eligibility by writing the
   // WalletXLink for the freshly-minted recipient. WalletXLink.xUserId @unique is
   // the global spent-set — this permanently prevents that X account from
-  // claiming another sponsored mint (and from linking to any other wallet). The
-  // unique constraint is also the authoritative backstop against a
-  // check→mint race: a concurrent second mint with the same xUserId fails here
-  // (caught + logged; the mint already succeeded, so we don't fail the response).
+  // claiming another sponsored mint (and from linking to any other wallet).
+  // Concurrent and repeat mints for the same xUserId are stopped before the
+  // mint by reserveXSpend above; a failure here (caught + logged; the mint
+  // already succeeded, so we don't fail the response) leaves that reservation
+  // in place, so the X id stays spent.
   if (xGate && result.recipient) {
     try {
       await prisma.walletXLink.create({

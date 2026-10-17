@@ -76,9 +76,10 @@ export async function putState(prefix: string, state: string, data: unknown): Pr
 
 /** Read-and-delete OAuth state (single-use). Returns null if missing/expired. */
 export async function takeState<T = any>(prefix: string, state: string): Promise<T | null> {
-  const raw = await redis.get(prefix + state)
+  // One MULTI so a state nonce cannot be taken twice by concurrent callbacks.
+  const replies = await redis.multi().get(prefix + state).del(prefix + state).exec()
+  const raw = replies?.[0]?.[1] as string | null | undefined
   if (!raw) return null
-  await redis.del(prefix + state)
   try { return JSON.parse(raw) as T } catch { return null }
 }
 
