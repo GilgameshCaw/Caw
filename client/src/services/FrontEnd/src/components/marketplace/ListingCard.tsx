@@ -171,29 +171,38 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   // SyncTransferModal / relayed syncTransfer leg is needed anymore.
   //
   // Quote the real L2 sync fee (used by BOTH Pop-A's value and Pop-B's
-  // relayed value) — see BuyModal's identical pattern.
+  // relayed value) with the listed tokenId and the winner — see BuyModal's
+  // identical pattern (tokenId=0 / address(0) quotes 0 on an empty queue).
   const [settleSyncLzFee, setSettleSyncLzFee] = useState<bigint | null>(null)
+  const [settleQuoteFailed, setSettleQuoteFailed] = useState(false)
   useEffect(() => {
-    if (!canSettle) { setSettleSyncLzFee(null); return }
+    setSettleQuoteFailed(false)
+    // Drop the previous quote before asking for a new one (another winner):
+    // the settle button stays disabled until this one is in.
+    setSettleSyncLzFee(null)
+    if (!canSettle || !listing.highestBidder) return
     let cancelled = false
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
       abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
-      args: [0, '0x0000000000000000000000000000000000000000', chains.l2.layerZero, false],
+      args: [listing.tokenId, listing.highestBidder as `0x${string}`, chains.l2.layerZero, false],
       chainId: chains.l1.chainId,
     }).then((quote: any) => {
       if (cancelled) return
       setSettleSyncLzFee((quote.nativeFee * 110n) / 100n)
     }).catch(err => {
       console.warn('[ListingCard] settle sync LZ fee quote failed:', err)
-      if (!cancelled) setSettleSyncLzFee(null)
+      if (!cancelled) { setSettleSyncLzFee(null); setSettleQuoteFailed(true) }
     })
     return () => { cancelled = true }
-  }, [canSettle, listing.listingId])
+  }, [canSettle, listing.listingId, listing.tokenId, listing.highestBidder])
 
   // The settle call's own msg.value now carries the native L2 sync fee.
+  // Never send without it: the settle button stays disabled until the
+  // quote is in, and the handlers bail if it isn't.
   const settleLzFee = settleSyncLzFee ?? 0n
+  const settleFeePending = settleSyncLzFee === null
 
   useEffect(() => {
     if (!isSettleSuccess) return
@@ -203,7 +212,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   // Pop-B relay: settleAuction (payable, self-funded native L2 sync fee) +
   // fee leg, all in ONE batch — one passkey prompt.
   const handlePopBSettle = useCallback(async () => {
-    if (!isPopB || !eoaAccount || !l1Client) return
+    if (!isPopB || !eoaAccount || !l1Client || settleSyncLzFee === null) return
     setPopBSettleError(null)
     setPopBSettlePending(true)
     try {
@@ -248,7 +257,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     } finally {
       setPopBSettlePending(false)
     }
-  }, [isPopB, eoaAccount, l1Client, listing.listingId, settleLzFee, smartEoaExecute, triggerRefresh])
+  }, [isPopB, eoaAccount, l1Client, listing.listingId, settleSyncLzFee, settleLzFee, smartEoaExecute, triggerRefresh])
 
   const handleSettle = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -257,6 +266,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
       return
     }
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (settleSyncLzFee === null) return
       writeSettle({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
         abi: cawProfileMarketplaceAbi,
@@ -381,11 +391,16 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
               ) : (
                 <button
                   onClick={handleSettle}
-                  disabled={isSettling || isSettleConfirming || popBSettlePending}
+                  disabled={isSettling || isSettleConfirming || popBSettlePending || settleFeePending}
                   className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {(isSettling || popBSettlePending) ? 'Confirm in wallet...' : isSettleConfirming ? 'Settling...' : 'Claim Username'}
                 </button>
+              )}
+              {settleQuoteFailed && !isSettleSuccess && !popBSettleSuccess && (
+                <p className="text-xs text-red-400 mt-1">
+                  Couldn't get the cross-chain fee. Reload to try again.
+                </p>
               )}
               {(settleError || popBSettleError) && (
                 <p className="text-xs text-red-400 mt-1">
