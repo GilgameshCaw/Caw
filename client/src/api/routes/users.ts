@@ -230,7 +230,7 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
     let offers = 0
     if (user?.address) {
       const ownedUsers = await prisma.user.findMany({
-        where: { address: { equals: user.address, mode: 'insensitive' } },
+        where: { address: user.address.toLowerCase() },
         select: { tokenId: true },
       })
       const tokenIds = ownedUsers.map(u => u.tokenId)
