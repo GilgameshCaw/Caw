@@ -404,6 +404,7 @@ model Notification {
   @@index([userId, type])
   @@index([userId, actorId, type])
   @@index([groupKey])
+  @@index([groupId])
   @@index([userId, groupKey, createdAt])
 }
 
