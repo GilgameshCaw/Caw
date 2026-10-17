@@ -2030,7 +2030,11 @@ router.post('/batch', async (req, res) => {
           actions[0].data,
           actions[0].signature,
         )
-        if (!ok) {
+        // verifyERC1271Sig returns a tri-state enum ('ok' | 'bad_sig' |
+        // 'not_delegated'), not a boolean — every value is truthy, so `!ok`
+        // never fired and an unverified (or RPC-failed, fail-open) WebAuthn
+        // blob was accepted. Reject unless it explicitly verified.
+        if (ok !== 'ok') {
           return res.status(400).json({ error: 'Invalid signature on first action' })
         }
         firstSigner = ownerAddress
@@ -2113,7 +2117,8 @@ router.post('/batch', async (req, res) => {
           }
           // All actions in this batch are ERC-1271 (WebAuthn). Verify each on-chain.
           const ok = await verifyERC1271Sig(ownerAddress, a.domain, a.types, a.data, a.signature)
-          if (!ok) {
+          // Tri-state enum, not a boolean — see the first-action check above.
+          if (ok !== 'ok') {
             results.push({ index: i, error: 'Invalid signature' })
             continue
           }
