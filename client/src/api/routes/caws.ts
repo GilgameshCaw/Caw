@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { fetchSplitFeed } from '../shared/feedPage'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { safeDecrement } from '../../services/CountManager'
@@ -63,6 +64,10 @@ router.get('/', async (req, res) => {
           }
         ]
       : { status: 'SUCCESS' }
+
+    // Logged-in home feed (no filter, no profile): visibility is read by
+    // fetchSplitFeed() as two index-friendly halves, not as an OR in `where`.
+    const splitFeed = !filter && !targetUserId && !!currentUserId && Array.isArray(statusConditions)
 
     // Apply filter-specific conditions along with status visibility
     if (filter === 'following' && currentUserId) {
@@ -205,7 +210,7 @@ router.get('/', async (req, res) => {
           postsCondition
         ]
       }
-    } else {
+    } else if (!splitFeed) {
       // No filter - just apply status visibility
       if (Array.isArray(statusConditions)) {
         where.OR = statusConditions
@@ -271,7 +276,15 @@ router.get('/', async (req, res) => {
     }
 
     // 3️⃣ fetch one extra for cursor‐based pagination
-    const raws = await prisma.caw.findMany({
+    const raws = splitFeed
+      ? await fetchSplitFeed({
+          viewerId: currentUserId as number,
+          extraAnd: where.AND ?? [],
+          take: limit + 1,
+          cursorId: cursor?.id,
+          include: getCawIncludeConfig({ currentUserId }),
+        })
+      : await prisma.caw.findMany({
       where,
       orderBy: [
         { createdAt: 'desc' },
