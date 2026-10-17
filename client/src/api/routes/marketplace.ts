@@ -2,7 +2,7 @@ import { Router } from 'express'
 import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
-import { createNotificationWithGroup } from '../../services/NotificationService'
+import { createNotificationWithGroup, hideNotificationGroups } from '../../services/NotificationService'
 
 const redis = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
@@ -632,10 +632,15 @@ router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
       create: { offerId: offer.id, userId: offer.tokenId },
     })
 
-    // Hide the OFFER notification too so it doesn't keep nagging
-    await prisma.notification.updateMany({
-      where: { offerId, type: 'OFFER', hidden: false },
-      data: { hidden: true },
+    // Hide the OFFER notification too so it doesn't keep nagging. It goes
+    // to the username's owner (finalizeOfferNotification), i.e. offer.tokenId,
+    // and through hideNotificationGroups so its group closes with it.
+    await prisma.$transaction(async tx => {
+      const matches = await tx.notification.findMany({
+        where: { offerId, type: 'OFFER', userId: offer.tokenId, hidden: false },
+        select: { id: true },
+      })
+      await hideNotificationGroups(tx, offer.tokenId, matches.map(m => m.id))
     })
 
     console.log(`[marketplace] Offer ${offerId} dismissed by tokenId=${offer.tokenId}`)

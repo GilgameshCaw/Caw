@@ -6,10 +6,12 @@
  *   - consecutive events on the same bucket join the open group
  *   - age/time gaps do NOT open a fresh group while the group is unread
  *   - marking a group read closes it; the next event opens a fresh group
+ *   - ACTION_FAILED and the marketplace types get one group per row
+ *   - hiding a row dismisses its whole group and closes it
  */
 
 import { expect } from 'chai'
-import { createNotificationWithGroup } from '../../../src/services/NotificationService'
+import { createNotificationWithGroup, hideNotificationGroups } from '../../../src/services/NotificationService'
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory stub that mimics the Prisma client shape used by the
@@ -44,6 +46,14 @@ function makeStubClient() {
   let nextNotifId = 1
   const groups = new Map<number, GroupRow>()
   const notifs = new Map<number, NotifRow>()
+  let updateCalls = 0
+
+  function matchesNotif(n: NotifRow, where: any): boolean {
+    if (where.userId != null && n.userId !== where.userId) return false
+    if (where.id?.in && !where.id.in.includes(n.id)) return false
+    if (where.groupId?.in && !where.groupId.in.includes(n.groupId)) return false
+    return true
+  }
 
   // Simulates the ON CONFLICT DO UPDATE semantics:
   //   - bucket key: (userId, type, COALESCE(targetKey, ''))
@@ -109,10 +119,25 @@ function makeStubClient() {
         return row
       },
       async update({ where, data }: { where: { id: number }; data: any }) {
+        updateCalls++
         const row = notifs.get(where.id)
         if (!row) throw new Error(`Notification ${where.id} not found`)
         Object.assign(row, data)
         return row
+      },
+      // Only the where shapes hideNotificationGroups uses:
+      // { id: { in }, userId } and { groupId: { in }, userId }.
+      async findMany({ where }: { where: any }) {
+        return Array.from(notifs.values())
+          .filter(n => matchesNotif(n, where))
+          .map(n => ({ id: n.id, groupId: n.groupId }))
+      },
+      async updateMany({ where, data }: { where: any; data: any }) {
+        let count = 0
+        for (const n of notifs.values()) {
+          if (matchesNotif(n, where)) { Object.assign(n, data); count++ }
+        }
+        return { count }
       },
     },
     notificationGroup: {
@@ -123,12 +148,21 @@ function makeStubClient() {
       async findFirst() { throw new Error('findFirst should not be called after ON CONFLICT refactor') },
       async create()    { throw new Error('notificationGroup.create should not be called after ON CONFLICT refactor') },
       async update()    { throw new Error('notificationGroup.update should not be called after ON CONFLICT refactor') },
+      // Used by hideNotificationGroups only: { id: { in }, userId }.
+      async updateMany({ where, data }: { where: any; data: any }) {
+        let count = 0
+        for (const g of groups.values()) {
+          if (where.id.in.includes(g.id) && g.userId === where.userId) { Object.assign(g, data); count++ }
+        }
+        return { count }
+      },
     },
     // Simulate $queryRawUnsafe: intercept the INSERT … ON CONFLICT and
     // execute the in-memory upsert instead. We parse the arguments by
-    // position since the SQL template is fixed.
+    // position since the SQL template is fixed. The WITH … UPDATE
+    // "Notification" form also writes the row's groupId, as Postgres does.
     async $queryRawUnsafe(
-      _sql: string,
+      sql: string,
       userId: number,
       type: string,
       targetKey: string | null,
@@ -136,8 +170,14 @@ function makeStubClient() {
       latestNotifId: number,
     ): Promise<Array<{ id: number }>> {
       const id = upsertGroup(userId, type, targetKey, now, latestNotifId)
+      if (sql.includes('UPDATE "Notification"')) {
+        const row = notifs.get(latestNotifId)
+        if (!row) return []
+        row.groupId = id
+      }
       return [{ id }]
     },
+    get _updateCalls() { return updateCalls },
     // Expose internals for assertions.
     _groups: groups,
     _notifs: notifs,
@@ -165,6 +205,22 @@ describe('createNotificationWithGroup / rollup semantics', () => {
     expect(g.count).to.equal(1)
     expect(g.isRead).to.equal(false)
     expect(g.targetKey).to.equal('42')
+  })
+
+  // A dismissal between the group join and the row's groupId write used to
+  // close the group without this row. Both now happen in one statement.
+  it('joins the group and writes the groupId back in one raw statement', async () => {
+    const client = makeStubClient()
+    const id = await createNotificationWithGroup(client as any, {
+      userId: 1,
+      actorId: 10,
+      type: 'LIKE' as any,
+      cawId: 42,
+      createdAt: new Date('2026-01-01T10:00:00Z'),
+    })
+    const [g] = client._groups.values()
+    expect(client._notifs.get(id)!.groupId).to.equal(g.id)
+    expect(client._updateCalls).to.equal(0)
   })
 
   it('second notification on same bucket joins the group (count=2)', async () => {
@@ -252,5 +308,101 @@ describe('createNotificationWithGroup / rollup semantics', () => {
     const [g] = client._groups.values()
     expect(g.targetKey).to.equal(null)
     expect(g.count).to.equal(2)
+  })
+
+  for (const type of ['ACTION_FAILED', 'OUTBID', 'AUCTION_WON', 'SALE_SOLD', 'SALE_BOUGHT']) {
+    it(`${type}: each row gets its own group while unread`, async () => {
+      const client = makeStubClient()
+      const a = await createNotificationWithGroup(client as any, {
+        userId: 1, actorId: 1, type: type as any, actionPayload: { n: 1 },
+        createdAt: new Date('2026-01-01T10:00:00Z'),
+      })
+      const b = await createNotificationWithGroup(client as any, {
+        userId: 1, actorId: 1, type: type as any, actionPayload: { n: 2 },
+        createdAt: new Date('2026-01-01T10:01:00Z'),
+      })
+      // Both rows stay visible: the feed renders each group's latest member.
+      expect(client._groups.size).to.equal(2)
+      const latest = Array.from(client._groups.values()).map(g => g.latestNotificationId).sort()
+      expect(latest).to.deep.equal([a, b])
+      for (const g of client._groups.values()) {
+        expect(g.count).to.equal(1)
+        expect(g.targetKey).to.equal(`n:${g.latestNotificationId}`)
+      }
+    })
+  }
+})
+
+describe('hideNotificationGroups', () => {
+  async function followRollup(client: ReturnType<typeof makeStubClient>, actors: number[]) {
+    const ids: number[] = []
+    for (const actorId of actors) {
+      ids.push(await createNotificationWithGroup(client as any, {
+        userId: 1, actorId, type: 'FOLLOW' as any,
+        createdAt: new Date('2026-01-01T10:00:00Z'),
+      }))
+    }
+    return ids
+  }
+
+  it('hiding the latest row hides and reads every member and closes the group', async () => {
+    const client = makeStubClient()
+    const ids = await followRollup(client, [20, 21, 22])
+    const [g] = client._groups.values()
+    expect(g.latestNotificationId).to.equal(ids[2])
+
+    const hidden = await hideNotificationGroups(client as any, 1, [ids[2]])
+
+    expect(hidden).to.deep.equal([ids[2]])
+    expect(g.isRead).to.equal(true)
+    for (const id of ids) {
+      expect(client._notifs.get(id)!.hidden).to.equal(true)
+      expect(client._notifs.get(id)!.isRead).to.equal(true)
+    }
+  })
+
+  it('the next event after a dismissal opens a fresh group', async () => {
+    const client = makeStubClient()
+    const ids = await followRollup(client, [20, 21])
+    await hideNotificationGroups(client as any, 1, [ids[1]])
+
+    const next = await createNotificationWithGroup(client as any, {
+      userId: 1, actorId: 23, type: 'FOLLOW' as any,
+      createdAt: new Date('2026-01-01T11:00:00Z'),
+    })
+
+    expect(client._groups.size).to.equal(2)
+    const fresh = client._groups.get(client._notifs.get(next)!.groupId!)!
+    expect(fresh.count).to.equal(1)
+    expect(fresh.isRead).to.equal(false)
+    expect(client._notifs.get(next)!.hidden ?? false).to.equal(false)
+  })
+
+  it("leaves other groups and other users' rows alone", async () => {
+    const client = makeStubClient()
+    const like = await createNotificationWithGroup(client as any, {
+      userId: 1, actorId: 10, type: 'LIKE' as any, cawId: 42,
+    })
+    const other = await createNotificationWithGroup(client as any, {
+      userId: 2, actorId: 10, type: 'LIKE' as any, cawId: 42,
+    })
+    const [follow] = await followRollup(client, [20])
+
+    // Another user's id is not found and nothing changes.
+    expect(await hideNotificationGroups(client as any, 1, [other])).to.deep.equal([])
+    expect(client._notifs.get(other)!.hidden ?? false).to.equal(false)
+
+    await hideNotificationGroups(client as any, 1, [follow])
+    expect(client._notifs.get(like)!.hidden ?? false).to.equal(false)
+    expect(client._groups.get(client._notifs.get(like)!.groupId!)!.isRead).to.equal(false)
+  })
+
+  it('a pre-group row (groupId null) is hidden on its own', async () => {
+    const client = makeStubClient()
+    const legacy = await client.notification.create({
+      data: { userId: 1, actorId: 10, type: 'LIKE', cawId: 7 },
+    })
+    expect(await hideNotificationGroups(client as any, 1, [legacy.id])).to.deep.equal([legacy.id])
+    expect(client._notifs.get(legacy.id)!.hidden).to.equal(true)
   })
 })

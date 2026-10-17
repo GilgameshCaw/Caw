@@ -31,6 +31,7 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import SmlTxt from 'smltxt'
+import { hideNotificationGroups } from '../src/services/NotificationGroups'
 
 const prisma = new PrismaClient()
 
@@ -135,13 +136,17 @@ async function main() {
       // Use updateMany so missing-notification is a no-op (Cawonce already used
       // suppresses notification creation in markTxQueueFailed, but earlier
       // failure paths predating that suppression may have left some).
-      await prisma.notification.updateMany({
-        where: {
-          type: 'ACTION_FAILED',
-          userId: row.senderId,
-          actionPayload: { path: ['originalTxQueueId'], equals: row.id },
-        },
-        data: { hidden: true },
+      // Through hideNotificationGroups so each row's group closes with it.
+      await prisma.$transaction(async tx => {
+        const matches = await tx.notification.findMany({
+          where: {
+            type: 'ACTION_FAILED',
+            userId: row.senderId,
+            actionPayload: { path: ['originalTxQueueId'], equals: row.id },
+          },
+          select: { id: true },
+        })
+        await hideNotificationGroups(tx, row.senderId, matches.map(m => m.id))
       })
     }
     recovered++

@@ -314,9 +314,9 @@ export async function createActionFailedNotification(
 
     // ACTION_FAILED is a self-notification: actor = user = sender.
     // Use the group-aware helper so it gets a NotificationGroup row
-    // (each ACTION_FAILED row becomes its own singleton group since
-    // targetKey is null for this type — failures aren't useful to
-    // roll up across attempts).
+    // (each ACTION_FAILED row becomes its own singleton group via its
+    // `n:<id>` targetKey — failures aren't useful to roll up across
+    // attempts, and each one carries its own Retry payload).
     await createNotificationWithGroup(prisma, {
       userId: senderId,
       actorId: senderId,

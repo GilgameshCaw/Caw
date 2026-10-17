@@ -16,15 +16,30 @@ import { elasticsearchService } from './ElasticsearchService'
  *                                              part thread reply in its own group;
  *                                              keying by the caw being replied to
  *                                              folds all chunks into one rollup)
- *   ACTION_FAILED                           → null (each row stays alone via
- *                                                   the duplicate-check in
- *                                                   the create call site)
+ *   ACTION_FAILED / OUTBID / AUCTION_WON /
+ *   SALE_SOLD / SALE_BOUGHT                 → `n:<notificationId>` (one group
+ *                                              per row)
+ *
+ * The singleton types carry everything the row renders in actionPayload
+ * (Retry payload, auction / sale details), and the feed only renders a
+ * group's latest member. Under a null key they shared one open bucket per
+ * (userId, type) — the partial unique index COALESCEs NULL to '' — so a
+ * second failure or a second won auction hid the first one's row.
  */
+const SINGLETON_TYPES: readonly NotificationType[] = [
+  NotificationType.ACTION_FAILED,
+  NotificationType.OUTBID,
+  NotificationType.AUCTION_WON,
+  NotificationType.SALE_SOLD,
+  NotificationType.SALE_BOUGHT,
+]
+
 function notificationTargetKey(
   type: NotificationType,
-  ctx: { cawId?: number | null; offerId?: number | null; parentCawId?: number | null }
+  ctx: { notificationId: number; cawId?: number | null; offerId?: number | null; parentCawId?: number | null }
 ): string | null {
-  if (type === NotificationType.FOLLOW || type === NotificationType.ACTION_FAILED) return null
+  if (SINGLETON_TYPES.includes(type)) return `n:${ctx.notificationId}`
+  if (type === NotificationType.FOLLOW) return null
   if (type === NotificationType.OFFER) return ctx.offerId != null ? String(ctx.offerId) : null
   if (type === NotificationType.REPLY) {
     return ctx.parentCawId != null ? String(ctx.parentCawId)
@@ -47,7 +62,7 @@ function notificationTargetKey(
  *
  * The partial unique index on `(userId, type, COALESCE(targetKey, ''))
  * WHERE isRead = false` enforces at most one open group per bucket.
- * The COALESCE handles the NULL targetKey case (FOLLOW, ACTION_FAILED)
+ * The COALESCE handles the NULL targetKey case (FOLLOW, profile TIP)
  * since Postgres treats NULLs as distinct in regular unique indexes.
  *
  * Always runs inside the caller's prisma client (so it composes with
@@ -71,7 +86,7 @@ export async function createNotificationWithGroup(
   // 2) Decide the bucket key.
   const targetKey = notificationTargetKey(
     notif.type as NotificationType,
-    { cawId: notif.cawId, offerId: notif.offerId, parentCawId: groupCtx?.parentCawId },
+    { notificationId: notif.id, cawId: notif.cawId, offerId: notif.offerId, parentCawId: groupCtx?.parentCawId },
   )
 
   // 3) Atomic upsert: if an open group already exists for this
@@ -95,8 +110,7 @@ export async function createNotificationWithGroup(
     ? (client as any)
     : prisma
 
-  const rows: Array<{ id: number }> = await rawClient.$queryRawUnsafe(
-    `INSERT INTO "NotificationGroup" (
+  const upsert = `INSERT INTO "NotificationGroup" (
        "userId", "type", "targetKey", "openedAt", "lastEventAt",
        "isRead", "latestNotificationId", "count"
      ) VALUES ($1, $2::\"NotificationType\", $3, $4, $4, false, $5, 1)
@@ -106,23 +120,114 @@ export async function createNotificationWithGroup(
        "count"                = "NotificationGroup"."count" + 1,
        "lastEventAt"          = EXCLUDED."lastEventAt",
        "latestNotificationId" = EXCLUDED."latestNotificationId"
-     RETURNING id`,
+     RETURNING id`
+
+  // 4) Back-reference the new notification to its group in the same
+  //    statement as the join. As two statements, a dismissal
+  //    (hideNotificationGroups) landing in between closed and hid the
+  //    group without this row, which then sat visible in a closed group.
+  //    The global-prisma fallback can't see a row created inside the
+  //    caller's transaction, so it keeps the separate update.
+  const sameClient = rawClient === client
+  const rows: Array<{ id: number }> = await rawClient.$queryRawUnsafe(
+    sameClient
+      ? `WITH g AS (${upsert})
+         UPDATE "Notification" n SET "groupId" = g.id
+         FROM g WHERE n.id = $5
+         RETURNING g.id AS id`
+      : upsert,
     notif.userId,
     notif.type,
     targetKey,
     now,
     notif.id,
   )
+  if (rows.length === 0) {
+    throw new Error(`createNotificationWithGroup: notification ${notif.id} not found for its group back-reference`)
+  }
 
-  const groupId = rows[0].id
-
-  // 4) Back-reference the new notification to its group.
-  await client.notification.update({
-    where: { id: notif.id },
-    data: { groupId },
-  })
+  if (!sameClient) {
+    await client.notification.update({
+      where: { id: notif.id },
+      data: { groupId: rows[0].id },
+    })
+  }
 
   return notif.id
+}
+
+// Lives in its own module (no imports) so scripts can use it without
+// pulling in this file's prisma / Elasticsearch side effects.
+export { hideNotificationGroups } from './NotificationGroups'
+
+/**
+ * One-shot, idempotent repair of groups written before the two fixes
+ * above. Nodes apply the schema with `prisma db push`, which never runs
+ * prisma/migrations, so this runs from the DataCleaner at startup instead.
+ *
+ *   1. Move every grouped row of a singleton type into its own
+ *      `n:<id>` group (they used to share one null-key bucket).
+ *   2. Delete the null-key singleton-type groups that step 1 emptied.
+ *      Only legacy keys: a group the current code just opened has an
+ *      `n:` key and may not have its member's groupId written yet.
+ *   3. Groups whose latest member is hidden were dismissed with × or by
+ *      a successful retry: close them and hide + read every member, the
+ *      same as hideNotificationGroups.
+ *
+ * Once applied, every step matches zero rows.
+ */
+export async function repairNotificationGroups(
+  client: { $transaction: any; $executeRawUnsafe: any } = prisma,
+): Promise<{ split: number; removed: number; dismissed: number }> {
+  const types = SINGLETON_TYPES.map(t => `'${t}'`).join(', ')
+  const [split, removed, dismissed]: number[] = await client.$transaction([
+    client.$executeRawUnsafe(`
+      WITH moved AS (
+        SELECT n.id, n."userId", n.type, n."createdAt", n."isRead"
+        FROM "Notification" n
+        JOIN "NotificationGroup" g ON g.id = n."groupId"
+        WHERE n.type IN (${types})
+          AND g."targetKey" IS DISTINCT FROM ('n:' || n.id)
+      ), ins AS (
+        INSERT INTO "NotificationGroup" (
+          "userId", "type", "targetKey", "openedAt", "lastEventAt",
+          "isRead", "latestNotificationId", "count"
+        )
+        SELECT "userId", type, 'n:' || id, "createdAt", "createdAt", "isRead", id, 1
+        FROM moved
+        RETURNING id, "latestNotificationId"
+      )
+      UPDATE "Notification" n SET "groupId" = ins.id
+      FROM ins WHERE n.id = ins."latestNotificationId"`),
+    client.$executeRawUnsafe(`
+      DELETE FROM "NotificationGroup" g
+      WHERE g.type IN (${types})
+        AND (g."targetKey" IS NULL OR g."targetKey" NOT LIKE 'n:%')
+        AND NOT EXISTS (SELECT 1 FROM "Notification" n WHERE n."groupId" = g.id)`),
+    // Step 3 is a UNION rather than `isRead = false OR EXISTS (...)`: the
+    // OR keeps the EXISTS from becoming a semi join, and at the default
+    // work_mem (4MB) Postgres then rescans Notification once per group
+    // (no index on groupId). A join can hash in batches at any work_mem.
+    client.$executeRawUnsafe(`
+      WITH hidden_latest AS (
+        SELECT g.id, g."isRead"
+        FROM "NotificationGroup" g
+        JOIN "Notification" l ON l.id = g."latestNotificationId" AND l.hidden = true
+      ), dismissed AS (
+        SELECT h.id FROM hidden_latest h WHERE h."isRead" = false
+        UNION
+        SELECT h.id
+        FROM hidden_latest h
+        JOIN "Notification" n ON n."groupId" = h.id
+        WHERE n.hidden = false OR n."isRead" = false
+      ), members AS (
+        UPDATE "Notification" n SET hidden = true, "isRead" = true
+        FROM dismissed d WHERE n."groupId" = d.id
+      )
+      UPDATE "NotificationGroup" g SET "isRead" = true
+      FROM dismissed d WHERE g.id = d.id`),
+  ])
+  return { split, removed, dismissed }
 }
 
 export class NotificationService {

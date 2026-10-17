@@ -14,7 +14,7 @@ import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
-import { NotificationService } from '../NotificationService'
+import { NotificationService, repairNotificationGroups } from '../NotificationService'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -1505,6 +1505,16 @@ function startDataCleanerWorker(heartbeat?: () => void) {
       heartbeat?.()
     }
   }
+
+  // One-shot repair of notification groups written by older code
+  // (see repairNotificationGroups). Idempotent, so every boot is fine.
+  repairNotificationGroups()
+    .then(r => {
+      if (r.split || r.removed || r.dismissed) {
+        logger.log(`[NotificationGroups] repaired: split=${r.split} removed=${r.removed} dismissed=${r.dismissed}`)
+      }
+    })
+    .catch(err => logger.error('[NotificationGroups] repair failed:', err))
 
   // Run immediately on startup
   runAndBeat()
