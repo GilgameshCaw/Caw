@@ -9,6 +9,7 @@ import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
 import { recordIndexerProgress } from '../../utils/indexerHealth'
+import { ACTIONS_PROCESSED_ZK_TOPIC, zkExecutedBitmap, slotExecuted } from '../../utils/zkExecutedSlots'
 
 /**
  * Decide the block range for one poll.
@@ -40,13 +41,15 @@ export function computePollRange(
 // bytes live in the originating tx's calldata. We fetch tx.input via
 // eth_getTransactionByHash and decode the function args.
 //
-// Both CawActions (sig path) and CawActionsERC1271 (ERC-1271 path) share the
-// same packedActions wire format inside, so we parse both here. The outer
-// wrapper differs: the ERC-1271 variant carries bytes[] sigs + bytes32[] rs
-// instead of a single packed bytes sigs.
+// Both CawActions (sig and ZK paths) and CawActionsERC1271 (ERC-1271 path)
+// share the same packedActions wire format inside, so we parse all of them
+// here. The outer wrapper differs: the ERC-1271 variant carries bytes[] sigs
+// + bytes32[] rs instead of a single packed bytes sigs, and the ZK variant
+// adds signers + proof.
 const PROCESS_ACTIONS_IFACE = new Interface([
   'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, bytes[] rejections)',
+  'function processActionsWithZkSigs(uint32 validatorId, bytes packedActions, bytes packedSigs, bytes signers, bytes proof, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
   'function processActionsERC1271(uint32 validatorId, bytes packedActions, bytes[] sigs, bytes32[] rs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
 ])
 
@@ -170,6 +173,7 @@ async function fetchPackedActionsFromTx(
     if (
       parsed.name !== 'processActions' &&
       parsed.name !== 'safeProcessActions' &&
+      parsed.name !== 'processActionsWithZkSigs' &&
       parsed.name !== 'processActionsERC1271'
     ) return { kind: 'not_applicable' }
     const packed = parsed.args.packedActions as string
@@ -216,7 +220,10 @@ export type RawEventInput = {
 const CONTRACT_ABI = [
   // ActionsProcessed is now a calldata commitment. The packedActions payload
   // lives in the originating tx; fetchPackedActionsFromTx() pulls it.
-  'event ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)'
+  'event ActionsProcessed(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)',
+  // processActionsWithZkSigs emits this instead of ActionsProcessed. Its
+  // bitmap marks the slots that ran; see utils/zkExecutedSlots.
+  'event ActionsProcessedZk(uint32 indexed networkId, uint32 indexed validatorId, uint16 actionCount, uint256 actionsExecutedBitmap, bytes32 batchHash)'
 ]
 
 
@@ -431,6 +438,10 @@ export default async function listenForRawEvents(
         throw new Error(`[RawEventsGatherer] Could not fetch/parse ActionRejected logs for tx ${ev.transactionHash} (block ${ev.blockNumber}) — aborting batch to retry`)
       }
       const rejectedSet = rejectedResult.rejected
+      // ZK-path batch: the slots the contract skipped (cawonce already
+      // used) never applied. null for every other event. Throws on an
+      // undecodable ZK log, which aborts the batch to retry like above.
+      const executedBitmap = zkExecutedBitmap(ev)
 
       // Build the full batch in one pass. parentHash must chain sequentially,
       // but the inserts themselves don't need to.
@@ -446,6 +457,7 @@ export default async function listenForRawEvents(
       const batch: RawEventInput[] = []
       let skippedCount = 0
       const skippedKeys: string[] = []
+      let zkSkippedCount = 0
       for (let i = 0; i < actions.length; i++) {
         const a = actions[i]
         const action = {
@@ -477,6 +489,11 @@ export default async function listenForRawEvents(
           skippedKeys.push(rejectedKey(a.senderId, a.cawonce))
           continue
         }
+        if (!slotExecuted(executedBitmap, i)) {
+          // Same as a rejected slot: in the batchHash, not in chain state.
+          zkSkippedCount++
+          continue
+        }
         batch.push({
           chainId:         config.chainId,
           blockNumber:     ev.blockNumber,
@@ -491,6 +508,9 @@ export default async function listenForRawEvents(
 
       if (skippedCount > 0) {
         console.log(`[RawEventsGatherer] Skipped ${skippedCount} contract-rejected action(s) in tx ${ev.transactionHash} (senderId:cawonce = ${skippedKeys.join(', ')})`)
+      }
+      if (zkSkippedCount > 0) {
+        console.log(`[RawEventsGatherer] Skipped ${zkSkippedCount} ZK-skipped action(s) in tx ${ev.transactionHash}`)
       }
 
       if (config.rawEventsProvider.storeBatch) {
@@ -529,11 +549,11 @@ export default async function listenForRawEvents(
       }
       console.log(`[RawEventsGatherer] Historical sync: blocks ${startBlock} → ${latest} (${latest - startBlock} blocks)`)
 
-      // Scan CawActions logs (sig path).
+      // Scan CawActions logs (sig path, and the ZK path's ActionsProcessedZk).
       const rawLogs = await scanLogsForward(
         httpProvider,
         CAW_ACTIONS_ADDRESS,
-        [eventSig],
+        [[eventSig, ACTIONS_PROCESSED_ZK_TOPIC]],
         startBlock,
         latest,
         {
@@ -989,8 +1009,17 @@ export default async function listenForRawEvents(
             ) as unknown as Log[])
           : []
 
+        // ZK-path batches on CawActions emit ActionsProcessedZk instead.
+        // processActionsWithZkSigs is open to any caller once the contract
+        // has a verifier, so this can't wait for our own ZK producer.
+        const zkEvents = await httpContract.queryFilter(
+          httpContract.filters.ActionsProcessedZk(config.networkId),
+          lastSyncedBlock + 1,
+          toBlock
+        ) as unknown as Log[]
+
         // Merge and sort by (blockNumber, logIndex) to preserve canonical order.
-        const events: Log[] = [...sigEvents, ...erc1271Events].sort((a, b) =>
+        const events: Log[] = [...sigEvents, ...zkEvents, ...erc1271Events].sort((a, b) =>
           (a as any).blockNumber !== (b as any).blockNumber
             ? (a as any).blockNumber - (b as any).blockNumber
             : ((a as any).index ?? (a as any).logIndex ?? 0) - ((b as any).index ?? (b as any).logIndex ?? 0)
