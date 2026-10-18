@@ -91,6 +91,46 @@ const RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 3000;
 const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 
+function resolveFinalizeBootstrap(env, deployState = {}) {
+  const raw =
+    String(process.env.FINALIZE_BOOTSTRAP || '').trim().toLowerCase();
+
+  if (!['', '0', '1', 'false', 'true'].includes(raw)) {
+    throw new Error(
+      `Invalid FINALIZE_BOOTSTRAP=${process.env.FINALIZE_BOOTSTRAP}. ` +
+      'Use true/1 or false/0.'
+    );
+  }
+
+  const sealingAlreadyStarted =
+    deployState.lifecycle?.finalizeBootstrapRequested === true ||
+    Object.keys(deployState.finalizations || {}).length > 0;
+
+  if (env === 'mainnet') {
+    if (raw === '0' || raw === 'false') {
+      throw new Error(
+        'Mainnet is a sealed generation: FINALIZE_BOOTSTRAP cannot disable ' +
+        'PathwayExpander finalization.'
+      );
+    }
+
+    return true;
+  }
+
+  if (sealingAlreadyStarted) {
+    if (raw === '0' || raw === 'false') {
+      throw new Error(
+        'This deployment already entered the sealed bootstrap lifecycle; ' +
+        'FINALIZE_BOOTSTRAP cannot be disabled on a recovery run.'
+      );
+    }
+
+    return true;
+  }
+
+  return raw === '1' || raw === 'true';
+}
+
 // Gas price multiplier — applied to feeData.maxFeePerGas and
 // maxPriorityFeePerGas on every deploy tx to prevent "replacement fee too
 // low" mempool rejections on Sepolia. At 1.5× the first-attempt tx is
@@ -98,30 +138,34 @@ const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 // unnecessary. Set DEPLOY_GAS_MULTIPLIER=1 to use raw network prices.
 const DEPLOY_GAS_MULTIPLIER = parseFloat(process.env.DEPLOY_GAS_MULTIPLIER || '1.5');
 
-// Phase 7 (renounce / additions-only) is ALWAYS on. Every deploy ends with
-// the same trustlessness-finalizing handover so testnet matches mainnet,
-// and so the "fresh deploy" code path is exercised end-to-end every time.
+// Phase 7 bootstrap finalization is the terminal sealed-generation transition.
+// Mainnet always seals and cannot opt out. Testnet/dev remain unsealed unless
+// FINALIZE_BOOTSTRAP=true (or 1) is explicitly requested, so operators can
+// exercise both a mutable development lifecycle and the exact terminal release
+// lifecycle.
 //
-// What phase 7 does:
-//   1. Deploys one PathwayExpander per chain (owned by the deployer EOA).
-//   2. Transfers ownership of every LZ OApp on that chain to its expander
-//      (CawProfile + CawProfileLedger_* on L1; CawProfileLedger_<L>,
-//      CawActionsArchive_<L>, CawChallengeRelay_<L> on each L2).
-//   3. Renounces ownership on every other Ownable contract on that chain
-//      (CawActions_<L>, CawProfileURI on L1).
+// During the deployment transaction sequence the deployer temporarily owns
+// each PathwayExpander because deterministic cross-chain wiring has to be
+// performed by some signer. That authority is never transferable.
 //
-// After phase 7, the only residual owner authority on the system is:
-//   - PathwayExpander.owner (= deployer EOA), which can ONLY call addPeer
-//     for not-yet-set eids on the OApps it owns. Cannot reconfigure
-//     existing peers, cannot rotate delegate, cannot transfer the OApps'
-//     ownership away.
-//   - LZ EndpointV2.delegates(oapp) (= deployer EOA at time of writing),
-//     which controls DVN/library config on each pathway. Phase 7 does
-//     NOT touch the delegate by design — DVN config flexibility is the
-//     last operational lever we leave open. To finalize that surface
-//     too, run a separate one-shot or call `setDelegate(0)` on each
-//     OApp via the expander before transferring ownership (which we do
-//     not do today; the additions-only design is for peers, not delegates).
+// When sealed finalization is requested, Phase 7:
+//   1. completes all remaining peer/ownership wiring and read-back assertions;
+//   2. irreversibly calls finalizeBootstrap() on every PathwayExpander;
+//   3. records the finalization transaction proof.
+//
+// A sealed/release deployment is incomplete if any PathwayExpander owner
+// remains non-zero. transferOwnership is disabled in the contract, so bootstrap
+// authority cannot be moved to a multisig or replacement operator.
+//
+// An unsealed non-mainnet deployment intentionally retains this constrained
+// bootstrap authority for development and topology testing. It must not be
+// represented as a sealed protocol generation.
+//
+// EndpointV2 may continue to record PathwayExpander as an OApp delegate and
+// some OApps may continue to record PathwayExpander as owner. Once the
+// PathwayExpander owner is zero, however, no human key can exercise its
+// owner-gated bootstrap methods. Existing peers and written configuration
+// remain unchanged.
 
 // The deployer wallet address (for verification)
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
@@ -163,6 +207,21 @@ class FatalDeployError extends Error {
     super(message);
     this.name = 'FatalDeployError';
   }
+}
+
+// A non-zero one-shot slot is not sufficient evidence of correct wiring.
+// Preserve the development resume policy; sealed runs require the exact target.
+function bootstrapAddressAlreadySet(current, expected, label, deployer) {
+  const actual = current.toLowerCase();
+  if (deployer.finalizeBootstrapRequested !== true) {
+    return actual !== ethers.ZeroAddress.toLowerCase();
+  }
+  if (actual === ethers.ZeroAddress.toLowerCase()) return false;
+  if (actual === expected.toLowerCase()) return true;
+  throw new FatalDeployError(
+    `BOOTSTRAP WIRING MISMATCH: ${label}=${current}, expected ${expected}. ` +
+    'The one-shot slot cannot be repaired in place; abort and redeploy the affected cascade.'
+  );
 }
 
 // Chain configurations. Env vars are role-named (L1_RPC_URL, L2_RPC_URL,
@@ -675,15 +734,14 @@ const CONTRACTS = {
     constructorArgs: () => [],
     condition: (_state, _deployer, env) => env === 'dev',
   },
-  // PathwayExpander on L1. Phase 1 (was phase 7) so its address is available
-  // when CawProfile's constructor runs at phase 2 — CawProfile now transfers
-  // OApp ownership to PathwayExpander directly via _transferOwnership at deploy
-  // time. PathwayExpander still owns CawProfileLedger_L1 via the phase 7 linking
-  // step for that one (L2 hasn't moved to constructor-handover yet).
+  // PathwayExpander on L1. Phase 1 so its address exists before CawProfile
+  // deploys in phase 2. CawProfile transfers its ownership directly to the
+  // expander in its constructor. CawProfileLedger_L1 instead renounces its
+  // own ownership in its constructor; it is not PathwayExpander-owned.
   //
-  // Owner of the expander itself is the deployer EOA (constructor arg below);
-  // transfer this to a multisig later if desired before the deployer
-  // walks away completely.
+  // The expander's temporary owner is the deployer only for deployment
+  // bootstrap. transferOwnership is disabled, and phase 7 MUST irreversibly
+  // finalize the expander to owner()==address(0).
   PathwayExpander_L1: {
     artifact: 'PathwayExpander',
     chain: 'L1',
@@ -1012,6 +1070,7 @@ const LINKING_STEPS = [
     name: 'Wire CawProfile into CawNetworkManager (setCawProfile)',
     chain: 'L1',
     phase: 2,
+    sealedRequired: true,
     contract: 'CawNetworkManager',
     method: 'setCawProfile',
     args: (state) => [state.addresses.CawProfile],
@@ -1021,8 +1080,13 @@ const LINKING_STEPS = [
       if (!contract) return false;
       try {
         const current = await contract.cawProfile();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
+        return bootstrapAddressAlreadySet(
+          current, state.addresses.CawProfile, 'CawNetworkManager.cawProfile', deployer
+        );
+      } catch (e) {
+        if (deployer.finalizeBootstrapRequested === true) throw e;
+        return false;
+      }
     },
   },
   {
@@ -1032,6 +1096,7 @@ const LINKING_STEPS = [
     name: 'Wire CawProfileMinter into CawNetworkManager (setMinter)',
     chain: 'L1',
     phase: 2,
+    sealedRequired: true,
     contract: 'CawNetworkManager',
     method: 'setMinter',
     args: (state) => [state.addresses.CawProfileMinter],
@@ -1041,8 +1106,13 @@ const LINKING_STEPS = [
       if (!contract) return false;
       try {
         const current = await contract.minter();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
+        return bootstrapAddressAlreadySet(
+          current, state.addresses.CawProfileMinter, 'CawNetworkManager.minter', deployer
+        );
+      } catch (e) {
+        if (deployer.finalizeBootstrapRequested === true) throw e;
+        return false;
+      }
     },
   },
   // CawProfileURI is wired via the CawProfile constructor (immutable) — no setUriGenerator step.
@@ -1059,6 +1129,7 @@ const LINKING_STEPS = [
     name: 'Assert CawCapOracle_L1.cawActions == CawActions_L1 (nonce-prediction check)',
     chain: 'L1',
     phase: 2,
+    sealedRequired: true,
     custom: async (state, deployer) => {
       const oracleAddr = state.addresses.CawCapOracle_L1;
       const actionsAddr = state.addresses.CawActions_L1;
@@ -1085,14 +1156,23 @@ const LINKING_STEPS = [
     name: 'Set CawProfile on BuyAndBurn',
     chain: 'L1',
     phase: 2,
+    sealedRequired: true,
     contract: 'CawBuyAndBurn',
     method: 'setCawProfile',
     args: (state) => [state.addresses.CawProfile],
     condition: (state) => state.addresses.CawBuyAndBurn && state.addresses.CawProfile,
     skipIf: async (state, deployer) => {
       const contract = deployer.getContract('CawBuyAndBurn');
-      const current = await contract.cawProfile();
-      return current !== '0x0000000000000000000000000000000000000000';
+      if (!contract) return false;
+      try {
+        const current = await contract.cawProfile();
+        return bootstrapAddressAlreadySet(
+          current, state.addresses.CawProfile, 'CawBuyAndBurn.cawProfile', deployer
+        );
+      } catch (e) {
+        if (deployer.finalizeBootstrapRequested === true) throw e;
+        return false;
+      }
     },
   },
   // Phase 3 + Phase 5 per-L2 linking is generated below from L2_CHAIN_KEYS.
@@ -1110,8 +1190,8 @@ const LINKING_STEPS = [
 
 
   // -----------------------------------------------------------------
-  // Phase 6: LZ DVN config — mainnet only, 3-of-3 required DVN set
-  // (LayerZero Labs + Nethermind + Google Cloud) on every cross-chain
+  // Phase 6: LZ DVN config — mainnet only, 2-of-3 optional DVN threshold
+  // (Canary + LayerZero Labs + Horizen; no required DVNs) on every cross-chain
   // pathway. See scripts/lz-dvn-config.js for the rationale + address
   // provenance. Idempotent: reads on-chain config first and only sends
   // tx if a pathway is misconfigured.
@@ -1121,7 +1201,7 @@ const LINKING_STEPS = [
   // via deployer.initChain(chainKey).
   // -----------------------------------------------------------------
   {
-    name: 'Configure LZ DVN set (3-of-3: LayerZero Labs + Nethermind + Google Cloud)',
+    name: 'Configure LZ DVN set (2-of-3 optional: Canary + LayerZero Labs + Horizen)',
     chain: 'L1',
     phase: 6,
     // Mainnet-only: testnet/dev rely on LayerZero's default DVN config and
@@ -1129,28 +1209,27 @@ const LINKING_STEPS = [
     // every testnet run reports "Failed: configureLzDvns is not defined"
     // even though nothing went wrong.
     condition: (_state, _deployer, env) => env === 'mainnet',
+    sealedRequired: (_state, _deployer, env) => env === 'mainnet',
     custom: async (state, deployer, chainConfig) => {
       await configureLzDvns(state, deployer, chainConfig, CHAINS, L2_CHAIN_KEYS);
     },
   },
 
   // -----------------------------------------------------------------
-  // Phase 7: renounce / additions-only finalization
-  // -----------------------------------------------------------------
-  // Always runs — every deploy ends with the trustlessness handover so
-  // testnet matches mainnet and the "fresh deploy" path stays exercised.
+  // Phase 7: complete wiring and, for a sealed generation, close bootstrap
+  // authority after all PathwayExpander-dependent operations and critical
+  // read-back assertions have been appended.
   //
-  // Step style:
-  //   - LZ OApps: transferOwnership(PathwayExpander_<chain>). The
-  //     expander's addPeer is the only future write path (and even
-  //     that's blocked by per-eid OnlyOnce on the OApps themselves).
-  //   - Plain Ownables (CawActions_<chain>, CawProfileURI on L1):
-  //     renounceOwnership(). No future admin operations needed.
+  // Mainnet always enters the sealed lifecycle. Testnet/dev enter it only when
+  // FINALIZE_BOOTSTRAP=true/1 is explicitly requested.
   //
-  // Each step has a skipIf that compares the live owner to the target
-  // (expander address for transfers, address(0) for renounces), so a
-  // re-run is idempotent — the second run sees "already done" and exits
-  // the step without sending a tx.
+  // Sealed/release deployment invariant:
+  //
+  //     PathwayExpander_<chain>.owner() == address(0)
+  //
+  // Failure to reach that state is fatal for a sealed generation. An unsealed
+  // non-mainnet deployment intentionally retains constrained bootstrap authority
+  // and is not a released/sealed protocol generation.
   // -----------------------------------------------------------------
   // CawProfile ownership handover moved INTO the constructor — see the
   // CawProfile entry in CONTRACTS. The deployer EOA never owns CawProfile
@@ -1236,6 +1315,7 @@ for (const L of L2_CHAIN_KEYS) {
     name: `Assert CawProfileLedger_${L}.cawActions == CawActions_${L} (nonce-prediction check)`,
     chain: L,
     phase: 1,
+    sealedRequired: true,
     custom: async (state, deployer) => {
       const ledgerAddr = state.addresses[`CawProfileLedger_${L}`];
       const actionsAddr = state.addresses[`CawActions_${L}`];
@@ -1319,6 +1399,7 @@ for (const L of L2_CHAIN_KEYS) {
       name: `Set LZ peer on CawChallengeRelay_${L} (targets CawActionsArchive_${Lp})`,
       chain: L,
       phase: 5,
+      sealedRequired: true,
       contract: `CawChallengeRelay_${L}`,
       method: 'setPeer',
       args: (state, chainConfig) => [
@@ -1335,7 +1416,10 @@ for (const L of L2_CHAIN_KEYS) {
         try {
           const peer = await contract.peers(peerEid);
           return peer.toLowerCase() === expected.toLowerCase();
-        } catch { return false; }
+        } catch (e) {
+          if (deployer.finalizeBootstrapRequested === true) throw e;
+          return false;
+        }
       },
     });
 
@@ -1344,6 +1428,7 @@ for (const L of L2_CHAIN_KEYS) {
       name: `Set LZ peer on CawActionsArchive_${Lp} (accepts from CawChallengeRelay_${L})`,
       chain: Lp,
       phase: 5,
+      sealedRequired: true,
       contract: `CawActionsArchive_${Lp}`,
       method: 'setPeer',
       args: (state, chainConfig) => [
@@ -1360,7 +1445,10 @@ for (const L of L2_CHAIN_KEYS) {
         try {
           const peer = await contract.peers(peerEid);
           return peer.toLowerCase() === expected.toLowerCase();
-        } catch { return false; }
+        } catch (e) {
+          if (deployer.finalizeBootstrapRequested === true) throw e;
+          return false;
+        }
       },
     });
   }
@@ -1374,13 +1462,15 @@ for (const L of L2_CHAIN_KEYS) {
   //   CawActions_<L>
   // -----------------------------------------------------------------
   // CawProfileLedger_${L} renounces ownership IN its constructor — no phase-7
-  // transferOwnership step. CawActionsArchive and CawChallengeRelay still need
-  // PathwayExpander as owner (they keep an admin surface for adding new L2 peers).
+  // transferOwnership step. CawActionsArchive and CawChallengeRelay use
+  // PathwayExpander as their fixed owner address, but the expander itself is
+  // irreversibly finalized to owner()==address(0) later in this phase.
   for (const oapp of [`CawActionsArchive_${L}`, `CawChallengeRelay_${L}`]) {
     LINKING_STEPS.push({
       name: `[Phase 7] Transfer ${oapp} ownership → PathwayExpander_${L}`,
       chain: L,
       phase: 7,
+      sealedRequired: true,
       contract: oapp,
       method: 'transferOwnership',
       args: (state) => [state.addresses[`PathwayExpander_${L}`]],
@@ -1427,6 +1517,7 @@ for (const L of L2_CHAIN_KEYS) {
     name: `Assert CawProfileLedger_${L}.peers(L1) == CawProfile (cross-chain peer read-back)`,
     chain: L,
     phase: 7,
+    sealedRequired: true,
     condition: (state) => state.addresses[`CawProfileLedger_${L}`] && state.addresses.CawProfile,
     custom: async (state, deployer) => {
       const ledger = deployer.getContract(`CawProfileLedger_${L}`);
@@ -1452,6 +1543,7 @@ for (const L of L2_CHAIN_KEYS) {
     name: `Assert CawProfile.peers(${L}) == CawProfileLedger_${L} (cross-chain peer read-back)`,
     chain: 'L1',
     phase: 7,
+    sealedRequired: true,
     condition: (state) => state.addresses.CawProfile && state.addresses[`CawProfileLedger_${L}`],
     custom: async (state, deployer) => {
       const profile = deployer.getContract('CawProfile');
@@ -1487,6 +1579,7 @@ for (const consumerKey of ['CawNetworkManager', 'CawBuyAndBurn']) {
     name: `Assert ${consumerKey}.cawProfile == CawProfile (setter-wired consumer read-back)`,
     chain: 'L1',
     phase: 7,
+    sealedRequired: true,
     condition: (state) => state.addresses[consumerKey] && state.addresses.CawProfile,
     custom: async (state, deployer) => {
       const consumer = deployer.getContract(consumerKey);
@@ -1514,6 +1607,194 @@ for (const consumerKey of ['CawNetworkManager', 'CawBuyAndBurn']) {
 }
 
 // =============================================================================
+// Sealed-generation read-backs run in the existing all-chain pre-finalizer
+// barrier. Re-read on every resume; saved linking flags are not proof of wiring.
+// These checks do not change the unsealed development lifecycle.
+// =============================================================================
+for (const consumerKey of ['CawNetworkManager', 'CawProfile']) {
+  LINKING_STEPS.push({
+    name: `Assert ${consumerKey}.minter == CawProfileMinter (sealed wiring read-back)`,
+    chain: 'L1',
+    phase: 7,
+    sealedRequired: true,
+    condition: (state, deployer) => deployer.finalizeBootstrapRequested === true &&
+      state.addresses[consumerKey] && state.addresses.CawProfileMinter,
+    custom: async (state, deployer) => {
+      const consumer = deployer.getContract(consumerKey);
+      if (!consumer) throw new FatalDeployError(`${consumerKey} handle missing — cannot verify minter`);
+      const actual = (await consumer.minter()).toLowerCase();
+      const expected = state.addresses.CawProfileMinter.toLowerCase();
+      if (actual !== expected) {
+        throw new FatalDeployError(
+          `MINTER WIRING MISMATCH: ${consumerKey}.minter()=${actual}, expected ${expected}. ` +
+          'Abort and redeploy the affected cascade before sealing.'
+        );
+      }
+    },
+  });
+}
+
+for (const storage of L2_CHAIN_KEYS) {
+  for (const archive of L2_CHAIN_KEYS) {
+    if (storage === archive) continue;
+    const relayKey = `CawChallengeRelay_${storage}`;
+    const archiveKey = `CawActionsArchive_${archive}`;
+    for (const [sourceKey, sourceChain, targetKey, targetChain] of [
+      [relayKey, storage, archiveKey, archive],
+      [archiveKey, archive, relayKey, storage],
+    ]) {
+      LINKING_STEPS.push({
+        name: `Assert ${sourceKey}.peers(${targetChain}) == ${targetKey} (sealed mesh read-back)`,
+        chain: sourceChain,
+        phase: 7,
+        sealedRequired: true,
+        condition: (state, deployer) => deployer.finalizeBootstrapRequested === true &&
+          state.addresses[sourceKey] && state.addresses[targetKey],
+        custom: async (state, deployer) => {
+          const source = deployer.getContract(sourceKey);
+          if (!source) throw new FatalDeployError(`${sourceKey} handle missing — cannot verify mesh peer`);
+          const eid = CHAINS[deployer.getChainKey(targetChain)].lzEid;
+          const expected = ethers.zeroPadValue(state.addresses[targetKey], 32).toLowerCase();
+          const actual = (await source.peers(eid)).toLowerCase();
+          if (actual !== expected) {
+            throw new FatalDeployError(
+              `ARCHIVE/RELAY PEER MISMATCH: ${sourceKey}.peers(${eid})=${actual}, expected ${expected}. ` +
+              'Abort and redeploy the affected cascade before sealing.'
+            );
+          }
+        },
+      });
+    }
+  }
+}
+
+// =============================================================================
+// Re-read all constructor bindings at the generation barrier, including L1.
+// Earlier checks are not enough on resume, and missing siblings must not skip.
+for (const chain of ['L1', ...L2_CHAIN_KEYS]) {
+  LINKING_STEPS.push({
+    name: `Assert ${chain} constructor bindings (sealed constructor read-back)`,
+    chain,
+    phase: 7,
+    sealedRequired: true,
+    custom: async (state, deployer) => {
+      if (deployer.finalizeBootstrapRequested !== true) return;
+      const ledgerKey = `CawProfileLedger_${chain}`;
+      const oracleKey = `CawCapOracle_${chain}`;
+      const actionsKey = `CawActions_${chain}`;
+      const siblingKey = `CawActionsERC1271_${chain}`;
+      for (const key of [ledgerKey, oracleKey, actionsKey, siblingKey]) {
+        if (!state.addresses[key] || state.addresses[key] === ethers.ZeroAddress) {
+          throw new Error(`Required constructor binding address missing: ${key}`);
+        }
+      }
+      for (const [key, getter, target] of [
+        [ledgerKey, 'cawActions', actionsKey],
+        [ledgerKey, 'capOracle', oracleKey],
+        [ledgerKey, 'erc1271Sibling', siblingKey],
+        [oracleKey, 'cawActions', actionsKey],
+      ]) {
+        const contract = deployer.getContract(key);
+        if (!contract) throw new Error(`Required constructor binding handle missing: ${key}`);
+        const actual = (await contract[getter]()).toLowerCase();
+        const expected = state.addresses[target].toLowerCase();
+        if (actual !== expected) {
+          throw new Error(`CONSTRUCTOR BINDING MISMATCH: ${key}.${getter}=${actual}, expected ${expected}`);
+        }
+      }
+    },
+  });
+}
+
+// Phase 7 sealed-generation final step — close PathwayExpander bootstrap owner.
+// Mainnet always executes this step. Non-mainnet executes it only when
+// FINALIZE_BOOTSTRAP=true/1 was explicitly requested.
+// =============================================================================
+for (const abstractChain of ['L1', ...L2_CHAIN_KEYS]) {
+  const expanderKey = `PathwayExpander_${abstractChain}`;
+
+  LINKING_STEPS.push({
+    name: `[Phase 7] Finalize ${expanderKey} bootstrap authority`,
+    chain: abstractChain,
+    phase: 7,
+    sealedRequired: true,
+    sealedFinalizer: true,
+    condition: (state, deployer) =>
+      !!state.addresses[expanderKey] &&
+      deployer.finalizeBootstrapRequested === true,
+    custom: async (state, deployer) => {
+      try {
+        const expander = deployer.getContract(expanderKey);
+
+        if (!expander) {
+        throw new FatalDeployError(
+          `${expanderKey} handle missing — cannot finalize bootstrap authority`
+        );
+      }
+
+      const ownerBefore = await expander.owner();
+
+      if (ownerBefore.toLowerCase() === ethers.ZeroAddress.toLowerCase()) {
+        const priorProof = state.finalizations?.[expanderKey];
+
+        if (!priorProof?.transactionHash || priorProof.blockNumber == null) {
+          throw new FatalDeployError(
+            `${expanderKey} owner is already zero but finalization proof metadata is missing. ` +
+            `A fresh proof-enabled deployment is required.`
+          );
+        }
+
+        console.log(
+          `   ${expanderKey} already finalized: owner=${ownerBefore} ` +
+          `tx=${priorProof.transactionHash} block=${priorProof.blockNumber}`
+        );
+        return;
+      }
+
+      const tx = await expander.finalizeBootstrap();
+      const receipt = await tx.wait();
+
+      if (!receipt || receipt.status !== 1 || receipt.blockNumber == null) {
+        throw new FatalDeployError(
+          `${expanderKey} finalizeBootstrap transaction failed`
+        );
+      }
+
+      const ownerAtFinalization = await expander.owner({
+        blockTag: receipt.blockNumber,
+      });
+
+      if (ownerAtFinalization.toLowerCase() !== ethers.ZeroAddress.toLowerCase()) {
+        throw new FatalDeployError(
+          `${expanderKey} finalizeBootstrap mined but owner remained ${ownerAtFinalization}`
+        );
+      }
+
+      state.finalizations = state.finalizations || {};
+      state.finalizations[expanderKey] = {
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+      };
+
+      deployer.saveState();
+
+        console.log(
+          `   Finalized ${expanderKey}: tx=${tx.hash} block=${receipt.blockNumber}`
+        );
+      } catch (e) {
+        if (e instanceof FatalDeployError) {
+          throw e;
+        }
+
+        throw new FatalDeployError(
+          `${expanderKey} bootstrap finalization failed: ${e.message}`
+        );
+      }
+    },
+  });
+}
+
+// =============================================================================
 // Phase 7.9 — sponsor CAW approval for the Minter.
 // =============================================================================
 //
@@ -1532,6 +1813,7 @@ LINKING_STEPS.push({
   name: '[Phase 7.9] Approve Minter to spend sponsor CAW (sponsored bootstrap)',
   chain: 'L1',
   phase: 7,
+  sealedPostFinalizer: true,
   condition: (state) => !!state.addresses.CawProfileMinter && !!state.addresses.MintableCaw,
   custom: async (state, deployer) => {
     const minterAddr = state.addresses.CawProfileMinter;
@@ -2111,7 +2393,35 @@ class MultiChainDeployer {
     const address = await contract.getAddress();
     console.log(`   Deployed at: ${address}`);
 
+    let deploymentProof = null;
+    if (contractKey.startsWith('PathwayExpander_')) {
+      const deploymentTx = contract.deploymentTransaction();
+      if (!deploymentTx) {
+        throw new Error(`${contractKey}: deployment transaction unavailable`);
+      }
+
+      const receipt = await deploymentTx.wait();
+      if (!receipt || receipt.blockNumber == null) {
+        throw new Error(`${contractKey}: deployment receipt unavailable`);
+      }
+
+      deploymentProof = {
+        transactionHash: deploymentTx.hash,
+        blockNumber: receipt.blockNumber,
+      };
+
+      console.log(
+        `   Recorded deployment proof: tx=${deploymentTx.hash} block=${receipt.blockNumber}`
+      );
+    }
+
     this.state.addresses[contractKey] = address;
+
+    if (deploymentProof) {
+      this.state.deployments = this.state.deployments || {};
+      this.state.deployments[contractKey] = deploymentProof;
+    }
+
     this.contracts[contractKey] = contract;
     this.saveState();
 
@@ -2140,11 +2450,33 @@ class MultiChainDeployer {
     return this.contracts[contractKey];
   }
 
+  isSealedRequiredStep(step) {
+    if (this.finalizeBootstrapRequested !== true) {
+      return false;
+    }
+
+    if (typeof step.sealedRequired === 'function') {
+      return step.sealedRequired(
+        this.state,
+        this,
+        this.env
+      ) === true;
+    }
+
+    return step.sealedRequired === true;
+  }
+
   async executeLink(step) {
     const chainKey = this.getChainKey(step.chain);
     await this.initChain(chainKey);
 
     if (step.condition && !step.condition(this.state, this, this.env)) {
+      if (this.isSealedRequiredStep(step)) {
+        throw new FatalDeployError(
+          `Required sealed deployment step condition not met: ${step.name}`
+        );
+      }
+
       console.log(`  Skipping "${step.name}" - condition not met`);
       return;
     }
@@ -2157,6 +2489,12 @@ class MultiChainDeployer {
           return;
         }
       } catch (e) {
+        if (e instanceof FatalDeployError) throw e;
+        if (this.isSealedRequiredStep(step)) {
+          throw new FatalDeployError(
+            `Required sealed deployment skip check failed: ${step.name}: ${e.message}`
+          );
+        }
         console.log(`   Skip check failed: ${e.message}, proceeding...`);
       }
     }
@@ -2202,6 +2540,12 @@ class MultiChainDeployer {
 
     const contract = this.getContract(step.contract);
     if (!contract) {
+      if (this.isSealedRequiredStep(step)) {
+        throw new FatalDeployError(
+          `Required sealed deployment contract unavailable: ${step.contract} (${step.name})`
+        );
+      }
+
       console.warn(`  Contract ${step.contract} not available, skipping "${step.name}"`);
       return;
     }
@@ -2295,40 +2639,92 @@ class MultiChainDeployer {
     // Run linking steps for this phase. Steps on different chains run in
     // parallel; steps on the same chain run sequentially (nonce ordering).
     const phaseLinks = LINKING_STEPS.filter(s => s.phase === phase);
-    if (phaseLinks.length > 0) {
-      // Group by chain
+
+    // A sealed Phase 7 has explicit generation-wide sequencing:
+    //
+    //   pass 1: pre-finalization wiring + required verification;
+    //   pass 2: PathwayExpander finalization;
+    //   pass 3: existing post-finalization Phase 7.9 work.
+    //
+    // Workers inside a pass may still run across chains concurrently, but no
+    // finalizer is eligible to start until every pass-1 chain worker settles
+    // successfully. Post-finalization work retains its historical position
+    // after the finalizer pass.
+    const linkPasses =
+      phase === 7 && this.finalizeBootstrapRequested === true
+        ? [
+            phaseLinks.filter(
+              step =>
+                step.sealedFinalizer !== true &&
+                step.sealedPostFinalizer !== true
+            ),
+            phaseLinks.filter(
+              step => step.sealedFinalizer === true
+            ),
+            phaseLinks.filter(
+              step => step.sealedPostFinalizer === true
+            ),
+          ]
+        : [phaseLinks];
+
+    for (const linksInPass of linkPasses) {
+      if (linksInPass.length === 0) {
+        continue;
+      }
+
+      // Group by chain. Each chain stays sequential for nonce ordering;
+      // independent chains may execute concurrently within this pass.
       const linksByChain = {};
-      for (const step of phaseLinks) {
+
+      for (const step of linksInPass) {
         const chain = step.chain;
-        if (!linksByChain[chain]) linksByChain[chain] = [];
+
+        if (!linksByChain[chain]) {
+          linksByChain[chain] = [];
+        }
+
         linksByChain[chain].push(step);
       }
 
-      // Run each chain's steps sequentially, but all chains in parallel.
-      // Ordinary step failures are logged and skipped (one bad setPeer must not
-      // kill the whole run). A FatalDeployError means the generation is dead —
-      // re-throw it out of the chain worker so it surfaces in the settled
-      // results below and aborts the deploy BEFORE finalization writes the
-      // broken addresses to the app config.
       const settled = await Promise.allSettled(
         Object.entries(linksByChain).map(async ([chain, steps]) => {
+          void chain;
+
           for (const step of steps) {
             try {
               await this.executeLink(step);
             } catch (e) {
-              if (e instanceof FatalDeployError) throw e;  // abort — do not swallow
-              console.error(`Failed: ${step.name} - ${e.message}`);
-              // Continue with other steps on this chain
+              if (e instanceof FatalDeployError) {
+                throw e;
+              }
+
+              if (this.isSealedRequiredStep(step)) {
+                throw new FatalDeployError(
+                  `Required sealed deployment step failed: ${step.name}: ${e.message}`
+                );
+              }
+
+              console.error(
+                `Failed: ${step.name} - ${e.message}`
+              );
             }
           }
         })
       );
-      // Promise.allSettled never rejects — inspect for a fatal and re-throw so
-      // it propagates out of deployPhase → deployAll/redeploy → main(), skipping
-      // the deployments.ts / addresses.ts / config.json finalization entirely.
-      const fatal = settled.find(r => r.status === 'rejected' && r.reason instanceof FatalDeployError);
-      if (fatal) throw fatal.reason;
+
+      // Promise.allSettled itself never rejects. A fatal result from any
+      // chain aborts the phase before the next pass can begin.
+      const fatal = settled.find(
+        r =>
+          r.status === 'rejected' &&
+          r.reason instanceof FatalDeployError
+      );
+
+      if (fatal) {
+        throw fatal.reason;
+      }
     }
+
   }
 
   async deployAll() {
@@ -2954,6 +3350,12 @@ Options:
   --skip-abi          Skip ABI regeneration after deployment
   --help              Show this help
 
+Lifecycle:
+  FINALIZE_BOOTSTRAP=true
+                     Seal PathwayExpander bootstrap on testnet/dev.
+                     Once sealing starts, recovery runs remain sealed.
+                     Mainnet is always sealed and cannot opt out.
+
 Deployment Phases:
   Phase 1: Deploy CawProfileLedger on L2 + L2b (needed by L1 contracts)
   Phase 2: Deploy all L1 contracts and link them
@@ -3012,6 +3414,27 @@ After deployment, ABIs are automatically regenerated for the frontend.
     }
     return;
   }
+
+  const finalizeBootstrapRequested =
+    resolveFinalizeBootstrap(env, deployer.state);
+
+  deployer.finalizeBootstrapRequested =
+    finalizeBootstrapRequested;
+
+  deployer.state.lifecycle = {
+    ...(deployer.state.lifecycle || {}),
+    finalizeBootstrapRequested,
+  };
+
+  deployer.saveState();
+
+  console.log(
+    `\nBootstrap lifecycle: ${
+      finalizeBootstrapRequested
+        ? 'SEALED — PathwayExpander finalization required'
+        : 'UNSEALED DEVELOPMENT — PathwayExpander finalization skipped'
+    }`
+  );
 
   if (contractToRedeploy) {
     await deployer.redeploy(contractToRedeploy);

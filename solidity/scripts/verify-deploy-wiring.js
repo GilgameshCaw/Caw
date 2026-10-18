@@ -59,6 +59,20 @@ if (!A) { console.error('No addresses in deploy state'); process.exit(1); }
 // Pull the same CHAINS map from env without re-executing deploy.js's full state machine.
 const ENV = process.env.DEPLOY_ENV || 'testnet';
 
+function shouldVerifyBootstrapFinalization(env, deployState) {
+  const hasRecordedFinalization =
+    Object.keys(deployState.finalizations || {}).length > 0;
+
+  return (
+    env === 'mainnet' ||
+    deployState.lifecycle?.finalizeBootstrapRequested === true ||
+    hasRecordedFinalization
+  );
+}
+
+const VERIFY_BOOTSTRAP_FINALIZATION =
+  shouldVerifyBootstrapFinalization(ENV, state);
+
 const CHAINS = {
   testnetL1:  { rpc: process.env.L1_RPC_URL,  lzEid: 40161, endpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f' },
   testnetL2:  { rpc: process.env.L2_RPC_URL,  lzEid: 40245, endpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f' },
@@ -116,6 +130,179 @@ function ok(name, cond, detail) {
 function warn(name, detail) {
   console.log(`  ⚠ ${name}: ${detail}`);
   warnings++;
+}
+
+async function verifyPathwayExpanderFinalized(abstractChain, contractKey) {
+  console.log(`\n${contractKey} bootstrap-finalization proof:`);
+
+  const address = A[contractKey];
+
+  if (!address) {
+    ok(`${contractKey}.address present`, false, 'missing from deploy state');
+    return;
+  }
+
+  const deployProof = state.deployments?.[contractKey];
+  const finalProof = state.finalizations?.[contractKey];
+
+  if (!deployProof?.transactionHash || deployProof.blockNumber == null) {
+    ok(
+      `${contractKey}.deployment proof metadata`,
+      false,
+      'missing deployment transactionHash/blockNumber'
+    );
+    return;
+  }
+
+  if (!finalProof?.transactionHash || finalProof.blockNumber == null) {
+    ok(
+      `${contractKey}.finalization proof metadata`,
+      false,
+      'missing finalizeBootstrap transactionHash/blockNumber'
+    );
+    return;
+  }
+
+  const provider = providerFor(abstractChain);
+
+  try {
+    const deployReceipt =
+      await provider.getTransactionReceipt(deployProof.transactionHash);
+
+    if (!deployReceipt) {
+      ok(`${contractKey}.deployment receipt`, false, deployProof.transactionHash);
+      return;
+    }
+
+    ok(
+      `${contractKey}.deployment receipt status`,
+      deployReceipt.status === 1,
+      `status=${deployReceipt.status}`
+    );
+
+    eq(
+      `${contractKey}.deployment receipt contractAddress`,
+      deployReceipt.contractAddress,
+      address
+    );
+
+    ok(
+      `${contractKey}.deployment receipt blockNumber`,
+      Number(deployReceipt.blockNumber) === Number(deployProof.blockNumber),
+      `state=${deployProof.blockNumber} chain=${deployReceipt.blockNumber}`
+    );
+
+    const finalReceipt =
+      await provider.getTransactionReceipt(finalProof.transactionHash);
+
+    if (!finalReceipt) {
+      ok(`${contractKey}.finalization receipt`, false, finalProof.transactionHash);
+      return;
+    }
+
+    ok(
+      `${contractKey}.finalization receipt status`,
+      finalReceipt.status === 1,
+      `status=${finalReceipt.status}`
+    );
+
+    ok(
+      `${contractKey}.finalization receipt blockNumber`,
+      Number(finalReceipt.blockNumber) === Number(finalProof.blockNumber),
+      `state=${finalProof.blockNumber} chain=${finalReceipt.blockNumber}`
+    );
+
+    ok(
+      `${contractKey}.finalization after deployment`,
+      Number(finalReceipt.blockNumber) >= Number(deployReceipt.blockNumber),
+      `deployBlock=${deployReceipt.blockNumber} finalBlock=${finalReceipt.blockNumber}`
+    );
+
+    eq(
+      `${contractKey}.finalization receipt target`,
+      finalReceipt.to,
+      address
+    );
+
+    const finalTx =
+      await provider.getTransaction(finalProof.transactionHash);
+
+    if (!finalTx) {
+      ok(`${contractKey}.finalization transaction`, false, finalProof.transactionHash);
+      return;
+    }
+
+    eq(
+      `${contractKey}.finalization transaction target`,
+      finalTx.to,
+      address
+    );
+
+    const finalizationIface = new ethers.Interface([
+      'function finalizeBootstrap()',
+      'event BootstrapFinalized(address indexed formerOwner)',
+    ]);
+
+    const expectedFinalizeData =
+      finalizationIface.encodeFunctionData('finalizeBootstrap');
+
+    ok(
+      `${contractKey}.finalization calldata == finalizeBootstrap()`,
+      finalTx.data.toLowerCase() === expectedFinalizeData.toLowerCase(),
+      `data=${finalTx.data}`
+    );
+
+    const finalizedTopic = ethers.id('BootstrapFinalized(address)');
+    const finalizedLogs = finalReceipt.logs.filter(
+      (log) =>
+        log.address.toLowerCase() === address.toLowerCase() &&
+        log.topics?.[0]?.toLowerCase() === finalizedTopic.toLowerCase()
+    );
+
+    ok(
+      `${contractKey}.BootstrapFinalized event count == 1`,
+      finalizedLogs.length === 1,
+      `count=${finalizedLogs.length}`
+    );
+
+    if (finalizedLogs.length === 1) {
+      const parsed = finalizationIface.parseLog(finalizedLogs[0]);
+
+      eq(
+        `${contractKey}.BootstrapFinalized.formerOwner == tx.from`,
+        parsed.args.formerOwner,
+        finalTx.from
+      );
+    }
+
+    const expander = new ethers.Contract(
+      address,
+      ['function owner() view returns (address)'],
+      provider
+    );
+
+    const ownerAtFinalization = await expander.owner({
+      blockTag: finalReceipt.blockNumber,
+    });
+
+    ok(
+      `${contractKey}.owner == 0 at bootstrap finalization`,
+      ZERO(ownerAtFinalization),
+      `owner=${ownerAtFinalization} block=${finalReceipt.blockNumber}`
+    );
+
+    console.log(`     deploy tx:   ${deployProof.transactionHash}`);
+    console.log(`     deploy block:${deployReceipt.blockNumber}`);
+    console.log(`     final tx:    ${finalProof.transactionHash}`);
+    console.log(`     final block: ${finalReceipt.blockNumber}`);
+    console.log(`     owner:       ${ownerAtFinalization}`);
+  } catch (e) {
+    ok(
+      `${contractKey}.bootstrap-finalization proof execution`,
+      false,
+      e.message
+    );
+  }
 }
 
 async function main() {
@@ -258,6 +445,24 @@ async function main() {
       await epL.delegates(A[`CawActionsArchive_${L}`]), A[`PathwayExpander_${L}`]);
     eq(`Endpoint(${L}).delegates(CawChallengeRelay_${L})`,
       await epL.delegates(A[`CawChallengeRelay_${L}`]), A[`PathwayExpander_${L}`]);
+  }
+
+  // -----------------------------------------------------------------
+  // PathwayExpander bootstrap-finalization proofs
+  // -----------------------------------------------------------------
+  console.log('\n===== PathwayExpander bootstrap finalization =====');
+
+  if (VERIFY_BOOTSTRAP_FINALIZATION) {
+    await verifyPathwayExpanderFinalized('L1', 'PathwayExpander_L1');
+
+    for (const L of L2_CHAIN_KEYS) {
+      await verifyPathwayExpanderFinalized(L, `PathwayExpander_${L}`);
+    }
+  } else {
+    console.log(
+      '  skipped: non-mainnet deployment was not marked for sealed ' +
+      'bootstrap finalization'
+    );
   }
 
   // -----------------------------------------------------------------
