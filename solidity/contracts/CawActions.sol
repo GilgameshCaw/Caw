@@ -535,6 +535,10 @@ contract CawActions {
     // remaining slots in signers to match the first (so a malicious prover
     // can't slip a different signer onto a batched action).
     address signer = _readSigner(signers, c.actionsSeen);
+    // The sig path only matches a NON-ZERO recovered signer against ownerOf
+    // (_verifySignatureMem). ownerOf is address(0) for a token whose owner
+    // was never synced, so a zero signer here would act as that owner.
+    if (signer == address(0)) revert InvalidSig();
     for (uint256 i = 1; i < groupSize; ) {
       if (_readSigner(signers, c.actionsSeen + i) != signer) revert SignerMismatch();
       unchecked { ++i; }
@@ -572,9 +576,12 @@ contract CawActions {
       ba.perActionTipRate = s.perActionTipRate;
     }
 
-    // Apply each action with skip-don't-revert on cawonce conflicts.
+    // Apply each action with skip-don't-revert on cawonce conflicts. Cawonces
+    // in a group must be contiguous and ascending, as the sig path enforces in
+    // _unpackBatchGroup (a single-action group trivially matches).
+    uint256 cawonce0 = _peekCawonce(packedActions, c.pos);
     for (uint256 i = 0; i < groupSize; ) {
-      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, senderId0, executedBitmap);
+      executedBitmap = _zkApplyOne(validatorId, packedActions, c, ba, senderId0, cawonce0 + i, executedBitmap);
       unchecked { ++i; }
     }
 
@@ -597,6 +604,7 @@ contract CawActions {
     BatchCursor memory c,
     BatchAuth memory ba,
     uint32 senderId0,
+    uint256 expectedCawonce,
     uint256 executedBitmap
   ) internal returns (uint256) {
     uint256 actionStart = c.pos;
@@ -619,6 +627,7 @@ contract CawActions {
     // actions on any senderId by smuggling them into a group keyed to a different
     // owner. (Audit finding H-2.)
     if (action.senderId != senderId0) revert MixedSenders();
+    if (action.cawonce != expectedCawonce) revert NonContiguousCawonces();
 
     // Race-loss check.
     if (isCawonceUsed(action.senderId, action.cawonce)) {
@@ -664,6 +673,14 @@ contract CawActions {
       // senderId occupies bytes [0..4) of the loaded word, so shift right
       // by 28 bytes (224 bits) to land it in the low 32 bits.
       senderId := and(shr(224, calldataload(add(packedActions.offset, add(pos, 1)))), 0xFFFFFFFF)
+    }
+  }
+
+  /// @dev Read just the cawonce (4 bytes at offset+17) of the action at `packedActions[pos:]`.
+  function _peekCawonce(bytes calldata packedActions, uint256 pos) internal pure returns (uint32 cawonce) {
+    assembly {
+      // actionType(1) + senderId(4) + receiverId(4) + receiverCawonce(4) + networkId(4) = 17
+      cawonce := and(shr(224, calldataload(add(packedActions.offset, add(pos, 17)))), 0xFFFFFFFF)
     }
   }
 
