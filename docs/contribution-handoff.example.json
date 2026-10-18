@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "goal": "Make engineering work reproducible and continuable without requiring a particular person to remain available.",
+  "status": "in-progress",
+  "scope": [
+    "An optional, local handoff format for contributors.",
+    "No changes to protocol contracts, GitHub permissions, merge policy, or node operation."
+  ],
+  "evidence": [
+    {
+      "ref": "docs/manifesto.txt",
+      "meaning": "The protocol's stated aim is to avoid an indispensable controller, while acknowledging contributors and cornerstones."
+    },
+    {
+      "ref": "docs/AGENT_HANDOFF_PROTOCOL.md",
+      "meaning": "Existing handoff concepts are documented for agents; this proposal targets portable contributor handoffs."
+    }
+  ],
+  "decisions": [
+    {
+      "choice": "Make the format opt-in.",
+      "reason": "Continuity must not require a new central approver or prevent someone from contributing."
+    },
+    {
+      "choice": "Do not require a maintainer identity or an assigned successor.",
+      "reason": "A handoff can be usable even when no one has volunteered to continue it."
+    }
+  ],
+  "checks": [
+    {
+      "command": "node --test scripts/check-contribution-handoff.test.mjs",
+      "expected": "All local continuity validator tests pass without installing dependencies."
+    }
+  ],
+  "unknowns": [
+    "Whether other contributors find the fields useful; revise or discard the proposal based on review."
+  ],
+  "nextSteps": [
+    "Invite independent review of the example and checker; do not make it a merge gate without separate consensus."
+  ]
+}
