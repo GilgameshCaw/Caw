@@ -13,6 +13,7 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { withWalletLock } from '../../utils/walletQueue'
+import { waitForReceipt, TxWaitTimeoutError } from '../../utils/txWait'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
@@ -2233,6 +2234,17 @@ export const validatorService: Service = {
     // 2026-05-13.
     let _submitChain: Promise<unknown> = Promise.resolve()
 
+    // Upper bound on submitProcessActions' receipt wait. 60 s is 30 Base
+    // blocks, well under the poll watchdog's 180 s floor (pollTimeoutMs), so a
+    // missing receipt no longer costs a service restart. A timeout takes the
+    // transient branch, which returns from the poll before the ERC-1271
+    // sub-path, so ERC-1271 rows wait for the next poll.
+    //
+    // submitERC1271Actions still waits without a bound: its caller marks every
+    // row failed on any error, so a timeout there would turn a slow tx that
+    // still lands into failed rows. It needs a cawonce check first.
+    const TX_WAIT_TIMEOUT_MS = 60_000
+
     async function submitProcessActions(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
@@ -2353,7 +2365,7 @@ export const validatorService: Service = {
         releaseSlot()
         console.log(`[submitProcessActions] Sent ${multiData.actions.length} action(s), tx=${tx.hash}`)
 
-        const receipt = await tx.wait()
+        const receipt = await waitForReceipt(tx, TX_WAIT_TIMEOUT_MS)
 
         // ActionsProcessed / ActionsProcessedZk are now calldata commitments
         // (event carries batchHash + counts; the packedActions blob lives in
@@ -2396,6 +2408,16 @@ export const validatorService: Service = {
         console.log(`[submitProcessActions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))${skipNote}`)
         return { processed, receipt }
       } catch (err: any) {
+        // The tx was sent and may still land. Don't let the retry ladder below
+        // send the batch again: pass it up, where the callers' transient checks
+        // match "timeout" and put the rows back to pending. The next poll's
+        // simulation then sees "Cawonce already used" for a tx that landed,
+        // and resolveCawonceUsed settles those rows.
+        if (err instanceof TxWaitTimeoutError) {
+          console.warn(`[submitProcessActions] ${err.message} — not re-sending; rows go back to pending`)
+          throw err
+        }
+
         // Handle "oversized data" — tx calldata exceeds the 128KB protocol limit.
         // Split the batch in half and try again. Uses recursion with a shrinking
         // multiData so at worst we end up submitting one action at a time.
