@@ -260,7 +260,7 @@ export default async function listenForRawEvents(
        */
       storeBatch?(events: RawEventInput[]): Promise<void>
       /**
-       * Floor-fill guard (idempotent, Redis-backed). isFloorFilled() reports
+       * Floor-fill guard (persistent scope supplied by the service). isFloorFilled() reports
        * whether the historical scan down to the configured startBlock has
        * completed on a prior run; markFloorFilled() records completion. Once
        * filled, restarts resume from the last processed block instead of
@@ -294,6 +294,11 @@ export default async function listenForRawEvents(
     onStall?: (reason: string) => void
   }
 ): Promise<{ stop(): void }> {
+  // An event checkpoint alone does not establish that earlier history was read.
+  // Refuse to silently treat a partial database or the current head as genesis.
+  if (!Number.isSafeInteger(config.startBlock) || config.startBlock! < 0) {
+    throw new Error('RawEventsGatherer: a non-negative safe-integer history startBlock is required; configure the reviewed deployment floor before indexing')
+  }
   let wsProvider: WebSocketProvider | null = null
   let wsContract: Contract | null = null
   let isReconnecting = false
@@ -326,7 +331,7 @@ export default async function listenForRawEvents(
   const floorAlreadyFilled = await config.rawEventsProvider.isFloorFilled()
   // Resolve the historical-scan start block.
   //
-  // A configured startBlock (config.json override or Network.creationBlock) is a
+  // A configured startBlock (reviewed config.json value for the indexed chain) is a
   // HARD FLOOR, even when the DB already has events. Previously `last` won
   // unconditionally, so if any CawActions event landed ABOVE the configured
   // startBlock before the historical scan ran (a live-poll/WS/peer event racing
@@ -355,12 +360,8 @@ export default async function listenForRawEvents(
     } else {
       console.log(`[RawEventsGatherer] Starting from configured startBlock ${startBlock}`)
     }
-  } else if (last) {
-    startBlock = last.blockNumber
-    resumingFromLast = true
   } else {
-    startBlock = await httpProvider.getBlockNumber()
-    console.log(`[RawEventsGatherer] Fresh DB, no startBlock configured — starting from current block ${startBlock}`)
+    throw new Error('RawEventsGatherer: history startBlock is unavailable')
   }
   // parentHash chain seed: only trust `last`'s hash when we're actually
   // resuming from it (no configured floor pulling us earlier); otherwise the
@@ -518,6 +519,7 @@ export default async function listenForRawEvents(
   // is a global on-chain fact triggered by ANY client's actions. The networkId
   // gate now lives in domainProcessor for CAW/RECAW only; everything else
   // processes regardless of submitting client.
+  let historicalRangeScanned = false
   let past: Log[]
   const eventSig = httpContract.interface.getEvent('ActionsProcessed')!.topicHash
   while (true) {
@@ -574,6 +576,7 @@ export default async function listenForRawEvents(
           : a.index - b.index
       )
       past = allLogs as unknown as Log[]
+      historicalRangeScanned = true
       break
     } catch (err) {
       console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
@@ -611,13 +614,11 @@ export default async function listenForRawEvents(
     await processEvents(past, httpContract)
   }
 
-  // Historical fill down to the configured floor is now complete and durably
-  // in the DB. Record it so subsequent restarts resume from `last` (see the
-  // floor-already-filled branch above) rather than re-scanning the whole
-  // config.startBlock..latest range each time. Setting this without a real
-  // fill is harmless: the resume branch also requires `last`, so the flag
-  // only changes behaviour once there is a last-processed block to resume from.
-  if (config.startBlock !== undefined && !floorAlreadyFilled) {
+  // Record completion only after an eligible historical range was read and
+  // processed (or its rows were already present). A head below startBlock
+  // skipped the scan; leave the marker unset so restart can retry backfill.
+  // A successful RPC read alone still does not prove historical completeness.
+  if (historicalRangeScanned && config.startBlock !== undefined && !floorAlreadyFilled) {
     await config.rawEventsProvider.markFloorFilled()
     console.log(`[RawEventsGatherer] Marked floor-fill complete — future restarts resume from last processed block`)
   }

@@ -14,7 +14,7 @@ const Config = z.object({
   chainId:         z.number().int().positive(),
   rpcUrl:          z.string(), // Validated at runtime after env var substitution
   redisUrl:        z.string().optional().default('redis://127.0.0.1:6379'),
-  startBlock:      z.number().int().optional(), // Manual override — overrides creationBlock
+  startBlock:      z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), // Reviewed floor on the indexed chain; no database fallback
   networkId:        z.number().int().positive().optional(), // Defaults to CLIENT_ID env var
 })
 
@@ -108,7 +108,7 @@ export const rawEventsGathererService: Service = {
       // normal restart resumes from getLastProcessedEvent and only
       // rescans a small trailing range; checked directly on cawnest.com
       // and its most recent restart's rescan was near-empty). A worst-case
-      // full rescan (e.g. after a startBlock/creationBlock reset) could in
+      // full rescan (e.g. after a startBlock reset) could in
       // principle put `past` somewhere in that lifetime-volume range, which
       // is what this batch size is sized against. Sequential batches of
       // 500 would mean over a thousand round trips in that scenario; 5000
@@ -226,35 +226,20 @@ export const rawEventsGathererService: Service = {
         }
       }
 
-      // Resolve the fresh-DB start block. Precedence, strongest to weakest:
-      //   1. cfg.startBlock — explicit override in config.json, for
-      //      backfill/repair or short-circuiting history.
-      //   2. Client.creationBlock in DB — canonical "this client was created
-      //      at block N" for the client we're indexing. Populated from
-      //      the CawNetworkManager's on-chain CawNetwork struct once the
-      //      struct carries that field (pending a redeploy). For now
-      //      seeded manually via `npx tsx scripts/seed-network-creation-block.ts`.
-      //   3. undefined — listenForRawEvents falls back to "current head",
-      //      which is the today-behavior for an unknown client.
-      //
-      // Once a RawEvent lands in the DB, getLastProcessedEvent takes over
-      // and this resolution is never used again. So it only matters on
-      // cold-start of a fresh DB.
-      let resolvedStartBlock: number | undefined = cfg.startBlock
-      if (resolvedStartBlock === undefined) {
-        try {
-          const client = await prisma.network.findUnique({
-            where: { id: networkId },
-            select: { creationBlock: true },
-          })
-          if (client?.creationBlock != null) {
-            resolvedStartBlock = Number(client.creationBlock)
-            console.log(`[RawEventsGatherer] Using Network.creationBlock=${resolvedStartBlock} for networkId=${networkId}`)
-          }
-        } catch (err: any) {
-          console.warn(`[RawEventsGatherer] Failed to read Network.creationBlock: ${err?.message}`)
-        }
-      }
+      // Network.creationBlock comes from the L1 NetworkManager. It has no
+      // storage-chain provenance and must not become an L2 scan floor.
+      // Require an explicitly reviewed floor for the selected indexed chain.
+      // The listener rejects an absent/invalid floor before opening its RPC.
+      const resolvedStartBlock: number | undefined = cfg.startBlock
+
+      // Completion is scoped to this exact scan request. Legacy flags carry
+      // no floor/address provenance and are intentionally not consulted.
+      // This does not authenticate a deployment generation or a reorg anchor.
+      const floorKey = 'raw-events-gatherer:floor-v2:' + JSON.stringify([
+        chainId, networkId, resolvedStartBlock,
+        CAW_ACTIONS_ADDRESS.toLowerCase(),
+        CAW_ACTIONS_ERC1271_ADDRESS?.toLowerCase() ?? null,
+      ])
 
       const listener = await listenForRawEvents({
         rpcUrl,
@@ -266,21 +251,14 @@ export const rawEventsGathererService: Service = {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish,
           storeBatch:            storeBatchAndPublish,
-          // Floor-fill completion is persisted in ChainData (DB) rather than
-          // Redis: the flag is a write-once, never-touched-again key, so under
-          // an LRU/LFU maxmemory-policy it is the prime eviction candidate among
-          // the hot per-poll cursors — and losing it forces a full historical
-          // re-floor. ChainData is as durable as the events themselves and is
-          // never evicted. Written only after processEvents() returns
-          // successfully (see markFloorFilled call site), so a crash mid-scan
-          // still fails safe toward re-floor, never toward a false "filled".
-          isFloorFilled:   async () => {
-            const row = await prisma.chainData.findUnique({ where: { key: `raw-events-gatherer:${chainId}:${networkId}:floor-filled` } })
+          // Persist only under the current floor and contract scope. A scope
+          // change forces backfill; it does not delete existing event rows.
+          isFloorFilled: async () => {
+            const row = await prisma.chainData.findUnique({ where: { key: floorKey } })
             return (row?.value as any)?.filled === true
           },
           markFloorFilled: async () => {
-            const key = `raw-events-gatherer:${chainId}:${networkId}:floor-filled`
-            await prisma.chainData.upsert({ where: { key }, update: { value: { filled: true } }, create: { key, value: { filled: true } } })
+            await prisma.chainData.upsert({ where: { key: floorKey }, update: { value: { filled: true } }, create: { key: floorKey, value: { filled: true } } })
           },
           countExisting,
         },
