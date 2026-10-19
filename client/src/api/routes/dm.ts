@@ -11,7 +11,7 @@ import {
   canonicalizeIdentityEnvelope,
 } from '../../services/DmRelayService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
-import { getPeers } from '../../services/InstanceRegistryService'
+import { getPeers, isPeerCacheComplete } from '../../services/InstanceRegistryService'
 import { checkDmRate } from '../dmRateLimit'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import crypto from 'crypto'
@@ -92,6 +92,13 @@ router.post('/identity/relay', async (req: Request, res: Response) => {
     const age = Date.now() - Number(timestamp)
     if (age > 5 * 60 * 1000 || age < -5 * 60 * 1000) {
       return res.status(400).json({ error: 'Identity timestamp out of range' })
+    }
+
+    // Same as the message relay: a cache without one complete scan can
+    // be missing a deactivation or a key rotation.
+    if (!isPeerCacheComplete(CLIENT_ID)) {
+      res.set('Retry-After', '60')
+      return res.status(503).json({ error: 'Peer registry not loaded yet' })
     }
 
     // Source instance must be active in our registry cache.

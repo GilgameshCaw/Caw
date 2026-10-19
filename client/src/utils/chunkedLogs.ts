@@ -51,7 +51,8 @@ export interface BackwardScanOptions extends ChunkedScanOptions {
    *  it. Pair with `fromBlock` (the deploy block) to bound the walk. */
   stopOnEmptyWindow?: boolean
   /** Backward scan only. Fired with the underlying getLogs error each
-   *  time a window fails (after the one halving retry). Lets a caller
+   *  time a window fails (after the one halving retry), and with the
+   *  forfeited lower half when only the retry succeeds. Lets a caller
    *  distinguish "scan hit RPC errors and may be incomplete" from
    *  "genuinely zero events" — scanLogsBackward otherwise swallows the
    *  failure and returns whatever it has (possibly []). */
@@ -169,13 +170,16 @@ export async function scanLogsBackward(
     let windowLogs: Log[]
     try {
       windowLogs = await provider.getLogs({ address: addr, topics, fromBlock, toBlock })
-    } catch {
+    } catch (firstErr) {
       // Halve once and try just the upper half (forfeit the lower half
       // rather than spinning forever — backward scans are best-effort
       // by design).
       try {
         const halfStart = fromBlock + Math.floor((toBlock - fromBlock) / 2)
         windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: halfStart, toBlock })
+        // The walk goes on, but the lower half was never fetched: report it
+        // so a caller that needs a gap-free scan doesn't count this one.
+        if (halfStart > fromBlock) opts.onError?.(fromBlock, halfStart - 1, firstErr)
       } catch (err) {
         // Surface the failure so callers can tell "incomplete due to RPC
         // errors" from "genuinely empty" — otherwise we'd return whatever

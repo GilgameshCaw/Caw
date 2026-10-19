@@ -24,7 +24,7 @@
 import { Router } from 'express'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { prisma } from '../../prismaClient'
-import { getPeers } from '../../services/InstanceRegistryService'
+import { getPeers, isPeerCacheComplete } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
@@ -203,6 +203,15 @@ router.post('/', async (req, res) => {
       console.warn(`[DM Relay] 429 inbound cap hit for recipient=${recipientId} from ${remote} (sourceInstance=${sourceInstanceId})`)
       res.set('Retry-After', String(inboundPeek.resetSeconds))
       return res.status(429).json({ error: 'Too many messages for this recipient right now' })
+    }
+
+    // Until the registry cache has had one complete scan it can be missing
+    // a deactivation or a key rotation, and the checks below would accept
+    // the old state. Refuse instead of trusting a partial view.
+    if (!isPeerCacheComplete(CLIENT_ID)) {
+      console.warn(`[DM Relay] 503 peer registry not complete yet, from ${remote} (sourceInstance=${sourceInstanceId})`)
+      res.set('Retry-After', '60')
+      return res.status(503).json({ error: 'Peer registry not loaded yet' })
     }
 
     // Look up the source instance's registered validator address from

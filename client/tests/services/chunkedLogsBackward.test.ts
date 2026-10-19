@@ -8,12 +8,16 @@ function makeProvider(opts: {
   head: number
   events: { block: number }[]
   failRanges?: Array<[number, number]> // getLogs throws if the requested range overlaps any of these
+  maxRange?: number // getLogs throws if the requested range spans more blocks than this
   deployBlock?: number
 }) {
-  const { head, events, failRanges = [], deployBlock = 0 } = opts
+  const { head, events, failRanges = [], maxRange, deployBlock = 0 } = opts
   return {
     async getBlockNumber() { return head },
     async getLogs({ fromBlock, toBlock }: { fromBlock: number; toBlock: number }) {
+      if (maxRange !== undefined && toBlock - fromBlock + 1 > maxRange) {
+        throw new Error(`RPC range cap ${fromBlock}..${toBlock}`)
+      }
       for (const [lo, hi] of failRanges) {
         if (fromBlock <= hi && toBlock >= lo) throw new Error(`RPC range error ${fromBlock}..${toBlock}`)
       }
@@ -104,6 +108,27 @@ describe('scanLogsBackward — sparse-scatter fix', () => {
     })
     expect(logs).to.have.length(0)          // no events recoverable
     expect(seen.length).to.be.greaterThan(0) // but the failure was surfaced, not swallowed
+  })
+
+  it('onError reports the forfeited lower half when only the halved retry succeeds', async () => {
+    // A 6,000-block cap rejects every 10,000-block window but lets each upper
+    // half (at most 5,001 blocks) through, so every lower half is skipped.
+    const provider = makeProvider({
+      head: 100_000,
+      events: [{ block: 97_000 }, { block: 92_000 }],
+      maxRange: 6_000,
+    })
+    const seen: Array<{ from: number; to: number }> = []
+    const logs = await scanLogsBackward(provider, ADDR, TOPICS, {
+      chunkBlocks: 10_000,
+      stopOnEmptyWindow: false,
+      onError: (from, to) => seen.push({ from, to }),
+    })
+    // 92,000 sits in the forfeited lower half of 90,001–100,000.
+    expect(logs.map((l: any) => l.blockNumber)).to.deep.equal([97_000])
+    // The walk still runs to block 0, and each full window reports its gap.
+    expect(seen[0]).to.deep.equal({ from: 90_001, to: 94_999 })
+    expect(seen).to.have.length(10)
   })
 
   it('default behavior is unchanged for existing callers (early-bail still on)', async () => {
