@@ -160,6 +160,23 @@ async function applyToCache(
 }
 
 /**
+ * Logs sorted oldest → newest by (blockNumber, logIndex). The cold scan
+ * walks backward (scanLogsBackward returns newer windows first), so its
+ * logs are not in chain order; anything applied with "last write wins"
+ * has to be sorted first.
+ */
+export function inChainOrder<T>(logs: readonly T[]): T[] {
+  const pos = (l: any) => ({
+    block: Number(l.blockNumber),
+    index: Number(l.index ?? l.logIndex ?? 0),
+  })
+  return [...logs].sort((a, b) => {
+    const x = pos(a), y = pos(b)
+    return x.block !== y.block ? x.block - y.block : x.index - y.index
+  })
+}
+
+/**
  * Pull every InstanceRegistered + InstanceUpdated event for `networkId`
  * via the chunked log walker and apply them to the peer cache. Returns
  * the diff (added / changed) so callers can log new peers as they appear.
@@ -191,7 +208,8 @@ let lastScannedBlock = -1
 // (~log2(head) calls, cheap and one-shot). -1 = not yet resolved.
 let managerDeployBlock = -1
 
-async function refreshPeers(
+// Exported for tests.
+export async function refreshPeers(
   provider: AbstractProvider,
   clientManagerAddress: string,
   networkId: number,
@@ -364,8 +382,13 @@ async function refreshPeers(
     })
   }
 
+  // applyToCache applies updates in order, so the last one wins. Sort them
+  // into chain order first: on a cold scan updLogs runs newest window
+  // first, and an instance updated in two different windows ended up with
+  // its OLDER apiUrl / validatorAddress (e.g. a rotated-out key) in the
+  // cache.
   const updates: any[] = []
-  for (const log of updLogs) {
+  for (const log of inChainOrder(updLogs)) {
     const parsed = iface.parseLog(log)
     if (!parsed) continue
     updates.push({
