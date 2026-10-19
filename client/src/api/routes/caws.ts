@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { fetchSplitFeed, followedAuthorCondition, loadFollowedIds } from '../shared/feedPage'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { safeDecrement } from '../../services/CountManager'
@@ -64,12 +65,18 @@ router.get('/', async (req, res) => {
         ]
       : { status: 'SUCCESS' }
 
+    // Logged-in home feed (no filter, no profile): visibility is read by
+    // fetchSplitFeed() as two index-friendly halves, not as an OR in `where`.
+    // The following feed is read the same way, with the follow list on the public half. A viewer who
+    // follows more accounts than loadFollowedIds() returns keeps the single relation query below.
+    const followedIds = filter === 'following' && currentUserId ? await loadFollowedIds(currentUserId) : undefined
+    const splitFeed = ((!filter && !targetUserId) || followedIds !== undefined) && !!currentUserId && Array.isArray(statusConditions)
+
     // Apply filter-specific conditions along with status visibility
     if (filter === 'following' && currentUserId) {
-      // Express "posts by users I follow (or by me)" as a relation filter so
-      // Postgres joins the Follow table internally. Previously we loaded the
-      // full follow list into JS and passed it as an `IN (...)` clause — at 10k
-      // follows that's ~150KB of SQL text and no index help from the join.
+      // "Posts by users I follow (or by me)", as a relation filter so the follow list never has to be sent
+      // as a very large IN (...) clause (at 10k follows that was ~150KB of SQL text). Viewers who follow
+      // few enough accounts are read by fetchSplitFeed() instead, with the follow list as an IN list.
       // Relation names in schema.prisma are non-intuitive:
       //   User.follows = Follow[] @relation("Following")
       // where Follow.following is the "user being followed" side. So from a
@@ -79,17 +86,13 @@ router.get('/', async (req, res) => {
       const authorCondition = {
         OR: [
           { userId: currentUserId }, // always include own posts
-          {
-            user: {
-              follows: {
-                some: { followerId: currentUserId, action: 'FOLLOW' as const, status: 'SUCCESS' as const }
-              }
-            }
-          }
+          followedAuthorCondition(currentUserId)
         ]
       }
 
-      if (Array.isArray(statusConditions)) {
+      if (splitFeed) {
+        // Visibility and author are applied by fetchSplitFeed().
+      } else if (Array.isArray(statusConditions)) {
         where.AND = [{ OR: statusConditions }, authorCondition]
       } else {
         where.AND = [statusConditions, authorCondition]
@@ -205,7 +208,7 @@ router.get('/', async (req, res) => {
           postsCondition
         ]
       }
-    } else {
+    } else if (!splitFeed) {
       // No filter - just apply status visibility
       if (Array.isArray(statusConditions)) {
         where.OR = statusConditions
@@ -271,7 +274,16 @@ router.get('/', async (req, res) => {
     }
 
     // 3️⃣ fetch one extra for cursor‐based pagination
-    const raws = await prisma.caw.findMany({
+    const raws = splitFeed
+      ? await fetchSplitFeed({
+          viewerId: currentUserId as number,
+          extraAnd: where.AND ?? [],
+          take: limit + 1,
+          cursorId: cursor?.id,
+          include: getCawIncludeConfig({ currentUserId }),
+          followedIds,
+        })
+      : await prisma.caw.findMany({
       where,
       orderBy: [
         { createdAt: 'desc' },
