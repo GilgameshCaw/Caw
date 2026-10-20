@@ -187,10 +187,10 @@ export async function writeAddressesForNetwork(config, clientDir) {
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
     CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileLedger,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
-    // L1-side ERC-1271 sibling + the EIP-7702 SmartEOA delegate. The FE reads
-    // both (population routing + sponsored-flow signing), so they must be in
-    // addresses.ts — previously omitted, which broke the FE build (#196).
-    CAW_ACTIONS_ERC1271_ADDRESS: l1.CawActionsERC1271,
+    // ERC-1271 follows the selected storage chain, like CawActions and
+    // the deployment writer. SmartEOA remains the L1 signing delegate.
+    // Keep both exports present, including undefined for an absent sibling.
+    CAW_ACTIONS_ERC1271_ADDRESS: l2.CawActionsERC1271,
     SMART_EOA_ADDRESS: l1.SmartEOA,
     // Per-Network-storage-chain — resolved here, not multi-chain in the codebase.
     CAW_NAMES_L2_ADDRESS: l2.CawProfileLedger,
