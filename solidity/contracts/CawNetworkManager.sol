@@ -96,10 +96,10 @@ contract CawNetworkManager {
   mapping(uint32 => CawNetwork) public networks;
 
   // Per-network lockdown flags. A network owner can independently freeze fee
-  // changes, ownership changes, or both. This lets a network commit to "trust
-  // minimized" status (renounce-equivalent) while keeping access to the gas
-  // override below — necessary because the protocol has no admin to fix
-  // future cross-chain gas miscalibrations.
+  // changes, ownership changes, or both. These are partial policy locks,
+  // not ownership renunciation: sponsor management and gas overrides remain
+  // callable by the current owner. Locking ownership prevents replacing that
+  // controller; it does not remove the controller or its remaining powers.
   mapping(uint32 => bool) public networkFeesLocked;
   mapping(uint32 => bool) public networkOwnershipLocked;
 
