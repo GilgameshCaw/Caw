@@ -21,6 +21,7 @@ import { getIndexerStats } from '../../utils/indexerHealth'
 import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
+import { resolveBisectTerminal } from '../../utils/bisectTerminal'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
@@ -2519,7 +2520,7 @@ export const validatorService: Service = {
       validatorId: number,
       entries: any[],
       originalRevertReason: string,
-      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true }>,
+      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true } | { awaitingIndexer: true }>,
       finalizedOut: any[],
     ): Promise<boolean> {
       console.log(`[Validator/recovery] Starting recovery for ${entries.length} entries; original revert: ${originalRevertReason.slice(0, 200)}`)
@@ -2637,7 +2638,7 @@ export const validatorService: Service = {
       validatorId: number,
       entries: any[],
       lastRevertReason: string,
-      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true }>,
+      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true } | { awaitingIndexer: true }>,
       finalizedOut: any[],
       depth: number,
     ): Promise<void> {
@@ -2693,14 +2694,32 @@ export const validatorService: Service = {
           // actually succeeded. (nyaromesama: 428/428 "Bisected revert"
           // failures on their node were false; every one existed on-chain.)
           //
-          // Cross-check the Action table directly (resolveCawonceUsed is
+          // Ask the chain first (resolveBisectTerminal): an unused cawonce
+          // means this action is the reverter, so it fails now. A used one is
+          // cross-checked against the Action table (resolveCawonceUsed is
           // reason-string-agnostic — it looks up senderId+cawonce). If the
           // action landed via a peer, mark it validated_by_peer; if the indexer
-          // just hasn't caught up, requeue as pending and recheck next tick;
-          // only a genuine no-such-action gets the Bisected revert failure.
+          // just hasn't caught up, move the row to awaiting_indexer, whose
+          // recheck in fetchPendingQueue doesn't re-send it or bump updatedAt.
+          // (Requeueing it as pending re-sent it every poll and reset
+          // updatedAt each time, so the wait never ran out.)
           const entry = entries[0]
           const data = (entry.payload as any).data
-          const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
+          let resolution: Awaited<ReturnType<typeof resolveBisectTerminal>>
+          try {
+            resolution = await resolveBisectTerminal({
+              isCawonceUsed: () => cawActions.isCawonceUsed(data.senderId, data.cawonce),
+              resolveCawonceUsed: () => resolveCawonceUsed(data, entry.updatedAt, httpProvider),
+            })
+          } catch (checkErr: any) {
+            // Can't tell a reverter from a race without the read — retry next poll.
+            throw new BisectTransientError(checkErr)
+          }
+          if (resolution === 'reverted') {
+            verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
+            console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id}, cawonce unused on chain (${subReason.slice(0, 120)})`)
+            return
+          }
           if (resolution === 'done') {
             await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
             verdictByEntryId.set(entry.id, { succeeded: true })
@@ -2708,11 +2727,11 @@ export const validatorService: Service = {
             return
           }
           if (resolution === 'awaiting_indexer') {
-            verdictByEntryId.set(entry.id, { pending: true })
-            console.log(`[Validator/bisect]${indent} … TxQueue #${entry.id} reverted but Action not yet indexed — deferring`)
+            verdictByEntryId.set(entry.id, { awaitingIndexer: true })
+            console.log(`[Validator/bisect]${indent} … TxQueue #${entry.id} cawonce used on chain but Action not yet indexed — awaiting_indexer`)
             return
           }
-          // Genuinely failed: no Action row for this senderId+cawonce.
+          // A different action holds this cawonce, or the indexer wait ran out.
           verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
           console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id} (${subReason.slice(0, 120)})`)
           return
@@ -3582,10 +3601,12 @@ console.log("succeededKeys", succeededKeys)
       //   succeeded:true               -> mark done
       //   succeeded:false, reason      -> markTxQueueFailed with that reason
       //   pending:true                 -> reset to pending for next-poll retry
+      //   awaitingIndexer:true         -> awaiting_indexer (landed on chain, not indexed yet)
       type RecoveryVerdict =
         | { succeeded: true }
         | { succeeded: false; reason: string }
         | { pending: true }
+        | { awaitingIndexer: true }
       const recoveryByEntryId = new Map<number, RecoveryVerdict>()
 
       try {
@@ -3696,7 +3717,7 @@ console.log("succeededKeys", succeededKeys)
       // Build array to track success/failure for each original entry. The
       // recovery path (re-sim + bisect) may have already resolved some
       // entries directly — those verdicts win over the default reconciliation.
-      type Verdict = { succeeded: boolean; reason: string | null; pending?: true }
+      type Verdict = { succeeded: boolean; reason: string | null; pending?: true; awaitingIndexer?: true }
       const finalStatuses: Verdict[] = validatedEntries.map((entry, index) => {
         // Recovery override (only set for entries that went through the
         // re-sim / bisect path).
@@ -3704,6 +3725,9 @@ console.log("succeededKeys", succeededKeys)
         if (override) {
           if ('pending' in override) {
             return { succeeded: false, reason: null, pending: true }
+          }
+          if ('awaitingIndexer' in override) {
+            return { succeeded: false, reason: null, pending: true, awaitingIndexer: true }
           }
           if (override.succeeded) {
             return { succeeded: true, reason: null }
@@ -3743,6 +3767,17 @@ console.log("succeededKeys", succeededKeys)
         const status = finalStatuses[index]
         const { succeeded, reason } = status
         const data = (entry.payload as any).data
+
+        // Bisect terminal: landed on chain, Action row not indexed yet. The
+        // awaiting_indexer recheck takes it from here without re-sending.
+        if (status.awaitingIndexer) {
+          await prisma.txQueue.updateMany({
+            where: { id: entry.id, status: 'processing' },
+            data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+          })
+          txPending++
+          return
+        }
 
         // Recovery requeue: re-sim flagged a different entry, this one is
         // innocent — reset to pending so the next poll batches it again.
