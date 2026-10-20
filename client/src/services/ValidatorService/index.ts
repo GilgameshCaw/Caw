@@ -15,6 +15,7 @@ import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challen
 import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
+import { splitAtBatchGroupBoundary } from '../../utils/bisectSplit'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { getIndexerStats } from '../../utils/indexerHealth'
@@ -2624,11 +2625,14 @@ export const validatorService: Service = {
       }
     }
 
-    // Recursive bisection. On revert with len > 1: split, recurse on each
-    // half (re-quoting + re-estimating gas per sub-batch). On revert with
-    // len == 1: that single action is the reverter — mark it failed.
+    // Recursive bisection. On revert: split at the batch-group boundary
+    // nearest the middle and recurse on each half (re-quoting +
+    // re-estimating gas per sub-batch). A batch group is never split: one
+    // ActionBatch sig covers all its rows, so part of a group always
+    // reverts (see utils/bisectSplit). On revert of a single row or a
+    // single group: that unit is the reverter — resolve each row in it.
     // Successful submissions append to finalizedOut and write succeeded
-    // verdicts. Bounded by Math.ceil(log2(N)) recursion depth.
+    // verdicts. Recursion ends at one row or one group.
     //
     // Throws BisectTransientError when ANY step (quote, gas estimate, or
     // submit) fails with an RPC-class error. Without that distinction we'd
@@ -2681,8 +2685,10 @@ export const validatorService: Service = {
           throw new BisectTransientError(subErr)
         }
         const subReason = subErr.message || lastRevertReason
-        if (entries.length === 1) {
-          // Terminal: this single action is the reverter — but "reverter" here
+        const halves = splitAtBatchGroupBoundary(entries)
+        if (!halves) {
+          // Terminal: this single action (or single batch group, which
+          // can't be split) is the reverter — but "reverter" here
           // very often means "lost the cawonce race to a peer", i.e. the action
           // already landed on-chain via another node. submitProcessActions does
           // a real sendTransaction, whose CALL_EXCEPTION carries reason=null, so
@@ -2698,29 +2704,29 @@ export const validatorService: Service = {
           // action landed via a peer, mark it validated_by_peer; if the indexer
           // just hasn't caught up, requeue as pending and recheck next tick;
           // only a genuine no-such-action gets the Bisected revert failure.
-          const entry = entries[0]
-          const data = (entry.payload as any).data
-          const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
-          if (resolution === 'done') {
-            await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
-            verdictByEntryId.set(entry.id, { succeeded: true })
-            console.log(`[Validator/bisect]${indent} ↺ TxQueue #${entry.id} already landed via peer — validated_by_peer (no false failure)`)
-            return
+          // A group's rows are checked one by one, the same way.
+          for (const entry of entries) {
+            const data = (entry.payload as any).data
+            const resolution = await resolveCawonceUsed(data, entry.updatedAt, httpProvider)
+            if (resolution === 'done') {
+              await markTxQueueValidatedByPeer(entry.id, (entry as any).payload, (entry as any).signedTx)
+              verdictByEntryId.set(entry.id, { succeeded: true })
+              console.log(`[Validator/bisect]${indent} ↺ TxQueue #${entry.id} already landed via peer — validated_by_peer (no false failure)`)
+              continue
+            }
+            if (resolution === 'awaiting_indexer') {
+              verdictByEntryId.set(entry.id, { pending: true })
+              console.log(`[Validator/bisect]${indent} … TxQueue #${entry.id} reverted but Action not yet indexed — deferring`)
+              continue
+            }
+            // Genuinely failed: no Action row for this senderId+cawonce.
+            verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
+            console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id} (${subReason.slice(0, 120)})`)
           }
-          if (resolution === 'awaiting_indexer') {
-            verdictByEntryId.set(entry.id, { pending: true })
-            console.log(`[Validator/bisect]${indent} … TxQueue #${entry.id} reverted but Action not yet indexed — deferring`)
-            return
-          }
-          // Genuinely failed: no Action row for this senderId+cawonce.
-          verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
-          console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id} (${subReason.slice(0, 120)})`)
           return
         }
-        // Split in half and recurse on each.
-        const mid = Math.floor(entries.length / 2)
-        const left = entries.slice(0, mid)
-        const right = entries.slice(mid)
+        // Split at the group boundary nearest the middle and recurse on each.
+        const [left, right] = halves
         console.log(`[Validator/bisect]${indent} ✗ revert at len=${entries.length}, splitting ${left.length} | ${right.length}`)
         await bisectAndSubmit(validatorId, left, subReason, verdictByEntryId, finalizedOut, depth + 1)
         await bisectAndSubmit(validatorId, right, subReason, verdictByEntryId, finalizedOut, depth + 1)
