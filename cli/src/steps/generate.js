@@ -1,3 +1,5 @@
+import { publishConfigOutputs } from './config-output.mjs'
+import { resolveHistoryFloor } from './history-floor.mjs'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
@@ -26,81 +28,33 @@ const NETWORKS = {
  */
 export async function generateConfig(nodeType, config, installDir) {
   section('Generating Configuration')
-
   const clientDir = path.join(installDir, 'client')
-
-  // Build config.json (services to run)
-  const services = buildServiceList(nodeType, config)
+  const needsHistory = ['full', 'frontend-api', 'api-only', 'validator'].includes(nodeType)
+  const history = needsHistory ? await prepareHistoryFloor(config, clientDir) : undefined
+  const addressPlan = needsHistory ? await writeAddressesForNetwork(config, clientDir, history, { prepareOnly: true }) : undefined
   const configJsonPath = path.join(clientDir, 'config.json')
-  fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
-  console.log(success(`  Created ${dim(configJsonPath)}`))
-
-  // Build .env. Mode 0600 — backend .env carries VALIDATOR_PRIVATE_KEY,
-  // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_TOKEN_IDS, and DB credentials.
-  // World-readable would let any user on the box read keys that authorize
-  // L2 submissions and admin-dashboard access. {mode: 0o600} on the
-  // initial write covers fresh installs; existing files we explicitly
-  // chmod afterward (writeFileSync's mode option is ignored for files
-  // that already exist — Node's documented behavior).
-  const envVars = buildEnvVars(nodeType, config)
   const envPath = path.join(clientDir, '.env')
-  const envContent = Object.entries(envVars)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n') + '\n'
-  fs.writeFileSync(envPath, envContent, { mode: 0o600 })
-  fs.chmodSync(envPath, 0o600)
-  console.log(success(`  Created ${dim(envPath)} (mode 600)`))
-
-  // Same NaN/address-as-number trap as VITE_NETWORK_ID, but for the backend.
-  // NETWORK_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
-  // etc. If it got set to a wallet address by mistake, /api/instances returns
-  // a networkId of ~1.2e+48 and the peer cache is empty — the failure mode
-  // Nyaro hit. Catch it here so the operator gets a clear error at install
-  // time instead of debugging it post-deploy.
-  verifyBackendEnv(envPath)
-
-  // Build .env for frontend (Vite). Less sensitive than the backend .env
-  // (only VITE_* values, which all end up in the public JS bundle anyway),
-  // but no reason to leak. 0640 — owner write, owner+group read.
+  // Render and validate every output before changing operator files. This is
+  // an in-memory plan, not an atomic filesystem transaction or crash recovery.
+  const outputs = [{ file: configJsonPath, content: JSON.stringify(buildServiceList(nodeType, config, history), null, 2) + '\n' }]
+  const envVars = buildEnvVars(nodeType, config, history)
+  for (const [key, value] of Object.entries(addressPlan?.sponsorEnvAddrs || {})) {
+    if (value && !Object.hasOwn(envVars, key)) envVars[key] = value
+  }
+  const envContent = Object.entries(envVars).map(([key, value]) => `${key}=${value}`).join('\n') + '\n'
+  verifyBackendEnv(envPath, envContent)
+  outputs.push({ file: envPath, content: envContent, mode: 0o600, verify: verifyBackendEnv })
   if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
-    const frontendEnv = buildFrontendEnv(nodeType, config)
-    const frontendEnvPath = path.join(clientDir, 'src/services/FrontEnd/.env')
-    const frontendEnvContent = Object.entries(frontendEnv)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n') + '\n'
-    fs.writeFileSync(frontendEnvPath, frontendEnvContent, { mode: 0o640 })
-    fs.chmodSync(frontendEnvPath, 0o640)
-    console.log(success(`  Created ${dim(frontendEnvPath)} (mode 640)`))
-
-    // Read the file back and confirm VITE_NETWORK_ID landed as a positive
-    // integer. If it didn't, every contract-call hook in the FE will throw
-    // `NaN can't be converted to BigInt` at runtime — a confusing failure
-    // mode that pulls operators (and their AIs) into hours of debugging the
-    // wrong layer. Fail the install instead.
-    verifyFrontendEnv(frontendEnvPath)
+    const file = path.join(clientDir, 'src/services/FrontEnd/.env')
+    const content = Object.entries(buildFrontendEnv(nodeType, config)).map(([key, value]) => `${key}=${value}`).join('\n') + '\n'
+    verifyFrontendEnv(file, content)
+    outputs.push({ file, content, mode: 0o640, verify: verifyFrontendEnv })
   }
-
-  // Build docker-compose.yml if needed
-  if (config.useDocker === 'docker') {
-    const dockerComposePath = path.join(installDir, 'docker-compose.yml')
-    fs.writeFileSync(dockerComposePath, buildDockerCompose(config))
-    console.log(success(`  Created ${dim(dockerComposePath)}`))
-  }
-
-  // Build pm2 ecosystem file
-  const pm2Config = buildPm2Config(nodeType, config, installDir)
-  const pm2Path = path.join(installDir, 'ecosystem.config.cjs')
-  fs.writeFileSync(pm2Path, `module.exports = ${JSON.stringify(pm2Config, null, 2)}\n`)
-  console.log(success(`  Created ${dim(pm2Path)}`))
-
-  // Resolve the Network's storage chain on L1 + write addresses.ts. Skipped
-  // for frontend-only installs — they get their addresses from a sibling
-  // API node (the static repo file works for those, since they don't run
-  // the validator/indexer that need per-chain addresses to be exact).
-  if (['full', 'frontend-api', 'api-only', 'validator'].includes(nodeType)) {
-    await writeAddressesForNetwork(config, clientDir)
-  }
-
+  if (config.useDocker === 'docker') outputs.push({ file: path.join(installDir, 'docker-compose.yml'), content: buildDockerCompose(config) })
+  outputs.push({ file: path.join(installDir, 'ecosystem.config.cjs'), content: `module.exports = ${JSON.stringify(buildPm2Config(nodeType, config, installDir), null, 2)}\n` })
+  if (addressPlan) outputs.push({ file: path.join(clientDir, 'src/abi/addresses.ts'), content: addressPlan.out })
+  publishConfigOutputs(outputs)
+  for (const output of outputs) console.log(success(`  Created ${dim(output.file)}`))
   return { configJsonPath, envPath }
 }
 
@@ -110,11 +64,12 @@ export async function generateConfig(nodeType, config, installDir) {
  * addresses.ts. The rest of the codebase imports singular constants from
  * addresses.ts and stays multi-chain-unaware.
  */
-export async function writeAddressesForNetwork(config, clientDir) {
+export async function writeAddressesForNetwork(config, clientDir, history, { prepareOnly = false } = {}) {
   const env = config.network || 'testnet'
   const networkId = Number(config.networkId || 1)
   const l1RpcUrl = config.l1RpcUrlHttp || config.l1RpcUrl
   if (!l1RpcUrl) {
+    if (history) throw new Error('L1 RPC is missing during address generation; installation incomplete. Do not start services; review and rerun.')
     console.log(dim('  Skipping addresses.ts (no L1 RPC) — fill in client/src/abi/addresses.ts manually.'))
     return
   }
@@ -144,6 +99,7 @@ export async function writeAddressesForNetwork(config, clientDir) {
   const envBlock = deployments[env] || {}
   const cnmAddr = envBlock.L1?.CawNetworkManager
   if (!cnmAddr) {
+    if (history) throw new Error('Network manager metadata is missing during address generation; installation incomplete. Do not start services; review and rerun.')
     console.log(dim(`  Skipping addresses.ts (no CawNetworkManager in deployments[${env}].L1).`))
     return
   }
@@ -160,6 +116,7 @@ export async function writeAddressesForNetwork(config, clientDir) {
   try {
     eid = Number(await cnm.getStorageChainEid(networkId))
   } catch (e) {
+    if (history) throw new Error('Network storage selection could not be rechecked; installation incomplete. Do not start services; review RPC and rerun.')
     console.log(dim(`  Couldn't read storageChainEid for Network ${networkId} from L1: ${e.message?.slice(0, 80)}`))
     console.log(dim('  Skipping addresses.ts — verify the Network exists on-chain and rerun.'))
     return
@@ -168,12 +125,17 @@ export async function writeAddressesForNetwork(config, clientDir) {
   }
   const chainKey = chainKeyForEid(env, eid)
   if (!chainKey) {
+    if (history) throw new Error('Network storage chain is unknown during address generation; installation incomplete. Do not start services; review and rerun.')
     console.log(dim(`  Network ${networkId} reports storage eid ${eid}, no matching chain in deployments[${env}].`))
     return
   }
 
   const l1 = envBlock.L1 || {}
   const l2 = envBlock[chainKey] || {}
+  if (history && (history.chainKey !== chainKey || history.actions.toLowerCase() !== l2.CawActions?.toLowerCase() ||
+      (history.actionsERC1271?.toLowerCase() ?? null) !== (l2.CawActionsERC1271?.toLowerCase() ?? null))) {
+    throw new Error('Network storage selection changed during install; review and rerun before starting services')
+  }
   // Singular constants the codebase reads. Keys here mirror what was in the
   // hand-edited addresses.ts.
   const consts = {
@@ -187,10 +149,10 @@ export async function writeAddressesForNetwork(config, clientDir) {
     CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
     CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileLedger,
     CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
-    // L1-side ERC-1271 sibling + the EIP-7702 SmartEOA delegate. The FE reads
-    // both (population routing + sponsored-flow signing), so they must be in
-    // addresses.ts — previously omitted, which broke the FE build (#196).
-    CAW_ACTIONS_ERC1271_ADDRESS: l1.CawActionsERC1271,
+    // ERC-1271 follows the selected storage chain, like CawActions and
+    // the deployment writer. SmartEOA remains the L1 signing delegate.
+    // Keep both exports present, including undefined for an absent sibling.
+    CAW_ACTIONS_ERC1271_ADDRESS: l2.CawActionsERC1271,
     SMART_EOA_ADDRESS: l1.SmartEOA,
     // Per-Network-storage-chain — resolved here, not multi-chain in the codebase.
     CAW_NAMES_L2_ADDRESS: l2.CawProfileLedger,
@@ -246,22 +208,23 @@ export async function writeAddressesForNetwork(config, clientDir) {
       }
     }
   }
-  const out = lines.join('\n') + '\n'
+  const plan = {
+    out: lines.join('\n') + '\n', networkId, chainKey,
+    sponsorEnvAddrs: {
+      CAW_NAMES_MINTER_ADDRESS: consts.CAW_NAMES_MINTER_ADDRESS,
+      CAW_NAMES_ADDRESS: consts.CAW_NAMES_ADDRESS,
+      SMART_EOA_ADDRESS: consts.SMART_EOA_ADDRESS,
+    },
+  }
+  if (prepareOnly) return plan
+  applyAddressPlan(plan, clientDir)
+}
+
+function applyAddressPlan({ out, networkId, chainKey, sponsorEnvAddrs }, clientDir) {
   const outPath = path.join(clientDir, 'src/abi/addresses.ts')
   fs.writeFileSync(outPath, out)
   console.log(success(`  Wrote ${dim(outPath)} (Network ${networkId} → ${chainKey})`))
-
-  // SponsorService reads three of these addresses from process.env (NOT from
-  // addresses.ts): CAW_NAMES_MINTER_ADDRESS, CAW_NAMES_ADDRESS, SMART_EOA_ADDRESS.
-  // .env was written earlier in generateConfig() — before these addresses were
-  // resolved on-chain — so we append them here. Without this the sponsor server
-  // boots "disabled" and /api/sponsor/bootstrap 503s. Idempotent: skip a key
-  // that's already present (e.g. an operator who set it by hand or a re-run).
-  const sponsorEnvAddrs = {
-    CAW_NAMES_MINTER_ADDRESS: consts.CAW_NAMES_MINTER_ADDRESS,
-    CAW_NAMES_ADDRESS: consts.CAW_NAMES_ADDRESS,
-    SMART_EOA_ADDRESS: consts.SMART_EOA_ADDRESS,
-  }
+  // Append the already-resolved sponsor addresses after the new .env exists.
   const envPath = path.join(clientDir, '.env')
   try {
     const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : ''
@@ -277,7 +240,9 @@ export async function writeAddressesForNetwork(config, clientDir) {
       console.log(success(`  Appended ${toAppend.length} sponsor address var(s) to ${dim('.env')}`))
     }
   } catch (e) {
-    console.log(warn(`  Could not append sponsor addresses to .env: ${e.message}`))
+    // Never report a completed installation or address repair with missing settings.
+    // Earlier output may exist; do not echo filesystem/provider details or secrets.
+    throw new Error('Sponsor environment update failed; installation incomplete. Do not start services; review existing files and rerun.')
   }
 }
 
@@ -287,6 +252,7 @@ export async function writeAddressesForNetwork(config, clientDir) {
  * just the bits we need with regex. Trades cleverness for portability.
  */
 function parseDeploymentsBlock(txt) {
+  txt = txt.split('export const lzEids')[0]
   // Match each `<env>: { ... }` block.
   const result = {}
   const envRegex = /(testnet|mainnet|dev): \{([\s\S]*?)\n  \},/g
@@ -331,7 +297,7 @@ function parseLzEids(txt) {
   return result
 }
 
-export function buildServiceList(nodeType, config) {
+export function buildServiceList(nodeType, config, history) {
   const services = []
   const net = NETWORKS[config.network || 'testnet']
   // Node groupings — keep these in one place so future tweaks don't need
@@ -389,32 +355,18 @@ export function buildServiceList(nodeType, config) {
   }
 
   if (RUNS_INDEXER) {
-    // Read l2DeployBlock from solidity/.deploy-state.json so RawEventsGatherer
-    // backfills from the right L2 block on a fresh DB. Without this, the
-    // gatherer falls back to "current head" and silently misses every
-    // historical event for this Network.
-    //
-    // Failure modes are non-fatal: a missing / malformed deploy-state file
-    // just means we don't write startBlock and the gatherer stays at
-    // current-head behavior (the same default as today). Operators can
-    // also override START_BLOCK in client/.env for backfill repair.
-    const deployStatePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../solidity/.deploy-state.json')
-    let l2DeployBlock
-    try {
-      const ds = JSON.parse(fs.readFileSync(deployStatePath, 'utf8'))
-      if (typeof ds?.l2DeployBlock === 'number' && ds.l2DeployBlock > 0) {
-        l2DeployBlock = ds.l2DeployBlock
-      }
-    } catch {
-      // .deploy-state.json missing on a contributor checkout that didn't
-      // run the deploy script — fine, just skip startBlock.
+    // Diagnostics need service topology without receipt acquisition. Fresh
+    // installs still call prepareHistoryFloor before this pure helper.
+    if (history && (!Number.isSafeInteger(history.startBlock) || history.startBlock < 0 ||
+        !Number.isSafeInteger(history.chainId) || history.chainId <= 0)) {
+      throw new Error('Verified creation history is required before generating indexer config')
     }
     services.push({
       service: 'RawEventsGatherer',
       config: {
-        chainId: net.l2ChainId,
+        chainId: history?.chainId ?? net.l2ChainId,
         rpcUrl: '${L2_RPC_URL}',
-        ...(l2DeployBlock ? { startBlock: l2DeployBlock } : {}),
+        ...(history ? { startBlock: history.startBlock } : {}),
       }
     })
     services.push({
@@ -447,7 +399,7 @@ export function buildServiceList(nodeType, config) {
   return services
 }
 
-function buildEnvVars(nodeType, config) {
+function buildEnvVars(nodeType, config, history) {
   const env = {}
   const net = NETWORKS[config.network || 'testnet']
 
@@ -598,7 +550,7 @@ function buildEnvVars(nodeType, config) {
     env.PRISMA_QUERY_ENGINE_TYPE = process.env.CAW_PRISMA_QUERY_ENGINE_TYPE
   }
 
-  env.L2_CHAIN_ID = String(net.l2ChainId)
+  env.L2_CHAIN_ID = String(history?.chainId ?? net.l2ChainId)
   env.L1_CHAIN_ID = String(net.l1ChainId)
   env.NETWORK = config.network || 'testnet'
 
@@ -811,8 +763,8 @@ function parseDotenv(text) {
  * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
  * operator gets a clear error at install time.
  */
-function verifyFrontendEnv(frontendEnvPath) {
-  const parsed = parseDotenv(fs.readFileSync(frontendEnvPath, 'utf8'))
+function verifyFrontendEnv(frontendEnvPath, content) {
+  const parsed = parseDotenv(content ?? fs.readFileSync(frontendEnvPath, 'utf8'))
   const check = validateNetworkId(parsed.VITE_NETWORK_ID)
   if (!check.ok) {
     throw new Error(
@@ -832,8 +784,8 @@ function verifyFrontendEnv(frontendEnvPath) {
  * address sneaking in here causes /api/instances to return networkId of
  * ~1.2e+48 and an empty peer cache, with no other obvious symptom.
  */
-function verifyBackendEnv(envPath) {
-  const parsed = parseDotenv(fs.readFileSync(envPath, 'utf8'))
+function verifyBackendEnv(envPath, content) {
+  const parsed = parseDotenv(content ?? fs.readFileSync(envPath, 'utf8'))
   const check = validateNetworkId(parsed.NETWORK_ID)
   if (!check.ok) {
     throw new Error(
@@ -952,4 +904,59 @@ function buildPm2Config(nodeType, config, installDir) {
   }
 
   return { apps }
+}
+
+// The installer must not copy an unbound value from private deployment state.
+async function prepareHistoryFloor(config, clientDir) {
+  const environment = config.network || 'testnet'
+  const network = NETWORKS[environment]
+  const networkId = Number(config.networkId || 1)
+  if (!network || !Number.isSafeInteger(networkId) || networkId <= 0 || networkId > 0xffffffff) {
+    throw new Error('Invalid history network selection')
+  }
+  const l1Url = config.l1RpcUrlHttp || config.l1RpcUrl
+  const storageUrl = config.l2RpcUrlHttp || config.l2RpcUrl
+  if (!l1Url || !storageUrl) throw new Error('L1 and selected storage-chain RPC are required for history verification')
+  const { ethers } = await import('ethers')
+  const l1 = makeProvider(ethers, l1Url, config.l1RpcSecret)
+  const storage = makeProvider(ethers, storageUrl, config.l2RpcSecret)
+  let historyPhase = 'selection'
+  try {
+    if (BigInt(await l1.send('eth_chainId', [])) !== BigInt(network.l1ChainId)) throw new Error('Wrong L1 chain')
+    const txt = fs.readFileSync(path.join(clientDir, 'src/abi/deployments.ts'), 'utf8')
+    const deployments = parseDeploymentsBlock(txt)[environment] || {}
+    const eids = parseLzEids(txt)[environment] || {}
+    const manager = new ethers.Contract(deployments.L1?.CawNetworkManager,
+      ['function getStorageChainEid(uint32) view returns (uint32)'], l1)
+    const eid = Number(await manager.getStorageChainEid(networkId))
+    const matches = Object.keys(eids).filter(k => eids[k] === eid)
+    if (matches.length !== 1) throw new Error('Unknown or ambiguous storage chain')
+    const chainKey = matches[0]
+    const chains = environment === 'mainnet' ? { L1: 1, L2: 8453, L2b: 42161 } : { L1: 11155111, L2: 84532, L2b: 421614 }
+    const chainId = chains[chainKey]
+    if (!chainId || BigInt(await storage.send('eth_chainId', [])) !== BigInt(chainId)) throw new Error('Wrong storage RPC chain')
+    const manifestPath = process.env.CAW_CREATION_MANIFEST || path.join(clientDir, 'src/abi', `creation-receipts.${environment}.json`)
+    historyPhase = 'manifest-read'
+    const manifestText = fs.readFileSync(manifestPath, 'utf8')
+    historyPhase = 'manifest-parse'
+    const manifest = JSON.parse(manifestText)
+    historyPhase = 'receipt-check'
+    return await resolveHistoryFloor({ environment, chainKey, chainId, addresses: deployments[chainKey], manifest, provider: storage })
+  } catch (error) {
+    // Fixed messages only: filesystem and provider errors may contain secrets.
+    let detail = 'Network selection could not be verified. Check the L1 RPC, network ID, deployment addresses and selected storage-chain RPC.'
+    if (historyPhase === 'manifest-read') {
+      detail = error?.code === 'ENOENT'
+        ? 'Creation manifest was not found. Supply reviewed creation receipts with CAW_CREATION_MANIFEST.'
+        : 'Creation manifest could not be read. Check file access for the selected manifest.'
+    } else if (historyPhase === 'manifest-parse') {
+      detail = 'Creation manifest is not valid JSON. Check the selected manifest file.'
+    } else if (historyPhase === 'receipt-check') {
+      detail = 'Creation records could not be verified. Check the manifest schema and selected chain/address records, and use an RPC that can return their creation transactions, receipts and canonical blocks. Missing or pruned RPC history can prevent verification even with a valid manifest; a mismatch also rejects.'
+    }
+    throw new Error(`History verification failed. ${detail} No configuration files were written. No current-head or legacy-floor fallback is used.`)
+  } finally {
+    l1.destroy?.()
+    storage.destroy?.()
+  }
 }

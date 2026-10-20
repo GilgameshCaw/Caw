@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "environment": "testnet",
+  "contracts": {
+    "CawActions_L1": {
+      "chainId": 11155111,
+      "contractAddress": "0xe33339b3d826e7fc61557d7e82a4348710790136",
+      "transactionHash": "0xbb517caa5999d0272df1945167542bab2b16eec7ce6d0f43ec0ae0e6e4f18ecd",
+      "blockNumber": 11499545,
+      "blockHash": "0xabaddeae96b30f15f2d05e3e7e1479b9f6425ac5d7ac2080ef110be1a945c2ba",
+      "transactionIndex": 73
+    },
+    "CawActionsERC1271_L1": {
+      "chainId": 11155111,
+      "contractAddress": "0x2418592eb4bd5212b3c64408769f95f73dcb45c6",
+      "transactionHash": "0x0cc4d9772ff7ae50ae5394825e9b3a9b3c8368199c85e24b44b3e8d34f6c9244",
+      "blockNumber": 11499546,
+      "blockHash": "0x30f1e821aee60fc196c437c3281fb8aaed62f08a4a7711646cc29b7f3f9b70fe",
+      "transactionIndex": 62
+    },
+    "CawActions_L2": {
+      "chainId": 84532,
+      "contractAddress": "0x73246104f57001edc6d0659fa37afb672a76e763",
+      "transactionHash": "0xbc363f372442a6bde30a07d77c043d6d37bdd6dbd64cd30504a4a5d27bc19e26",
+      "blockNumber": 45547482,
+      "blockHash": "0xbba4d9f628b1e1aaa578823bb839657bf7f9a1fb069dbc9df7ae66f8a4b8b798",
+      "transactionIndex": 6
+    },
+    "CawActionsERC1271_L2": {
+      "chainId": 84532,
+      "contractAddress": "0x78ab5d7be8ba2bc722f58b862c16ee77fecbcf74",
+      "transactionHash": "0x689b3fa66095cf43af136043998d86921a7056f346f9095bdaad2d3c8727ef5a",
+      "blockNumber": 45547485,
+      "blockHash": "0xf7f21391f23f2b45f7fb5685002d953c955add62f06e657278baf226c19e6037",
+      "transactionIndex": 4
+    },
+    "CawActions_L2b": {
+      "chainId": 421614,
+      "contractAddress": "0x5d35790ee0e3f1641aea635c11882c4a9fca23a0",
+      "transactionHash": "0x589e1735335c9eebcd1eccc4631972c18e878e5295383cf65b95bf7f790b3e41",
+      "blockNumber": 298656592,
+      "blockHash": "0xbba9d653ecaf7f02eb0a46a32c3db34dd550e6423690f1a6c4c1dfa0749bbce2",
+      "transactionIndex": 1
+    },
+    "CawActionsERC1271_L2b": {
+      "chainId": 421614,
+      "contractAddress": "0x5f41cb93b2a95ac6a77a4d73043deb244ea3802f",
+      "transactionHash": "0x094700878a7670dbcebb81c77475a64f8cdb3a159764f68221ea9dfb4dae1579",
+      "blockNumber": 298656601,
+      "blockHash": "0x94337981ac052ad39257f6136e172b359cad9af16b5830b20fda338174201f6e",
+      "transactionIndex": 2
+    }
+  }
+}

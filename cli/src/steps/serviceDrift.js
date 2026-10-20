@@ -8,7 +8,8 @@
 // never reached the stake ledger and the drift compounded into a halt. The
 // only fix was an operator editing config.json by hand after reading a
 // commit message. This makes `caw update` say so on every run, and lets
-// `caw doctor --fix` append the missing entries.
+// `caw doctor --fix` append ordinary missing entries. A missing history
+// scanner requires receipt-verified installation instead.
 //
 // Read-only unless `fix` is passed. Never removes or rewrites existing
 // entries — an operator may have deliberately disabled a service.
@@ -58,7 +59,8 @@ export function inferNodeType(actualNames, genConfig) {
  * Pure diff. `actualServices` is the parsed config.json array; `genConfig`
  * is the minimal answers object buildServiceList reads (network, networkId,
  * validatorId, ...). Returns the inferred node type plus the generator
- * entries missing from the node, ready to append verbatim.
+ * entries missing from the node. History scanner entries are diagnostic
+ * templates only and must not be appended without verified history.
  */
 export function diffServices(actualServices, genConfig) {
   const actualNames = actualServices.map(s => s && s.service).filter(Boolean)
@@ -103,6 +105,10 @@ export function reportServiceDrift(installDir, { fix = false } = {}) {
 
   console.log(warn(`  ⚠ ${missing.length} service(s) the installer now generates for a ${nodeType} node are missing from client/config.json:`))
   for (const m of missing) console.log(warn(`      - ${m.service}`))
+  if (missing.some(s => s.service === 'RawEventsGatherer')) {
+    console.log(warn('  Cannot add RawEventsGatherer without verified deployment history. Use the receipt-verified installer with the selected chain RPC and creation manifest; preserve and review existing config before restarting.'))
+    return { ran: true, nodeType, missing, fixed: false, reason: 'verified history required' }
+  }
   if (fix) {
     const next = [...actual, ...missing]
     fs.writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n')

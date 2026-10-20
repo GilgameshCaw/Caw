@@ -674,6 +674,9 @@ program
         console.log(dim('  (dry-run — not writing)'))
         return
       }
+      if (toAdd.some(s => s.service === 'RawEventsGatherer')) {
+        throw new Error('Cannot add RawEventsGatherer without verified deployment history. Use the receipt-verified installer with the selected chain RPC and creation manifest; preserve and review your existing config before restarting.')
+      }
       const merged = [...existing, ...toAdd]
       const backupPath = `${configPath}.bak.${Date.now()}`
       fs.copyFileSync(configPath, backupPath)

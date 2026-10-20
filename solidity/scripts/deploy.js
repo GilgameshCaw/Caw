@@ -63,6 +63,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { configureLzDvns } = require('./lz-dvn-config');
+const { readCreationRecord, creationFloor, buildCreationManifest, indexedCreationFloor } = require('./deployment-provenance');
 require('dotenv').config();
 
 // Program vkey for the SP1 sig-recovery circuit. Regenerated whenever the
@@ -1972,10 +1973,46 @@ class MultiChainDeployer {
     throw lastError;
   }
 
+  async recoverCreationReceipt(contractKey) {
+    const pending = this.state.pendingCreationReceipts?.[contractKey];
+    const config = CONTRACTS[contractKey];
+    if (!pending || !config) throw new Error(`Missing creation recovery data for ${contractKey}`);
+    const chainKey = this.getChainKey(config.chain);
+    if (pending.chainId !== CHAINS[chainKey].chainId) {
+      throw new Error(`Pending creation chain mismatch for ${contractKey}`);
+    }
+    await this.initChain(chainKey);
+    const record = await readCreationRecord(
+      this.wallets[chainKey].provider, pending.transactionHash,
+      pending.contractAddress, pending.chainId
+    );
+    this.state.addresses[contractKey] = record.contractAddress;
+    this.state.creationReceipts = this.state.creationReceipts || {};
+    this.state.creationReceipts[contractKey] = record;
+    delete this.state.pendingCreationReceipts[contractKey];
+    this.saveState();
+    return record.contractAddress;
+  }
+
+  refreshCreationFloor() {
+    // Compatibility field for existing local tooling, now receipt-derived.
+    // No inference from a later head, another chain, or an old generation.
+    const floor = creationFloor(this.state, 'CawActions_L2', CHAINS[this.getChainKey('L2')].chainId);
+    delete this.state.l2DeployBlock;
+    if (floor !== undefined) this.state.l2DeployBlock = floor;
+    else console.warn('CawActions_L2 creation receipt is unknown; no history floor was inferred.');
+    this.saveState();
+  }
+
   async deploy(contractKey, force = false) {
     const config = CONTRACTS[contractKey];
     if (!config) {
       throw new Error(`Unknown contract: ${contractKey}`);
+    }
+
+    if (this.state.pendingCreationReceipts?.[contractKey]) {
+      if (force) throw new Error(`Resolve pending creation receipt for ${contractKey} before forcing a new deployment`);
+      return this.recoverCreationReceipt(contractKey);
     }
 
     if (this.state.addresses[contractKey] && !force) {
@@ -2103,19 +2140,28 @@ class MultiChainDeployer {
       }
       const deployed = await factory.deploy(...args, overrides);
       console.log(`   Tx hash: ${deployed.deploymentTransaction().hash}`);
-      console.log(`   Waiting for confirmation...`);
-      await deployed.waitForDeployment();
       return deployed;
     });
 
     const address = await contract.getAddress();
     console.log(`   Deployed at: ${address}`);
 
-    this.state.addresses[contractKey] = address;
-    this.contracts[contractKey] = contract;
+    const deploymentTx = contract.deploymentTransaction();
+    if (!deploymentTx) throw new Error(`${contractKey}: deployment transaction unavailable`);
+    this.state.pendingCreationReceipts = this.state.pendingCreationReceipts || {};
+    this.state.pendingCreationReceipts[contractKey] = {
+      chainId: CHAINS[chainKey].chainId,
+      contractAddress: address,
+      transactionHash: deploymentTx.hash,
+    };
+    // Persist the transaction before waiting. A failed wait/read must not enter
+    // the deployment retry loop and submit another creation transaction.
     this.saveState();
-
-    return address;
+    console.log('   Waiting for confirmation and creation-receipt verification...');
+    await contract.waitForDeployment();
+    const verifiedAddress = await this.recoverCreationReceipt(contractKey);
+    this.contracts[contractKey] = contract;
+    return verifiedAddress;
   }
 
   getContract(contractKey) {
@@ -2332,6 +2378,11 @@ class MultiChainDeployer {
   }
 
   async deployAll() {
+    // Recover already-broadcast creations before predicting any sibling nonce.
+    // Otherwise a mined but not yet recorded contract is counted as still to deploy.
+    for (const key of Object.keys(this.state.pendingCreationReceipts || {}).sort()) {
+      await this.recoverCreationReceipt(key);
+    }
     console.log('\nStarting full deployment...');
     console.log(`   Environment: ${this.env}`);
     console.log(`   Expected deployer: ${EXPECTED_DEPLOYER}`);
@@ -2471,20 +2522,7 @@ class MultiChainDeployer {
       await this.deployPhase(phase);
     }
 
-    // Record the L2 deploy block so RawEventsGatherer's startBlock can be
-    // updated post-deploy (mirrors the same step in redeploy()). Without
-    // this, a fresh `--reset` deploy left the indexer replaying from a
-    // stale startBlock that pre-dated the new contracts.
-    try {
-      const l2ChainKey = this.getChainKey('L2');
-      await this.initChain(l2ChainKey);
-      const currentBlock = await this.wallets[l2ChainKey].provider.getBlockNumber();
-      this.state.l2DeployBlock = currentBlock;
-      this.saveState();
-      console.log(`\n   Recorded L2 deploy block: ${currentBlock}`);
-    } catch (e) {
-      console.warn('   Could not record L2 deploy block:', e.message);
-    }
+    this.refreshCreationFloor();
   }
 
   async redeploy(contractKey) {
@@ -2657,6 +2695,8 @@ class MultiChainDeployer {
     // Clear addresses
     for (const key of toRedeploy) {
       delete this.state.addresses[key];
+      if (this.state.creationReceipts) delete this.state.creationReceipts[key];
+      if (this.state.pendingCreationReceipts) delete this.state.pendingCreationReceipts[key];
       delete this.contracts[key];
     }
     // Clear STALE nonce predictions. predictedAddresses persists to disk and is
@@ -2683,28 +2723,7 @@ class MultiChainDeployer {
     // Redeploy by phase
     await this.deployAll();
 
-    // Record the L2 deployment block so RawEventsGatherer starts from the right place.
-    // Runs on any redeploy that touches an L2 contract whose events the indexer
-    // watches (CawActions, or any of its prerequisites). Previously only fired
-    // on a full CawProfile redeploy, which silently left `startBlock` stale when
-    // we redeployed just CawActions_L2 — the indexer then missed every action
-    // from the new contract until someone manually bumped `config.json`.
-    const l2IndexedContracts = [
-      'CawActions_L2', 'CawProfileLedger_L2', 'CawChallengeRelay_L2',
-    ];
-    const isL2Redeploy = isNameRedeploy || l2IndexedContracts.some(c => toRedeploy.has(c));
-    if (isL2Redeploy) {
-      try {
-        const l2ChainKey = this.getChainKey('L2');
-        await this.initChain(l2ChainKey);
-        const currentBlock = await this.wallets[l2ChainKey].provider.getBlockNumber();
-        this.state.l2DeployBlock = currentBlock;
-        this.saveState();
-        console.log(`\n   Recorded L2 deploy block: ${currentBlock}`);
-      } catch (e) {
-        console.warn('   Could not record L2 deploy block:', e.message);
-      }
-    }
+    // deployAll already refreshed the receipt-derived compatibility floor.
   }
 
   printState() {
@@ -3020,6 +3039,12 @@ After deployment, ABIs are automatically regenerated for the frontend.
   }
 
   deployer.printState();
+  // A parallel, public, address-preserving manifest. Empty legacy records are
+  // explicitly unknown; never backfill them from a sampled chain head.
+  const creationManifest = buildCreationManifest(deployer.state, CONTRACTS, CHAINS, deployer.env);
+  const creationManifestFile = path.join(__dirname, `../../client/src/abi/creation-receipts.${deployer.env}.json`);
+  fs.writeFileSync(creationManifestFile, JSON.stringify(creationManifest, null, 2) + '\n');
+  console.log(`Wrote creation receipt metadata to ${creationManifestFile}`);
   console.log('\nDeployment complete!');
 
   // Update network deployment manifest + regenerate ABIs
@@ -3049,20 +3074,30 @@ After deployment, ABIs are automatically regenerated for the frontend.
       console.warn('\nFailed to update deployments.ts:', e.message);
     }
 
-    // Update RawEventsGatherer startBlock in config.json if l2DeployBlock was recorded
-    if (deployer.state.l2DeployBlock) {
+    // Resolve each local indexer's chain independently. Never copy the L2
+    // compatibility floor onto an L2b/L1 indexer or infer an unknown floor.
+    try {
       const configFile = path.join(__dirname, '../../client/config.json');
-      try {
+      if (fs.existsSync(configFile)) {
         const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-        const gatherer = config.find(s => s.service === 'RawEventsGatherer');
-        if (gatherer) {
-          gatherer.config.startBlock = deployer.state.l2DeployBlock;
-          fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
-          console.log(`Updated RawEventsGatherer startBlock to ${deployer.state.l2DeployBlock} in config.json`);
+        let changed = false;
+        for (const gatherer of config.filter(s => s.service === 'RawEventsGatherer')) {
+          const floor = indexedCreationFloor(
+            deployer.state, CONTRACTS, CHAINS, deployer.env, gatherer.config.chainId
+          );
+          if (floor === undefined) {
+            console.warn(`No receipt-derived history floor for indexer chain ${gatherer.config.chainId}; config unchanged.`);
+            continue;
+          }
+          gatherer.config.startBlock = floor;
+          changed = true;
         }
-      } catch (e) {
-        console.warn('Failed to update config.json startBlock:', e.message);
+        if (changed) fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
       }
+    } catch (e) {
+      // Local config is optional; do not prevent addresses/ABI output.
+      // Avoid logging file contents or provider details from error messages.
+      console.warn('Failed to update local indexer config; config unchanged or write incomplete. Review client/config.json before starting the indexer.');
     }
 
     // Rewrite this install's per-network addresses.ts. The CLI's install step
