@@ -3,6 +3,7 @@ import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
+import { buildActionBatchMessage } from '../../utils/actionBatchMessage'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cleanStaleOgCache } from '../../api/routes/og'
 import { cawProfileLedgerAbi } from '../../abi/generated'
@@ -1171,7 +1172,7 @@ async function cleanupPendingSessionRegistrations() {
   try {
     const waitingRows = await prisma.txQueue.findMany({
       where: { status: 'waiting_for_session' },
-      select: { id: true, senderId: true, createdAt: true, payload: true, signedTx: true }
+      select: { id: true, senderId: true, createdAt: true, payload: true, signedTx: true, batchId: true }
     })
 
     if (waitingRows.length === 0) return
@@ -1202,6 +1203,13 @@ async function cleanupPendingSessionRegistrations() {
     })
     const ownerByTokenId = new Map(users.map(u => [u.tokenId, u.address.toLowerCase()]))
 
+    // Batch-sig rows: per-action data of every row in the group, loaded once
+    // per group per tick. Keyed on the shared signature too, since batchId is
+    // only a truncated timestamp.
+    const batchGroupData = new Map<string, any[]>()
+    // Groups promoted this tick, so their other rows are not looked at again.
+    const promotedGroups = new Set<string>()
+
     for (const row of waitingRows) {
       try {
         const payload = row.payload as any
@@ -1226,19 +1234,49 @@ async function cleanupPendingSessionRegistrations() {
           continue
         }
 
+        // Batch-sig rows store ONE action's data per row, but signedTx is the
+        // ActionBatch signature over the whole group (/api/actions/batch).
+        // Load the group in the validator's submission order (createdAt, id)
+        // so the ActionBatch message can be rebuilt below. Outside the
+        // signature try so a DB error retries next tick instead of failing.
+        let groupData: any[] | null = null
+        const groupKey = hasActionBatch && row.batchId != null
+          ? `${row.senderId}:${row.batchId}:${row.signedTx}`
+          : null
+        // Already promoted with the rest of its group earlier this tick.
+        if (groupKey != null && promotedGroups.has(groupKey)) continue
+        if (groupKey != null) {
+          groupData = batchGroupData.get(groupKey) ?? null
+          if (!groupData) {
+            const groupRows = await prisma.txQueue.findMany({
+              where: { senderId: row.senderId, batchId: row.batchId, signedTx: row.signedTx },
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              select: { payload: true },
+            })
+            groupData = groupRows.map(r => (r.payload as any)?.data)
+            batchGroupData.set(groupKey, groupData)
+          }
+        }
+
         // Recover the session-key signer address from the stored signature.
-        // Pass through whichever typed-data shape this row carries.
         let signerAddress: string
         try {
-          const verifyTypes: Record<string, any> = hasActionBatch
-            ? { ActionBatch: types.ActionBatch }
-            : { ActionData: types.ActionData }
-          signerAddress = ethers.verifyTypedData(
-            domain,
-            verifyTypes,
-            data,
-            row.signedTx
-          ).toLowerCase()
+          if (hasActionBatch) {
+            if (!groupData) throw new Error('ActionBatch row without batchId')
+            signerAddress = ethers.verifyTypedData(
+              domain,
+              { ActionBatch: types.ActionBatch },
+              buildActionBatchMessage(groupData),
+              row.signedTx
+            ).toLowerCase()
+          } else {
+            signerAddress = ethers.verifyTypedData(
+              domain,
+              { ActionData: types.ActionData },
+              data,
+              row.signedTx
+            ).toLowerCase()
+          }
         } catch {
           // Unrecoverable signature — fail the row
           await markTxQueueFailed(
@@ -1271,15 +1309,28 @@ async function cleanupPendingSessionRegistrations() {
         if (sessionValid) {
           // Session has landed on L2 — promote to pending so the validator
           // can simulate normally.
+          const promoted = {
+            status: 'pending',
+            pendingQuickSignTxHash: null,
+            reason: null,
+            // Back-fill implicitTip from the now-available SessionKey row.
+            implicitTip: sessionRow!.perActionTipRate ?? '0',
+          }
+          if (groupKey != null) {
+            // A batch group is promoted in one statement. Row by row, the
+            // validator could poll between two updates and submit part of
+            // the group, which recovers a different signer and reverts.
+            const { count } = await prisma.txQueue.updateMany({
+              where: { senderId: row.senderId, batchId: row.batchId, signedTx: row.signedTx, status: 'waiting_for_session' },
+              data: promoted,
+            })
+            promotedGroups.add(groupKey)
+            logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): session landed — promoted batch ${row.batchId} (${count} row(s)) to pending`)
+            continue
+          }
           await prisma.txQueue.update({
             where: { id: row.id },
-            data: {
-              status: 'pending',
-              pendingQuickSignTxHash: null,
-              reason: null,
-              // Back-fill implicitTip from the now-available SessionKey row.
-              implicitTip: sessionRow!.perActionTipRate ?? '0',
-            }
+            data: promoted,
           })
           logger.log(`[PendingSession] TxQueue ${row.id} (sender ${row.senderId}): session landed — promoted to pending`)
           continue
