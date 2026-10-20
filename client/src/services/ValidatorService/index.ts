@@ -24,6 +24,7 @@ import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueu
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
+import { mentions429 } from '../../utils/mentions429'
 
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
@@ -2601,7 +2602,7 @@ export const validatorService: Service = {
         msg.includes('provider destroyed') ||
         msg.includes('cancelled request') ||
         msg.includes('too many requests') ||
-        msg.includes('429') ||
+        mentions429(err) ||
         msg.includes('rate limit') ||
         msg.includes('missing response') ||
         msg.includes('internal error') ||
@@ -3230,7 +3231,7 @@ console.log("succeededKeys", succeededKeys)
                 errMsg.includes('provider destroyed') ||
                 errMsg.includes('cancelled request') ||
                 errMsg.includes('too many requests') ||
-                errMsg.includes('429') ||
+                mentions429(err) ||
                 errMsg.includes('rate limit') ||
                 errMsg.includes('missing response') ||
                 errMsg.includes('internal error') ||
@@ -3640,7 +3641,7 @@ console.log("succeededKeys", succeededKeys)
           errMsg.includes('provider destroyed') ||
           errMsg.includes('cancelled request') ||
           errMsg.includes('too many requests') ||
-          errMsg.includes('429') ||
+          mentions429(submitErr) ||
           errMsg.includes('rate limit') ||
           errMsg.includes('missing response') ||
           errMsg.includes('internal error') ||
