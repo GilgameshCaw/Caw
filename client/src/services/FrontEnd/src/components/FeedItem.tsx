@@ -1853,15 +1853,29 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           }
                           try {
                             setBusyRecaw(true)
-                            await signAndSubmit({
+                            const undoResponse = await signAndSubmit({
                               actionType: 'other',
                               senderId: effectiveTokenId,
                               receiverId: 0,
                               receiverCawonce: 0,
                               text: `hide:recaw:${useItem.user.tokenId}:${useItem.cawonce}`,
                             })
+                            // null = nothing was submitted; drop the persisted
+                            // optimistic entry (same as the delete-post path).
+                            if (!undoResponse) {
+                              useHiddenCawsStore.getState().unhideRecaw(
+                                Number(effectiveTokenId),
+                                Number(useItem.user.tokenId),
+                                Number(useItem.cawonce),
+                              )
+                            }
                           } catch (err) {
                             console.warn('Undo recaw failed:', err)
+                            useHiddenCawsStore.getState().unhideRecaw(
+                              Number(effectiveTokenId),
+                              Number(useItem.user.tokenId),
+                              Number(useItem.cawonce),
+                            )
                           } finally {
                             setRecawPending(false)
                             setRecawCountAdj(-1)
@@ -2500,15 +2514,22 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           // too, so the optimistic entry becomes redundant.
           useHiddenCawsStore.getState().hideCaw(Number(effectiveTokenId), Number(useItem.cawonce))
           try {
-            await signAndSubmit({
+            const response = await signAndSubmit({
               actionType: 'other',
               senderId: effectiveTokenId,
               receiverId: 0,
               receiverCawonce: 0,
               text: `hide:caw:${useItem.cawonce}`,
             })
+            // null = nothing was submitted (e.g. the insufficient-stake modal
+            // was shown). The entry is persisted, so drop it or this device
+            // keeps hiding a post the server still serves.
+            if (!response) {
+              useHiddenCawsStore.getState().unhideCaw(Number(effectiveTokenId), Number(useItem.cawonce))
+            }
           } catch (err) {
             console.error('Delete post failed:', err)
+            useHiddenCawsStore.getState().unhideCaw(Number(effectiveTokenId), Number(useItem.cawonce))
           }
         }}
       />

@@ -40,7 +40,9 @@ interface HiddenCawsStore {
   hiddenCawonces: Record<string, HiddenCawEntry>
   hiddenRecaws: Record<string, HiddenRecawEntry>
   hideCaw: (tokenId: number, cawonce: number) => void
+  unhideCaw: (tokenId: number, cawonce: number) => void
   hideRecaw: (recawerTokenId: number, originalTokenId: number, originalCawonce: number) => void
+  unhideRecaw: (recawerTokenId: number, originalTokenId: number, originalCawonce: number) => void
   isHidden: (tokenId: number | undefined | null, cawonce: number | undefined | null) => boolean
   isRecawHidden: (recawerTokenId: number | undefined | null, originalTokenId: number | undefined | null, originalCawonce: number | undefined | null) => boolean
   clear: () => void
@@ -70,6 +72,16 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
         }))
       },
 
+      // Undo for a hide whose submit did not go through. Without it the entry
+      // lives for the full TTL and keeps hiding a post the server still serves.
+      unhideCaw: (tokenId, cawonce) => {
+        set((state) => {
+          const next = { ...state.hiddenCawonces }
+          delete next[entryKey(tokenId, cawonce)]
+          return { hiddenCawonces: next }
+        })
+      },
+
       hideRecaw: (recawerTokenId, originalTokenId, originalCawonce) => {
         // originalCawonce is a 0-based nonce; reject only missing/negative.
         if (!recawerTokenId || !originalTokenId || originalCawonce == null || originalCawonce < 0) return
@@ -84,6 +96,14 @@ export const useHiddenCawsStore = create<HiddenCawsStore>()(
             },
           },
         }))
+      },
+
+      unhideRecaw: (recawerTokenId, originalTokenId, originalCawonce) => {
+        set((state) => {
+          const next = { ...state.hiddenRecaws }
+          delete next[recawKey(recawerTokenId, originalTokenId, originalCawonce)]
+          return { hiddenRecaws: next }
+        })
       },
 
       isHidden: (tokenId, cawonce) => {
