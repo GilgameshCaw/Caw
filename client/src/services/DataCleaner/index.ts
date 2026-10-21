@@ -9,7 +9,7 @@ import { cawProfileLedgerAbi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
 import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
-import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
+import { CawNotFoundError, indexCawForSearch } from '../ActionProcessor/actionHandlers'
 import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
@@ -895,10 +895,11 @@ async function cleanupOrphanActions() {
         // mitigation as the live path: keeps L1 RPC reads out of the
         // 5s tx budget) and re-run domain processing.
         const resolved = await resolveActionUsers(rawAction)
-        await prisma.$transaction(
+        const effects = await prisma.$transaction(
           (tx) => processDomainEffects(tx, action, rawAction, resolved, /* fromReconciliation */ true),
           { timeout: 15_000 },
         )
+        if (effects.cawId !== undefined) void indexCawForSearch(effects.cawId)
         recovered++
         logger.log(` Recovered orphan ${action.actionType} action id=${action.id} sender=${action.senderId} cawonce=${action.cawonce}`)
       } catch (err: any) {

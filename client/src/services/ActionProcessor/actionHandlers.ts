@@ -10,6 +10,7 @@ import { markOrphansInImageData } from '../../api/util/orphanedMedia'
 import type { PrismaTransactionClient } from './types'
 import { recomputePinnedCount } from '../../utils/pinnedCount'
 import { handleSponsorInviteAction, INVITE_ACTION_PREFIX } from '../SponsorService/handleSponsorInvite'
+import { indexCawById } from '../../utils/indexCawById'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
  *  handleRawAction error handler) can distinguish "indexer doesn't have
@@ -45,8 +46,22 @@ export async function findCawId(cawonce: number, userOnChain: number): Promise<n
 }
 
 /**
+ * Add a Caw row written by handleCawAction / handleRecawAction to the search
+ * index. Callers of processDomainEffects call this with the returned cawId
+ * after their transaction commits, not from inside it.
+ */
+export function indexCawForSearch(cawId: number): Promise<void> {
+  return indexCawById(cawId, {
+    isAvailable: () => elasticsearchService.isAvailable(),
+    findCaw: (id) => prisma.caw.findUnique({ where: { id }, include: { user: true } }),
+    indexCaw: (caw) => elasticsearchService.indexCaw(caw),
+  })
+}
+
+/**
  * Handle CAW action - create new caw, process hashtags, update counts
  * May include off-chain image URLs in the text
+ * Returns the Caw row's id so the caller can index it after commit.
  */
 export async function handleCawAction(
   tx: PrismaTransactionClient,
@@ -54,7 +69,7 @@ export async function handleCawAction(
   rawAction: any,
   authorId: number,
   parentCawId?: number
-): Promise<void> {
+): Promise<number> {
   // Extract image and video URLs from text if present.
   //
   // Host-tolerant by design: a caw posted on mirror A may carry an
@@ -443,17 +458,20 @@ export async function handleCawAction(
       cawId: parentCawId, replyCawId: newCaw.id,
     })
   }
+
+  return newCaw.id
 }
 
 /**
  * Handle RECAW action - create recaw and update counts
+ * Returns the Caw row's id so the caller can index it after commit.
  */
 export async function handleRecawAction(
   tx: PrismaTransactionClient,
   action: any,
   rawAction: any,
   parentCawId?: number
-): Promise<void> {
+): Promise<number> {
   const userId = await findOrCreateUser(action.senderId)
 
   // Use the parentCawId that was already found in domainProcessor,
@@ -484,7 +502,7 @@ export async function handleRecawAction(
     existingRecaw?.status === 'PENDING' || existingRecaw?.status === 'FAILED'
 
   // Use upsert to prevent duplicate RECAWs
-  await tx.caw.upsert({
+  const recaw = await tx.caw.upsert({
     where: {
       userId_cawonce: {
         userId: userId,
@@ -580,6 +598,8 @@ export async function handleRecawAction(
       }
     }
   }
+
+  return recaw.id
 }
 
 /**

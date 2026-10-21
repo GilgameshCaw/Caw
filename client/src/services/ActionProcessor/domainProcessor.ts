@@ -78,6 +78,14 @@ export async function resolveActionUsers(rawAction: RawAction): Promise<Resolved
   return { authorId, receiverId }
 }
 
+/** What the caller must do once the domain transaction has committed. */
+export interface DomainEffects {
+  /** Caw row written by a CAW or RECAW action — pass to indexCawForSearch
+   *  after commit. Not indexed from inside the tx: a read from outside it
+   *  can't see the row yet, and a rollback would leave it in the index. */
+  cawId?: number
+}
+
 /**
  * Process domain effects for a given action
  * This function delegates to specific handlers based on action type
@@ -88,7 +96,7 @@ export async function processDomainEffects(
   rawAction: RawAction,
   resolved: ResolvedUsers,
   fromReconciliation = false
-): Promise<void> {
+): Promise<DomainEffects> {
   const { authorId } = resolved
 
   // Determine parent caw for comment/reply actions
@@ -116,14 +124,12 @@ export async function processDomainEffects(
   // Delegate to specific handlers based on action type
   switch (action.actionType) {
     case 'CAW':
-      if (!isOurClient) return
-      await handleCawAction(tx, action, rawAction, authorId, parentCawId)
-      break
+      if (!isOurClient) return {}
+      return { cawId: await handleCawAction(tx, action, rawAction, authorId, parentCawId) }
 
     case 'RECAW':
-      if (!isOurClient) return
-      await handleRecawAction(tx, action, rawAction, parentCawId)
-      break
+      if (!isOurClient) return {}
+      return { cawId: await handleRecawAction(tx, action, rawAction, parentCawId) }
 
     case 'LIKE':
       // For likes, we need to find the caw being liked. cawonce is
@@ -160,4 +166,5 @@ export async function processDomainEffects(
       console.warn(`Unknown action type: ${action.actionType}`)
       break
   }
+  return {}
 }

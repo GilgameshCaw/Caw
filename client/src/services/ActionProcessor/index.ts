@@ -5,10 +5,10 @@ import { Service } from '../../Service'
 import Redis from 'ioredis'
 import { z } from 'zod'
 import { createOrFindAction, ensureActionExists } from './actionCreation'
-import { processDomainEffects, resolveActionUsers } from './domainProcessor'
+import { processDomainEffects, resolveActionUsers, type DomainEffects } from './domainProcessor'
 import type { RawAction } from './types'
 import { StaleTokenError } from '../UserService'
-import { CawNotFoundError } from './actionHandlers'
+import { CawNotFoundError, indexCawForSearch } from './actionHandlers'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { span } from '../../utils/trace'
 import getActionType from '../../abi/getActionType'
@@ -480,12 +480,13 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // leaving an Action row without its Like/Follow/etc.
     try {
       let lastErr: any = null
+      let effects: DomainEffects = {}
       const MAX_TX2_RETRIES = 3
       for (let attempt = 0; attempt <= MAX_TX2_RETRIES; attempt++) {
         try {
-          await prisma.$transaction(async (tx) => {
+          effects = await prisma.$transaction(async (tx) => {
             const validAction = await ensureActionExists(tx, rawId, action)
-            await processDomainEffects(tx, validAction, rawAction, resolved)
+            return await processDomainEffects(tx, validAction, rawAction, resolved)
           }, { timeout: 30_000 })
           lastErr = null
           break
@@ -507,6 +508,10 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
         }
       }
       if (lastErr) throw lastErr
+      // Tx2 has committed, so the Caw row is now readable from outside it.
+      // Non-blocking: indexCawForSearch never throws, and a slow ES must not
+      // hold up the processing chain.
+      if (effects.cawId !== undefined) void indexCawForSearch(effects.cawId)
     } catch (err: any) {
       if (err instanceof CawNotFoundError) {
         // Like/reply/tip targets a caw we don't have indexed — most often

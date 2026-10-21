@@ -27,6 +27,7 @@ import { prisma } from '../src/prismaClient'
 import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
 import { createOrFindAction, ensureActionExists } from '../src/services/ActionProcessor/actionCreation'
 import { processDomainEffects, resolveActionUsers } from '../src/services/ActionProcessor/domainProcessor'
+import { indexCawForSearch } from '../src/services/ActionProcessor/actionHandlers'
 import { StaleTokenError } from '../src/services/UserService'
 import getActionType from '../src/abi/getActionType'
 
@@ -128,10 +129,12 @@ async function reprocessOne(rawId: number, chainId: number, rawAction: any): Pro
   if (!shouldProcessDomain) return 'created'
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const effects = await prisma.$transaction(async (tx) => {
       const validAction = await ensureActionExists(tx, rawId, action)
-      await processDomainEffects(tx, validAction, rawAction, resolved)
+      return await processDomainEffects(tx, validAction, rawAction, resolved)
     }, { timeout: 15_000 })
+    // Awaited, unlike the live path: the script exits when the loop ends.
+    if (effects.cawId !== undefined) await indexCawForSearch(effects.cawId)
     return 'created'
   } catch {
     return 'partial'
