@@ -21,6 +21,7 @@ import { getIndexerStats } from '../../utils/indexerHealth'
 import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
+import { isTemporaryRejection, reSimVerdict } from '../../utils/reSimVerdict'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
@@ -2505,9 +2506,10 @@ export const validatorService: Service = {
     }
 
     // Recovery for batch tx reverts that aren't transient. Two cases:
-    //   (a) Mirror race: re-simulation flags one or more cawonces as used.
-    //       Mark those failed; reset the rest to pending so the next poll
-    //       retries them in a fresh batch.
+    //   (a) Mirror race: re-simulation rejects one or more actions. Mark
+    //       those failed, except "Cawonce already used" and temporary
+    //       rejections; reset those and the rest to pending so the next
+    //       poll retries them in a fresh batch.
     //   (b) Sim-passes-but-tx-reverts (e.g. underestimated LayerZero fee):
     //       re-sim still says all-good. Bisect the entry list, re-quoting
     //       and re-estimating gas per sub-batch, until each reverter is
@@ -2537,18 +2539,15 @@ export const validatorService: Service = {
       const anyNewRejections = reSimRejections.some((m: string) => m && m.length > 0)
 
       if (anyNewRejections) {
-        // Mirror race (or stale state). Mark rejected entries failed; reset
-        // the rest to pending so they get a fresh batch on the next poll.
+        // Mirror race (or stale state). Fail the entries the re-sim rejects
+        // on their own merits; the rest, including "Cawonce already used"
+        // and temporary rejections, go back to pending (see reSimVerdict).
         let failed = 0, pending = 0
         entries.forEach((entry, i) => {
-          const reason = reSimRejections[i]
-          if (reason && reason.length > 0) {
-            verdictByEntryId.set(entry.id, { succeeded: false, reason })
-            failed++
-          } else {
-            verdictByEntryId.set(entry.id, { pending: true })
-            pending++
-          }
+          const verdict = reSimVerdict(reSimRejections[i])
+          verdictByEntryId.set(entry.id, verdict)
+          if ('pending' in verdict) pending++
+          else failed++
         })
         console.log(`[Validator/recovery] Re-sim flagged ${failed} entries — marked failed, ${pending} reset to pending`)
         return true
@@ -3345,32 +3344,7 @@ console.log("succeededKeys", succeededKeys)
           return
         }
 
-        const hasTemporaryError = rejectionMessages.some((msg: string) => {
-          const lowerMsg = msg?.toLowerCase() || ''
-          return lowerMsg.includes('timeout') ||
-                 lowerMsg.includes('network') ||
-                 lowerMsg.includes('connection') ||
-                 lowerMsg.includes('rpc') ||
-                 lowerMsg.includes('will retry') ||
-                 lowerMsg.includes('too many requests') ||
-                 lowerMsg.includes('429') ||
-                 lowerMsg.includes('rate limit') ||
-                 lowerMsg.includes('missing response') ||
-                 // Auth state hasn't been relayed from L1 to L2 yet — the
-                 // user just submitted the authenticate tx and we're waiting
-                 // on LayerZero (typically 1-5 min). Same race the pre-sim
-                 // pendingDepositTxHash hold handles for deposits, but that
-                 // gate doesn't fire here because there's no tx hash on the
-                 // queued action. Retry on next poll until L2 catches up.
-                 lowerMsg.includes('not authenticated with this client') ||
-                 // Quick Sign session may not have landed on L2 yet — same
-                 // L1→L2 race as deposit/auth. The pre-sim hold for
-                 // pendingQuickSignTxHash handles the common case; this is
-                 // a fallback for actions whose row didn't carry the hash
-                 // (e.g. submitted shortly after, or after we cleared it on
-                 // a transient watcher gap). Retry on next poll.
-                 lowerMsg.includes('session expired or not found')
-        })
+        const hasTemporaryError = rejectionMessages.some((msg: string) => isTemporaryRejection(msg))
 
         if (hasTemporaryError) {
           console.log("========== [Validator] TEMPORARY ERROR DETECTED ==========")
