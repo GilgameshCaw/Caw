@@ -11,10 +11,10 @@
 // Zin already ran an ad-hoc version of this successfully (3,934 rows
 // fixed on one node).
 //
-// FIX: walk CawProfile's `Transfer(from=0x0, to, tokenId)` mint events
-// (same scan as backfill-mint-and-deposits.ts pass 1), take the mint
-// block's timestamp as the true createdAt, and update User rows keyed
-// by User.tokenId (unique) whose stored createdAt differs.
+// FIX: walk CawProfile's `Transfer(from=0x0, to, tokenId)` mint events,
+// take the mint block's timestamp as the true createdAt, and update
+// User rows keyed by User.tokenId (unique) whose stored createdAt
+// differs.
 //
 // Idempotent: re-running --apply after a successful apply finds every
 // row already correct (skipped, not rewritten). Safe to re-run.
