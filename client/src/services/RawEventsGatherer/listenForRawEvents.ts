@@ -35,6 +35,27 @@ export function computePollRange(
   return { head, toBlock: Math.min(head, lastSyncedBlock + maxPollBlocks) }
 }
 
+/**
+ * Where the live poll starts after the historical scan.
+ *
+ * The scan has already covered everything up to `scannedHead`, so the poll
+ * only needs to look at blocks after it (less the same head margin the poll
+ * itself keeps). Seeding from the last event found instead puts the cursor
+ * at the last event on the chain, which on a quiet chain is far behind the
+ * head: every restart then re-reads the whole stretch since that event in
+ * poll-sized chunks and reports the indexer as that many blocks behind
+ * until it catches up. Never returns less than the last event found or
+ * `startBlock`.
+ */
+export function seedPollCursor(
+  lastEventBlock: number | null,
+  startBlock: number,
+  scannedHead: number,
+  headMargin: number,
+): number {
+  return Math.max(lastEventBlock ?? startBlock, scannedHead - headMargin)
+}
+
 // Calldata-decode interface. ActionsProcessed events now carry only
 // (networkId, validatorId, actionCount, batchHash) — the actual packedActions
 // bytes live in the originating tx's calldata. We fetch tx.input via
@@ -519,6 +540,7 @@ export default async function listenForRawEvents(
   // gate now lives in domainProcessor for CAW/RECAW only; everything else
   // processes regardless of submitting client.
   let past: Log[]
+  let scannedHead = startBlock
   const eventSig = httpContract.interface.getEvent('ActionsProcessed')!.topicHash
   while (true) {
     try {
@@ -574,6 +596,7 @@ export default async function listenForRawEvents(
           : a.index - b.index
       )
       past = allLogs as unknown as Log[]
+      scannedHead = latest
       break
     } catch (err) {
       console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
@@ -592,14 +615,12 @@ export default async function listenForRawEvents(
   // processEvents stays untouched when any part of `past` is genuinely new.
   //
   // Branches on a flag rather than clearing `past` itself: `past` is read
-  // again below (lastSyncedBlock = past.length > 0 ? past[...].blockNumber
-  // : startBlock) to seed the poll cursor's starting point. Emptying `past`
-  // here would fall that ternary through to startBlock -- the configured
-  // floor -- instead of the block the historical scan actually reached,
+  // again below (seedPollCursor's lastEventBlock) to seed the poll cursor.
+  // Emptying `past` here would make the cursor fall back to startBlock -- the
+  // configured floor -- instead of the last event the historical scan found,
   // sending every subsequent poll tick re-walking the whole floor-to-tip
   // range on every restart where the skip fires. Keeping `past` intact
-  // preserves the real high-water mark for that read while still avoiding
-  // the processEvents() call itself.
+  // preserves that read while still avoiding the processEvents() call itself.
   const skipDerive =
     past.length > 0 &&
     !!config.rawEventsProvider.countExisting &&
@@ -912,12 +933,6 @@ export default async function listenForRawEvents(
     console.log('[RawEventsGatherer] WebSocket disabled — HTTP polling only (set ENABLE_RAW_EVENTS_WS=1 to re-enable)')
   }
 
-  // Track last synced block for polling - start from the latest processed event
-  let lastSyncedBlock = past.length > 0 ? past[past.length - 1].blockNumber : startBlock
-  // Seed indexer-health snapshot with the post-historical-sync watermark so
-  // the validator's lag check sees a real value on cold start, not 0.
-  recordIndexerProgress(config.chainId, lastSyncedBlock)
-
   // Cap each poll's range so a service waking up far behind can't request
   // millions of logs in one call. Shares the L2_LOG_CHUNK_BLOCKS knob so a
   // capped-RPC operator bounds both the historical chunk and the per-poll
@@ -944,6 +959,17 @@ export default async function listenForRawEvents(
   const envHeadMargin = Number(process.env.RAW_EVENTS_HEAD_MARGIN)
   const HEAD_MARGIN_BLOCKS =
     Number.isFinite(envHeadMargin) && envHeadMargin >= 0 ? envHeadMargin : 1
+  // Track last synced block for polling - start from the head the historical
+  // scan reached (see seedPollCursor), not from the last event it found.
+  let lastSyncedBlock = seedPollCursor(
+    past.length > 0 ? past[past.length - 1].blockNumber : null,
+    startBlock,
+    scannedHead,
+    HEAD_MARGIN_BLOCKS,
+  )
+  // Seed indexer-health snapshot with the post-historical-sync watermark so
+  // the validator's lag check sees a real value on cold start, not 0.
+  recordIndexerProgress(config.chainId, lastSyncedBlock)
   // 30s default — actions are already shown in the feed optimistically as
   // soon as the user signs (PostForm's optimistic insert path), so the
   // indexer only sets the SUCCESS status flag a beat later. Stretching
