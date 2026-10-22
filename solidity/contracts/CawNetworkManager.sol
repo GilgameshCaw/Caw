@@ -672,6 +672,25 @@ contract CawNetworkManager {
   ///      setFees/setFeeAddress all revert for this network. The gas override
   ///      remains tunable so the network can still respond to future LZ
   ///      gas miscalibrations.
+  /// @notice Permanently remove this network's owner authority. Opt-in and irreversible.
+  /// @dev Existing sponsor entries and gas overrides remain frozen. The fee recipient
+  ///      retains its claim; delegated owner-triggered swaps are no longer authorized.
+  ///      This does not finalize other contracts or prove whole-protocol independence.
+  event NetworkFinalized(uint32 indexed networkId, address indexed previousOwner);
+
+  function finalizeNetwork(uint32 networkId) external onlyNetworkOwner(networkId) {
+    address previousOwner = networks[networkId].ownerAddress;
+    networkFeesLocked[networkId] = true;
+    networkOwnershipLocked[networkId] = true;
+    networks[networkId].ownerAddress = address(0);
+    emit NetworkFinalized(networkId, previousOwner);
+  }
+
+  /// @notice Nonexistent networks are not finalized.
+  function networkFinalized(uint32 networkId) external view returns (bool) {
+    return _networkExists(networkId) && networks[networkId].ownerAddress == address(0);
+  }
+
   function lockNetworkFees(uint32 networkId) external onlyNetworkOwner(networkId) {
     networkFeesLocked[networkId] = true;
     emit NetworkFeesLocked(networkId);

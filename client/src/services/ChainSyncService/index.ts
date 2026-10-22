@@ -205,7 +205,8 @@ async function syncNetwork(networkId: number): Promise<boolean> {
     // V2: CawNetworkManager exposes getNetwork(); the struct includes 4 ceiling fields.
     const network = await networkManager.getNetwork(networkId)
 
-    if (network.ownerAddress === '0x0000000000000000000000000000000000000000') {
+    // Finalized networks have no owner; existence is determined by the stored ID.
+    if (network.id === 0n || Number(network.id) !== networkId) {
       return false
     }
 
@@ -1058,6 +1059,7 @@ const NETWORK_FEE_EVENT_ABI = [
   // creationBlock, withdrawFeeCeiling, depositFeeCeiling, authFeeCeiling, mintFeeCeiling)
   'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling) network)',
   'event NetworkFeeUpdated(uint32 indexed networkId, string feeType, uint256 newFee)',
+  'event NetworkFinalized(uint32 indexed networkId, address indexed previousOwner)',
   'event WithdrawFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
   'event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
   'event AuthFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
@@ -1220,6 +1222,7 @@ async function syncL1FeeEvents(): Promise<void> {
     const toBlock = Math.min(cursor + L1_FEE_EVENT_CHUNK_SIZE - 1, latestBlock)
 
     try {
+      const networkFinalized = await contract.queryFilter(contract.filters.NetworkFinalized(), cursor, toBlock)
       const networkCreated  = await contract.queryFilter(contract.filters.NetworkCreated(), cursor, toBlock)
       const feeUpdated      = await contract.queryFilter(contract.filters.NetworkFeeUpdated(), cursor, toBlock)
       const withdrawCeiling = await contract.queryFilter(contract.filters.WithdrawFeeCeilingLowered(), cursor, toBlock)
@@ -1228,6 +1231,7 @@ async function syncL1FeeEvents(): Promise<void> {
       const mintCeiling     = await contract.queryFilter(contract.filters.MintFeeCeilingLowered(), cursor, toBlock)
 
       const combined = [
+        ...networkFinalized.map(e => ({ ev: e, kind: 'NetworkFinalized' as const })),
         ...networkCreated.map(e  => ({ ev: e, kind: 'NetworkCreated'           as const })),
         ...feeUpdated.map(e      => ({ ev: e, kind: 'NetworkFeeUpdated'         as const })),
         ...withdrawCeiling.map(e => ({ ev: e, kind: 'WithdrawFeeCeilingLowered' as const })),
@@ -1241,6 +1245,16 @@ async function syncL1FeeEvents(): Promise<void> {
 
       for (const { ev, kind } of combined) {
         const args = (ev as any).args
+        if (kind === 'NetworkFinalized') {
+          const id = Number(args?.networkId)
+          if (!Number.isSafeInteger(id) || id <= 0 || id > 0xffffffff) {
+            throw new Error('Invalid NetworkFinalized network ID')
+          }
+          // Refresh authoritative current state, including owner zero. A failed
+          // read/write must keep this event range pending for the next poll.
+          if (!await syncNetwork(id)) throw new Error('Finalized network refresh failed')
+          continue
+        }
         if (!args) continue
 
         if (kind === 'NetworkCreated') {
