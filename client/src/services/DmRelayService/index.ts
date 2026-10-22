@@ -32,6 +32,14 @@
 //   SNI / common-name validation on standard Node https.Agent. Residual risk
 //   accepted for now: attacker must control both the peer's on-chain apiUrl
 //   AND the DNS resolver that serves this node. Documented here per audit.
+//   Redirects: both peer POSTs pass `redirect: 'error'`. fetch follows 3xx
+//   by default, and on 307/308 it re-sends the POST and its body to the
+//   Location, which nothing re-checks. A peer could point that at
+//   169.254.169.254 or a service on our loopback with control of its own
+//   server alone, no DNS needed, so following would sidestep the M-2
+//   assumption above. registerInstance is permissionless, so any address
+//   that pays for one tx can be a peer. A peer that moved updates its
+//   apiUrl on chain; the relay doesn't follow it.
 
 import 'dotenv/config'
 import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
@@ -250,6 +258,8 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
       headers: { 'Content-Type': 'application/json' },
       body,
       signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
+      // A 3xx rejects instead of being followed (see "Redirects" above).
+      redirect: 'error',
     }).catch(err => {
       // Fire-and-forget. Network errors are routine (peer down,
       // unreachable), and so is the abort from the timeout above.
@@ -354,6 +364,7 @@ export async function relayDmIdentityToPeers(params: {
       headers: { 'Content-Type': 'application/json' },
       body,
       signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
+      redirect: 'error',
     }).catch(err => {
       // Fire-and-forget, same as relayDmToPeers above — routine network
       // errors and timeout aborts are both expected here.
