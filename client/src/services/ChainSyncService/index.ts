@@ -1055,8 +1055,9 @@ async function syncL2Events(): Promise<void> {
 const NETWORK_FEE_EVENT_ABI = [
   // NetworkCreated carries the full CawNetwork struct (id, storageChainEid, name,
   // feeAddress, ownerAddress, withdrawFee, depositFee, mintFee, authFee,
-  // creationBlock, withdrawFeeCeiling, depositFeeCeiling, authFeeCeiling, mintFeeCeiling)
-  'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling) network)',
+  // creationBlock, withdrawFeeCeiling, depositFeeCeiling, authFeeCeiling, mintFeeCeiling,
+  // tipTargetWei, tipCeilingWei)
+  'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling, uint256 tipTargetWei, uint256 tipCeilingWei) network)',
   'event NetworkFeeUpdated(uint32 indexed networkId, string feeType, uint256 newFee)',
   'event WithdrawFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
   'event DepositFeeCeilingLowered(uint32 indexed networkId, uint256 oldCeiling, uint256 newCeiling)',
@@ -1141,6 +1142,7 @@ async function handleNetworkCreated(args: any, txHash: string): Promise<void> {
     console.log(`[ChainSync:L1FeeEvents] NetworkCreated: upserted networkId=${networkId} tx=${txHash.slice(0, 10)}...`)
   } catch (err: any) {
     console.error(`[ChainSync:L1FeeEvents] Failed to upsert NetworkCreated for ${networkId}:`, err.message)
+    throw err
   }
 }
 
@@ -1168,6 +1170,7 @@ async function handleNetworkFeeUpdated(args: any): Promise<void> {
       console.warn(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId} not in DB yet; fee update will be applied on next full sync`)
     } else {
       console.error(`[ChainSync:L1FeeEvents] Failed to update ${column} for networkId=${networkId}:`, err.message)
+      throw err
     }
   }
 }
@@ -1191,6 +1194,7 @@ async function handleFeeCeilingLowered(
       console.warn(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId} not in DB yet; ceiling update will be applied on next full sync`)
     } else {
       console.error(`[ChainSync:L1FeeEvents] Failed to update ${ceilingColumn} for networkId=${networkId}:`, err.message)
+      throw err
     }
   }
 }
