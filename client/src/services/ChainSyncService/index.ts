@@ -2,6 +2,7 @@
 // Generic service for syncing on-chain data to the database
 
 import { prisma } from '../../prismaClient'
+import type { Prisma } from '@prisma/client'
 import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder, dataSlice, id as ethersId } from 'ethers'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi, cawProfileAbi } from '../../abi/generated'
@@ -67,7 +68,7 @@ interface CachedEthPrice {
 interface CachedGasPrice {
   gasPriceWei: bigint    // Mainnet L1 gas price (wei). The invite-code buyer
                          // pre-funds a FUTURE mainnet redemption, so the quote
-                         // must reflect mainnet gas — not the ~0 testnet base fee.
+                         // must reflect mainnet gas â€” not the ~0 testnet base fee.
   updatedAt: number      // Timestamp
 }
 
@@ -87,7 +88,7 @@ let l2Provider: JsonRpcProvider | null = null
 let mainnetProvider: JsonRpcProvider | null = null
 let networkManager: Contract | null = null
 let uniswapRouter: Contract | null = null
-// Last config passed to initializeProviders — retained so rebuildProviders() can
+// Last config passed to initializeProviders â€” retained so rebuildProviders() can
 // re-create the singletons after a dead-connection error (2026-07-10 auto-heal).
 let lastProviderConfig: ChainSyncConfig | null = null
 let lastProviderRebuildAt = 0
@@ -97,14 +98,14 @@ const syncTasks: Map<string, SyncTask> = new Map()
 // In-memory price caches (also persisted to DB)
 let cawPriceCache: CachedCawPrice | null = null
 let ethPriceCache: CachedEthPrice | null = null
-// Mainnet L1 gas price — refreshed on the same price loop. Drives the invite
+// Mainnet L1 gas price â€” refreshed on the same price loop. Drives the invite
 // quote (and any other "what will redemption cost on mainnet" estimate).
 let gasPriceCache: CachedGasPrice | null = null
 // Live LayerZero deposit-relay native fee (Sepolia CawProfile.lzQuote), refreshed
 // on the same price loop. Replaces the old flat LZ_RELAY_WEI guess in the invite
 // quote, which was ~10x the real fee.
 let lzDepositFeeCache: CachedLzDepositFee | null = null
-// Sepolia CAW/WETH pool spot — the actual price the testnet zap charges.
+// Sepolia CAW/WETH pool spot â€” the actual price the testnet zap charges.
 // On mainnet deploys this stays null (CAW_PAIR_ADDRESS != mainnet pair) and
 // consumers fall back to the mainnet cawPriceCache for everything.
 let sepoliaCawPriceCache: CachedCawPrice | null = null
@@ -124,8 +125,8 @@ async function initializeProviders(config: ChainSyncConfig) {
     ethMainnetRpcUrl: redactRpcUrl(config.ethMainnetRpcUrl),
   })
 
-  // Probe chainId at construction (audit 2026-07-11) so a wrong-chain RPC —
-  // primary OR a rebuild after a dead connection — can't feed ChainSync bogus
+  // Probe chainId at construction (audit 2026-07-11) so a wrong-chain RPC â€”
+  // primary OR a rebuild after a dead connection â€” can't feed ChainSync bogus
   // NetworkManager / SessionKey event data (syncL2Events writes SessionKey rows
   // the off-chain session check trusts). makeVerifiedJsonRpcProvider throws only
   // on a CONFIRMED mismatch; a transient probe timeout is tolerated (warn).
@@ -160,11 +161,11 @@ async function initializeProviders(config: ChainSyncConfig) {
  * Auto-heal (2026-07-10 incident): rebuild the provider singletons after a
  * dead-connection error. Nulls the module-level providers + dependent Contracts
  * and re-runs initializeProviders() with the retained config, so subsequent sync
- * calls run on FRESH sockets instead of a zombie one — without a pm2 restart.
+ * calls run on FRESH sockets instead of a zombie one â€” without a pm2 restart.
  *
  * No-op unless `err` is a connection-class error (isConnectionError) and we're
  * outside a 12s cooldown (guards against rebuild storms while an RPC is fully
- * down). Rate-limit (429) errors are deliberately NOT handled here — that's the
+ * down). Rate-limit (429) errors are deliberately NOT handled here â€” that's the
  * circuit breaker's job.
  */
 function maybeRebuildProviders(err: unknown): void {
@@ -184,7 +185,7 @@ function maybeRebuildProviders(err: unknown): void {
   uniswapRouter = null
   // Fire-and-forget re-init: sync functions early-return while providers are null
   // and pick them up once rebuilt. A confirmed wrong-chain RPC makes
-  // makeVerifiedJsonRpcProvider throw → the provider stays null (NOT trusted) and
+  // makeVerifiedJsonRpcProvider throw â†’ the provider stays null (NOT trusted) and
   // the next connection-error tick retries after the cooldown.
   initializeProviders(lastProviderConfig).catch(e => {
     console.error('[ChainSync] Provider rebuild failed (staying null until next retry):', (e as any)?.message || e)
@@ -259,7 +260,7 @@ async function syncNetwork(networkId: number): Promise<boolean> {
 
 async function syncAllNetworks(): Promise<void> {
   if (!networkManager || !l1Provider) {
-    console.log('[ChainSync:Clients] Skipping — L1 provider not available')
+    console.log('[ChainSync:Clients] Skipping â€” L1 provider not available')
     return
   }
 
@@ -267,11 +268,11 @@ async function syncAllNetworks(): Promise<void> {
   try {
     const code = await l1Provider.getCode(NETWORK_MANAGER_ADDRESS)
     if (!code || code === '0x') {
-      console.log('[ChainSync:Clients] Skipping — CawNetworkManager not deployed on this chain')
+      console.log('[ChainSync:Clients] Skipping â€” CawNetworkManager not deployed on this chain')
       return
     }
   } catch {
-    console.log('[ChainSync:Clients] Skipping — unable to verify contract')
+    console.log('[ChainSync:Clients] Skipping â€” unable to verify contract')
     return
   }
 
@@ -449,7 +450,7 @@ async function syncEthPrice(): Promise<void> {
 }
 
 async function syncMainnetGasPrice(): Promise<void> {
-  if (!mainnetProvider) return  // no mainnet RPC configured → leave cache null
+  if (!mainnetProvider) return  // no mainnet RPC configured â†’ leave cache null
   try {
     const feeData = await mainnetProvider.getFeeData()
     // Prefer EIP-1559 maxFeePerGas (what a tx would actually be willing to pay);
@@ -466,16 +467,16 @@ async function syncMainnetGasPrice(): Promise<void> {
 
 // Reference deposit amount used ONLY for the fee-estimate quote below (not a
 // real deposit). LayerZero's native fee is priced off the OUTBOUND MESSAGE
-// BYTE LENGTH, not its content — every field in the ABI-encoded bundle payload
+// BYTE LENGTH, not its content â€” every field in the ABI-encoded bundle payload
 // is a fixed-width slot (uint32/uint256/address/etc. are always 32 bytes; the
 // three trailing arrays are empty, same as SponsorService's own placeholder
-// call), so the encoded length — and therefore the quoted fee — does NOT vary
+// call), so the encoded length â€” and therefore the quoted fee â€” does NOT vary
 // with the numeric value placed in the amount slot. 1 CAW (1e18 wei) is used
 // purely as a nonzero placeholder to match SponsorService's real call shape.
 const LZ_QUOTE_REFERENCE_DEPOSIT_WEI = 10n ** 18n // 1 CAW
 
 // Default L2 destination for the LZ fee-estimate quote. This deployment only
-// ever relays to one L2 (Base Sepolia, LZ eid 40245 — see
+// ever relays to one L2 (Base Sepolia, LZ eid 40245 â€” see
 // CreateAccountStep.tsx DEFAULT_LZ_DEST_ID), so a single cached quote covers
 // the real path; LZ_QUOTE_NETWORK_ID/LZ_QUOTE_DEST_ID let an operator override
 // if a future deployment relays elsewhere.
@@ -483,7 +484,7 @@ const LZ_QUOTE_NETWORK_ID = Number(process.env.LZ_QUOTE_NETWORK_ID || 1)
 const LZ_QUOTE_DEST_ID = Number(process.env.LZ_QUOTE_DEST_ID || 40245)
 
 // Selector for CawProfile's internal `_bundleNoSession` / lzDepositMintSession
-// call shape — MUST match SponsorService/index.ts's LZ_BUNDLE_SELECTOR exactly,
+// call shape â€” MUST match SponsorService/index.ts's LZ_BUNDLE_SELECTOR exactly,
 // since lzQuote's fee is a function of this selector + payload shape. Any drift
 // here would quote the fee for a DIFFERENT message than the one actually sent.
 const LZ_BUNDLE_SELECTOR = dataSlice(
@@ -528,7 +529,7 @@ let lzDepositFeeRefreshInFlight: Promise<CachedLzDepositFee | null> | null = nul
  * Return a FRESH mainnet gas-price cache, fetching on demand when the in-memory
  * cache is missing or older than maxAgeMs. Unlike getGasPriceCache() (a pure
  * read that can return null/stale), this guarantees a real RPC attempt before
- * giving up — so a cold start never silently falls back to a constant ceiling.
+ * giving up â€” so a cold start never silently falls back to a constant ceiling.
  * Returns null only when there's no mainnet provider configured OR the RPC fails;
  * callers apply their own constant fallback for that genuinely-degraded case.
  */
@@ -550,7 +551,7 @@ export async function ensureFreshGasPriceCache(
 /**
  * Return a FRESH LZ deposit-fee cache, fetching on demand when the in-memory
  * cache is missing or older than maxAgeMs. Mirrors ensureFreshGasPriceCache()
- * exactly — see that doc for the dedup rationale. Returns null only when
+ * exactly â€” see that doc for the dedup rationale. Returns null only when
  * there's no L1 provider configured OR the RPC/quote call fails; callers apply
  * their own constant fallback for that genuinely-degraded case.
  */
@@ -720,7 +721,7 @@ export function isPriceFresh(maxAgeMs: number = 5 * 60 * 1000): boolean {
 // A DB-persisted price younger than this is treated as fresh-on-boot: we stamp
 // the loaded cache with Date.now() so consumers (e.g. the invite quote's 15-min
 // staleness guard) can use it IMMEDIATELY after a restart, instead of rejecting
-// it the moment (boot time − DB write time) exceeds their window. The next live
+// it the moment (boot time âˆ’ DB write time) exceeds their window. The next live
 // sync overwrites it with a real fetch within minutes. A DB row OLDER than this
 // keeps its true (stale) timestamp so a genuinely-abandoned price still reads as
 // stale rather than being silently revived.
@@ -816,15 +817,15 @@ async function getLastSyncedL2Block(): Promise<number | null> {
   }
 }
 
-async function setLastSyncedL2Block(block: number): Promise<void> {
-  await prisma.chainData.upsert({
+async function setLastSyncedL2Block(block: number, db: Prisma.TransactionClient): Promise<void> {
+  await db.chainData.upsert({
     where: { key: L2_SYNC_BLOCK_KEY },
     update: { value: { block } },
     create: { key: L2_SYNC_BLOCK_KEY, value: { block } },
   })
 }
 
-async function handleSessionCreated(args: any) {
+async function handleSessionCreated(args: any, db: Prisma.TransactionClient) {
   const owner = String(args.owner).toLowerCase()
   const sessionAddress = String(args.sessionKey).toLowerCase()
   const expiry = BigInt(args.expiry?.toString() || '0')
@@ -833,7 +834,7 @@ async function handleSessionCreated(args: any) {
   const perActionTipRate = String(args.perActionTipRate?.toString() || '0')
 
   try {
-    await prisma.sessionKey.upsert({
+    await db.sessionKey.upsert({
       where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress } },
       update: {
         expiry,
@@ -860,14 +861,14 @@ async function handleSessionCreated(args: any) {
     // validator can simulate them on the next tick. Mirror of how the
     // PendingMintDeposit watcher clears `pendingDepositTxHash`. Since
     // TxQueue has no owner-address column, key off the matched SessionKey
-    // row's tokenId chain (User.address → User.tokenId → TxQueue.senderId).
+    // row's tokenId chain (User.address â†’ User.tokenId â†’ TxQueue.senderId).
     try {
-      const user = await prisma.user.findFirst({
+      const user = await db.user.findFirst({
         where: { address: owner },
         select: { tokenId: true },
       })
       if (user?.tokenId) {
-        const cleared = await prisma.txQueue.updateMany({
+        const cleared = await db.txQueue.updateMany({
           where: {
             senderId: user.tokenId,
             pendingQuickSignTxHash: { not: null },
@@ -886,7 +887,7 @@ async function handleSessionCreated(args: any) {
         // If any of those rows are still in waiting_for_deposit but have no
         // pendingDepositTxHash (i.e. they were held for session only), promote
         // them back to pending now.
-        const promoted = await prisma.txQueue.updateMany({
+        const promoted = await db.txQueue.updateMany({
           where: {
             senderId: user.tokenId,
             status: 'waiting_for_deposit',
@@ -905,7 +906,7 @@ async function handleSessionCreated(args: any) {
         // still valid (the signer matches the session that just landed).
         // Recover it by recomputing the signer from the stored payload
         // and unfailing any matching rows.
-        const failedRows = await prisma.txQueue.findMany({
+        const failedRows = await db.txQueue.findMany({
           where: {
             senderId: user.tokenId,
             status: 'failed',
@@ -925,8 +926,8 @@ async function handleSessionCreated(args: any) {
               row.signedTx,
             ).toLowerCase()
             if (signer !== sessionAddress) continue
-            // Match — the row was signed by the session that just landed.
-            await prisma.txQueue.update({
+            // Match â€” the row was signed by the session that just landed.
+            await db.txQueue.update({
               where: { id: row.id },
               data: {
                 status: 'pending',
@@ -936,7 +937,7 @@ async function handleSessionCreated(args: any) {
             })
             console.log(`[ChainSync:L2Events] Recovery: unfailed TxQueue ${row.id} (signer ${signer} matches newly-landed session)`)
           } catch {
-            // Bad signature / payload — leave the row failed.
+            // Bad signature / payload â€” leave the row failed.
           }
         }
       }
@@ -945,40 +946,43 @@ async function handleSessionCreated(args: any) {
     }
   } catch (err: any) {
     console.error(`[ChainSync:L2Events] Failed to upsert SessionKey for ${owner}/${sessionAddress}:`, err.message)
+    throw err
   }
 }
 
-async function handleSessionRevoked(args: any) {
+async function handleSessionRevoked(args: any, db: Prisma.TransactionClient) {
   const owner = String(args.owner).toLowerCase()
   const sessionAddress = String(args.sessionKey).toLowerCase()
   try {
-    await prisma.sessionKey.updateMany({
+    await db.sessionKey.updateMany({
       where: { ownerAddress: owner, sessionAddress, revokedAt: null },
       data: { revokedAt: new Date(), lastSyncedAt: new Date() },
     })
   } catch (err: any) {
     console.error(`[ChainSync:L2Events] Failed to revoke SessionKey for ${owner}/${sessionAddress}:`, err.message)
+    throw err
   }
 }
 
-async function handleAuthenticated(args: any) {
+async function handleAuthenticated(args: any, db: Prisma.TransactionClient) {
   // V2: event field is cawClientId (kept for compatibility); maps to networkId
   const networkId = Number(args.cawClientId ?? args.networkId)
   const tokenId = Number(args.tokenId)
   try {
-    await prisma.networkAuth.upsert({
+    await db.networkAuth.upsert({
       where: { networkId_tokenId: { networkId, tokenId } },
       update: { authenticated: true, lastSyncedAt: new Date() },
       create: { networkId, tokenId, authenticated: true, lastSyncedAt: new Date() },
     })
   } catch (err: any) {
     console.error(`[ChainSync:L2Events] Failed to upsert NetworkAuth for ${networkId}/${tokenId}:`, err.message)
+    throw err
   }
 }
 
 async function syncL2Events(): Promise<void> {
   if (!l2Provider) {
-    console.log('[ChainSync:L2Events] Skipping — L2 provider not available')
+    console.log('[ChainSync:L2Events] Skipping â€” L2 provider not available')
     return
   }
 
@@ -995,14 +999,14 @@ async function syncL2Events(): Promise<void> {
 
   if (fromBlock >= latestBlock) return
 
-  // Scan in chunks — public RPCs often reject getLogs with ranges > 2-5k blocks
+  // Scan in chunks â€” public RPCs often reject getLogs with ranges > 2-5k blocks
   let cursor = fromBlock + 1
   let totalEvents = 0
   while (cursor <= latestBlock) {
     const toBlock = Math.min(cursor + L2_EVENT_CHUNK_SIZE - 1, latestBlock)
 
     try {
-      // Sequential to avoid ethers' RPC batching — see MarketplaceIndexer
+      // Sequential to avoid ethers' RPC batching â€” see MarketplaceIndexer
       // comment for rationale. Batched member-failures on rate limit are
       // far more painful than a 300ms serial latency hit.
       const created = await contract.queryFilter(contract.filters.SessionCreated(), cursor, toBlock)
@@ -1019,20 +1023,24 @@ async function syncL2Events(): Promise<void> {
         return ((a.ev as any).index ?? (a.ev as any).logIndex ?? 0) - ((b.ev as any).index ?? (b.ev as any).logIndex ?? 0)
       })
 
-      for (const { ev, kind } of combined) {
-        const args = (ev as any).args
-        if (!args) continue
-        if (kind === 'created') await handleSessionCreated(args)
-        else if (kind === 'revoked') await handleSessionRevoked(args)
-        else if (kind === 'authed') await handleAuthenticated(args)
-      }
-
+      // Apply primary state and its cursor atomically. A later write failure must
+      // not leave a creation visible for other services to account against before
+      // the same creation is replayed. RPC acquisition stays outside the transaction.
+      await prisma.$transaction(async (db) => {
+        for (const { ev, kind } of combined) {
+          const args = (ev as any).args
+          if (!args) continue
+          if (kind === 'created') await handleSessionCreated(args, db)
+          else if (kind === 'revoked') await handleSessionRevoked(args, db)
+          else if (kind === 'authed') await handleAuthenticated(args, db)
+        }
+        await setLastSyncedL2Block(toBlock, db)
+      })
       totalEvents += combined.length
-      await setLastSyncedL2Block(toBlock)
     } catch (err: any) {
       console.error(`[ChainSync:L2Events] getLogs failed for range ${cursor}-${toBlock}:`, err.message?.slice(0, 200))
       maybeRebuildProviders(err)
-      // Break out — next tick will retry from the current cursor
+      // Break out â€” next tick will retry from the current cursor
       return
     }
 
@@ -1086,7 +1094,7 @@ async function setLastSyncedL1FeeBlock(block: number): Promise<void> {
   })
 }
 
-// ── Fee-field mapping ─────────────────────────────────────────────────────────
+// â”€â”€ Fee-field mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CawNetworkManager.NetworkFeeUpdated emits feeType as a plain string.
 // Map it to the Prisma Network column name.
 const FEE_TYPE_TO_COLUMN: Record<string, 'withdrawFee' | 'depositFee' | 'authFee' | 'mintFee'> = {
@@ -1096,7 +1104,7 @@ const FEE_TYPE_TO_COLUMN: Record<string, 'withdrawFee' | 'depositFee' | 'authFee
   mint:     'mintFee',
 }
 
-// ── Event handlers ────────────────────────────────────────────────────────────
+// â”€â”€ Event handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function handleNetworkCreated(args: any, txHash: string): Promise<void> {
   const networkId = Number(args.networkId)
@@ -1163,7 +1171,7 @@ async function handleNetworkFeeUpdated(args: any): Promise<void> {
     console.log(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId} ${column}=${newFee.toString()}`)
   } catch (err: any) {
     if (err.code === 'P2025') {
-      // Network row doesn't exist yet — the NetworkCreated event was missed or
+      // Network row doesn't exist yet â€” the NetworkCreated event was missed or
       // is in the same chunk after this one. syncAllNetworks() will fill it in.
       console.warn(`[ChainSync:L1FeeEvents] NetworkFeeUpdated: networkId=${networkId} not in DB yet; fee update will be applied on next full sync`)
     } else {
@@ -1185,7 +1193,7 @@ async function handleFeeCeilingLowered(
       where: { id: networkId },
       data:  { [ceilingColumn]: newCeiling, lastSyncedAt: new Date() },
     })
-    console.log(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId}, ${oldCeiling} → ${newCeiling}`)
+    console.log(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId}, ${oldCeiling} â†’ ${newCeiling}`)
   } catch (err: any) {
     if (err.code === 'P2025') {
       console.warn(`[ChainSync:L1FeeEvents] ${ceilingColumn}: networkId=${networkId} not in DB yet; ceiling update will be applied on next full sync`)
@@ -1197,7 +1205,7 @@ async function handleFeeCeilingLowered(
 
 async function syncL1FeeEvents(): Promise<void> {
   if (!l1Provider || !NETWORK_MANAGER_ADDRESS) {
-    console.log('[ChainSync:L1FeeEvents] Skipping — L1 provider not available')
+    console.log('[ChainSync:L1FeeEvents] Skipping â€” L1 provider not available')
     return
   }
 
@@ -1262,7 +1270,7 @@ async function syncL1FeeEvents(): Promise<void> {
       await setLastSyncedL1FeeBlock(toBlock)
     } catch (err: any) {
       console.error(`[ChainSync:L1FeeEvents] getLogs failed for range ${cursor}-${toBlock}:`, err.message?.slice(0, 200))
-      // Break out — next tick will retry from the current cursor
+      // Break out â€” next tick will retry from the current cursor
       return
     }
 
@@ -1320,12 +1328,12 @@ export const chainSyncService = {
   start(cfg: ChainSyncConfig, ctx: import('../../Service').HeartbeatContext) {
     console.log('[ChainSync] Starting service...')
 
-    // Resolve env vars — config.json may contain "${VAR}" literals.
+    // Resolve env vars â€” config.json may contain "${VAR}" literals.
     // Helpers also wrap the URL with the optional Basic Auth secret when
     // <RPC>_SECRET is set, so backend traffic can bypass an Infura origin
     // allowlist that's locked down for the frontend bundle's safety.
     const resolvedCfg: ChainSyncConfig = {
-      // L1 RPC is Sepolia (where CawNetworkManager lives) — NOT mainnet
+      // L1 RPC is Sepolia (where CawNetworkManager lives) â€” NOT mainnet
       l1RpcUrl: getL1HttpRpcUrl() || cfg.l1RpcUrl,
       l2RpcUrl: getL2HttpRpcUrl() || cfg.l2RpcUrl,
       ethMainnetRpcUrl: getEthMainnetHttpRpcUrl(cfg.ethMainnetRpcUrl) || '',
@@ -1342,7 +1350,7 @@ export const chainSyncService = {
       ethMainnetRpcUrl: redactRpcUrl(resolvedCfg.ethMainnetRpcUrl),
     })
 
-    // Initialize providers — this awaits chainId verification (a wrong-chain RPC
+    // Initialize providers â€” this awaits chainId verification (a wrong-chain RPC
     // throws rather than being silently trusted). start() must return synchronously
     // per the Service interface, so we hold the init promise and surface it via
     // `started` below. Registered tasks poll on intervals and early-return while
@@ -1360,11 +1368,11 @@ export const chainSyncService = {
       interval: 30 * 60 * 1000, // 30 minutes
       sync: syncAllNetworks,
     })
-    ctx.declareLoop('ChainSync:Clients', 90 * 60_000) // 3× interval
+    ctx.declareLoop('ChainSync:Clients', 90 * 60_000) // 3Ã— interval
 
     // V2: poll for NetworkFeeUpdated + *FeeCeilingLowered events from
     // CawNetworkManager on L1. Logs at INFO only for now; cache invalidation
-    // is a follow-up. Runs every 5 minutes — fee changes are rare and the
+    // is a follow-up. Runs every 5 minutes â€” fee changes are rare and the
     // L2_EVENT_CHUNK_SIZE cap keeps each call well under the free-tier 50K
     // block getLogs ceiling.
     if (resolvedCfg.l1RpcUrl) {
@@ -1373,7 +1381,7 @@ export const chainSyncService = {
         interval: 5 * 60 * 1000, // 5 minutes
         sync: syncL1FeeEvents,
       })
-      ctx.declareLoop('ChainSync:L1FeeEvents', 15 * 60_000) // 3× interval
+      ctx.declareLoop('ChainSync:L1FeeEvents', 15 * 60_000) // 3Ã— interval
 
       // Live LayerZero deposit-relay fee (CawProfile.lzQuote), on the SAME
       // interval/loop shape as the mainnet gas price it pairs with in the
@@ -1384,7 +1392,7 @@ export const chainSyncService = {
         interval: 5 * 60 * 1000, // 5 minutes
         sync: syncLzDepositFee,
       })
-      ctx.declareLoop('ChainSync:LzDepositFee', 15 * 60_000) // 3× interval
+      ctx.declareLoop('ChainSync:LzDepositFee', 15 * 60_000) // 3Ã— interval
     }
 
     // Only register price sync if we have mainnet RPC
@@ -1394,19 +1402,19 @@ export const chainSyncService = {
         interval: 5 * 60 * 1000, // 5 minutes
         sync: syncPrices
       })
-      ctx.declareLoop('ChainSync:Prices', 15 * 60_000) // 3× interval
+      ctx.declareLoop('ChainSync:Prices', 15 * 60_000) // 3Ã— interval
     }
 
-    // L2 event indexing (SessionKey + ClientAuth) — drives action-submission
+    // L2 event indexing (SessionKey + ClientAuth) â€” drives action-submission
     // validation off-chain. Needs to be fresh so users see session creation
     // / revocation reflected quickly.
     if (resolvedCfg.l2RpcUrl) {
       registerTask({
         name: 'L2Events',
-        interval: 60 * 1000, // 60 seconds (was 15s — too aggressive for Infura rate limits)
+        interval: 60 * 1000, // 60 seconds (was 15s â€” too aggressive for Infura rate limits)
         sync: syncL2Events,
       })
-      ctx.declareLoop('ChainSync:L2Events', 4 * 60 * 1000) // 4× interval (240s)
+      ctx.declareLoop('ChainSync:L2Events', 4 * 60 * 1000) // 4Ã— interval (240s)
     }
 
     // Start all tasks
