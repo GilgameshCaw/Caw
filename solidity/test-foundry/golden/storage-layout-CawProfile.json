@@ -195,13 +195,13 @@
     "label": "networkManager",
     "slot": "30",
     "offset": 0,
-    "type": "t_contract(CawNetworkManager)12684"
+    "type": "t_contract(CawNetworkManager)"
   },
   {
     "label": "buyAndBurn",
     "slot": "31",
     "offset": 0,
-    "type": "t_contract(CawBuyAndBurn)8937"
+    "type": "t_contract(CawBuyAndBurn)"
   },
   {
     "label": "accruedFees",

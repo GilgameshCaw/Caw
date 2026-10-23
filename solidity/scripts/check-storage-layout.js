@@ -30,14 +30,16 @@ const CONTRACTS = [
 ];
 
 /**
- * Strip AST node IDs embedded in struct/enum type strings so goldens are
- * stable across recompilations. Example:
+ * Strip AST node IDs embedded in struct/enum/contract type strings so goldens
+ * are stable across recompilations. Example:
  *   "t_struct(CawNetwork)457_storage" → "t_struct(CawNetwork)_storage"
+ *   "t_contract(CawNetworkManager)12684" → "t_contract(CawNetworkManager)"
  *   "t_mapping(t_uint32,t_struct(CawNetwork)457_storage)" → normalised recursively
+ * Fixed array lengths ("t_array(t_uint256)5_storage") are kept.
  */
 function normaliseType(t) {
-  // Replace )NNN_ (AST ID embedded between closing paren and underscore) with )_
-  return t.replace(/\)(\d+)_/g, ')_');
+  // Drop the AST ID that follows a named type's closing paren
+  return t.replace(/(t_(?:struct|enum|contract|userDefinedValueType)\([^()]*\))\d+/g, '$1');
 }
 
 function getStorageLayout(contractName) {
