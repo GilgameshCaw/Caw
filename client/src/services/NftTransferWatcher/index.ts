@@ -10,7 +10,7 @@ import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
-import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
+import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeVerifiedResilientHttpProvider, redactRpcUrl, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -265,12 +265,11 @@ export const nftTransferWatcherService: Service = {
       await prisma.$connect()
 
       const expectedL1ChainId = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : cfg.chainId
-      // Probe once for a clear chainId error at startup, then run on a self-healing
-      // provider so a degraded L1 RPC rebuilds itself instead of wedging the poll
-      // loop forever (2026-07-10 incident). Provider + contract are re-derived from
-      // rpc.get() each tick; connection errors call rpc.reportError() to rebuild.
-      await makeVerifiedJsonRpcProvider(rpcUrl, expectedL1ChainId)
-      const rpc: ResilientProvider = makeResilientHttpProvider(
+      // Probe every L1 URL once for a clear chainId error at startup, then run on a
+      // self-healing provider so a degraded L1 RPC rebuilds itself instead of wedging
+      // the poll loop forever (2026-07-10 incident). Provider + contract are re-derived
+      // from rpc.get() each tick; connection errors call rpc.reportError() to rebuild.
+      const rpc: ResilientProvider = await makeVerifiedResilientHttpProvider(
         getL1HttpRpcUrls(cfg.l1RpcUrl), expectedL1ChainId, { label: 'NftTransferWatcher/L1' },
       )
       let provider = rpc.get()

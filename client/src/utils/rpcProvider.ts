@@ -1,4 +1,4 @@
-import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider, FetchRequest } from 'ethers'
+import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider, FetchRequest, getBigInt } from 'ethers'
 
 /**
  * Redact userinfo (basic-auth credentials) from an RPC URL for safe
@@ -469,17 +469,23 @@ function buildAuthenticatedFetchRequest(url: string, explicitSecret?: string): F
  *
  * The warning message explicitly tells the operator to check L*_RPC_URL_HTTP
  * so they can act on it without grepping source code.
+ *
+ * Asks eth_chainId through send(), not getNetwork(): our providers are built
+ * with staticNetwork (or a pinned FallbackProvider), so getNetwork() returns
+ * the expected chain without asking the RPC.
  */
-async function verifyChainId(provider: { getNetwork(): Promise<{ chainId: bigint } > }, expectedChainId: number, url: string): Promise<void> {
+async function verifyChainId(provider: { send(method: string, params: any[]): Promise<any> }, expectedChainId: number, url: string): Promise<void> {
   const PROBE_TIMEOUT_MS = 10_000
-  let net: { chainId: bigint }
+  let actual: number
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    net = await Promise.race([
-      provider.getNetwork(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS)
-      ),
+    const raw = await Promise.race([
+      provider.send('eth_chainId', []),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS)
+      }),
     ])
+    actual = Number(getBigInt(raw))
   } catch (e: any) {
     console.warn(
       `[rpcProvider] chain-ID probe failed for ${redactRpcUrl(url)} — ` +
@@ -488,14 +494,24 @@ async function verifyChainId(provider: { getNetwork(): Promise<{ chainId: bigint
       `verify L*_RPC_URL_HTTP. Error: ${e?.message || e}`
     )
     return
+  } finally {
+    clearTimeout(timer)
   }
-  const actual = Number(net.chainId)
   if (actual !== expectedChainId) {
     throw new Error(
       `ChainIdMismatchError: expected ${expectedChainId} got ${actual} on ${redactRpcUrl(url)}. ` +
       `This is a DNS/BGP trust boundary violation. Check L*_RPC_URL_HTTP points at the right chain.`
     )
   }
+}
+
+/**
+ * verifyChainId for each URL of a fallback set. A FallbackProvider has no
+ * send(), and any of its URLs can serve a request, so probe them all
+ * through throw-away single providers. Throws if any URL is on another chain.
+ */
+async function verifyChainIdAll(urls: string[], expectedChainId: number): Promise<void> {
+  await Promise.all(urls.map(url => verifyChainId(makeJsonRpcProvider(url, expectedChainId), expectedChainId, url)))
 }
 
 /**
@@ -612,7 +628,7 @@ export function makeWebSocketProvider(url: string, chainId?: number, secret?: st
 // VERIFIED PROVIDER FACTORIES
 // ============================================
 // These wrappers call makeJsonRpcProvider / makeFallbackJsonRpcProvider /
-// makeWebSocketProvider and then probe the RPC once via getNetwork() to
+// makeWebSocketProvider and then probe the RPC once via eth_chainId to
 // assert the returned chainId matches the expected value. Protects indexers
 // against DNS hijack / BGP poisoning / misconfigured RPC URLs that could
 // route them to the wrong chain and produce slashable submissions.
@@ -633,15 +649,12 @@ export async function makeVerifiedJsonRpcProvider(url: string, expectedChainId: 
 }
 
 /**
- * Like makeFallbackJsonRpcProvider but probes the primary URL's chainId once.
- * Uses the first URL for the probe (it's the operator-configured primary).
+ * Like makeFallbackJsonRpcProvider but probes every URL's chainId once,
+ * since the FallbackProvider can route any request to any of them.
  */
 export async function makeVerifiedFallbackJsonRpcProvider(urls: string[], expectedChainId: number): Promise<AbstractProvider> {
   const provider = makeFallbackJsonRpcProvider(urls, expectedChainId)
-  // Probe via the first URL — FallbackProvider doesn't expose getNetwork()
-  // in the same way, so we build a throw-away single provider for the probe only.
-  const probe = makeJsonRpcProvider(urls[0], expectedChainId)
-  await verifyChainId(probe, expectedChainId, urls[0])
+  await verifyChainIdAll(urls, expectedChainId)
   return provider
 }
 
@@ -650,8 +663,28 @@ export async function makeVerifiedFallbackJsonRpcProvider(urls: string[], expect
  */
 export async function makeVerifiedWebSocketProvider(url: string, expectedChainId: number, secret?: string): Promise<WebSocketProvider> {
   const provider = makeWebSocketProvider(url, expectedChainId, secret)
-  await verifyChainId(provider, expectedChainId, url)
+  try {
+    await verifyChainId(provider, expectedChainId, url)
+  } catch (e) {
+    // Don't leave the socket open behind a rejected provider.
+    try { provider.destroy() } catch { /* best effort */ }
+    throw e
+  }
   return provider
+}
+
+/**
+ * Like makeResilientHttpProvider (below) but probes every URL's chainId once
+ * first. Without it the first provider a resilient handle serves is never
+ * checked: only rebuilds verify-before-promote.
+ */
+export async function makeVerifiedResilientHttpProvider(
+  urls: string[],
+  chainId: number,
+  opts?: { label?: string },
+): Promise<ResilientProvider> {
+  await verifyChainIdAll(urls, chainId)
+  return makeResilientHttpProvider(urls, chainId, opts)
 }
 
 // ============================================
@@ -743,10 +776,10 @@ export function makeResilientHttpProvider(
     rebuilding = true
     console.warn(`[rpcProvider] resilient(${label}) rebuilding after connection error: ${reason}`)
     const candidate = makeFallbackJsonRpcProvider(urls, chainId)
-    // Probe the CANDIDATE's chainId before promoting it. verifyChainId throws
+    // Probe the CANDIDATE's URLs before promoting it. verifyChainIdAll throws
     // ONLY on a confirmed mismatch; a probe timeout / transient failure resolves
     // (warns) so we still promote a slow-but-alive RPC.
-    verifyChainId(candidate as any, chainId, urls[0])
+    verifyChainIdAll(urls, chainId)
       .then(() => {
         // Verified (or tolerated timeout) — promote, retiring the old provider.
         const old = current

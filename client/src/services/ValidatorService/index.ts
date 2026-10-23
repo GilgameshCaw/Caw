@@ -8,7 +8,7 @@ import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
 import { deployments, type Env, type ChainKey } from '../../abi/deployments'
-import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
+import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, solidityPacked, AbiCoder, getBigInt } from 'ethers'
 import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
@@ -4459,10 +4459,11 @@ console.log("succeededKeys", succeededKeys)
       // route the validator to a rogue archive on a different chain where
       // our stake gets drained. Fail loud here rather than discover the
       // mismatch via a slashed submission. Audit fix 2026-05-13 (V3).
+      // Ask eth_chainId directly: getNetwork() on this staticNetwork
+      // provider returns expectedChainId without asking the RPC.
       let actualChainId: bigint
       try {
-        const net = await provider.getNetwork()
-        actualChainId = net.chainId
+        actualChainId = getBigInt(await provider.send('eth_chainId', []))
       } catch (e: any) {
         throw new Error(`[OptimisticReplication] could not read chainId from REPLICATION_RPC: ${e?.message || e}`)
       }
