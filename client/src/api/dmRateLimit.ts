@@ -124,6 +124,26 @@ export async function recordInboundRelayHit(recipientId: number): Promise<{ allo
   }
 }
 
+// DECR only while the count is above 0. After the window has expired, a
+// plain DECR would create the key at -1 with no TTL.
+const REFUND_IF_POSITIVE = `if tonumber(redis.call('GET', KEYS[1]) or '0') > 0 then return redis.call('DECR', KEYS[1]) end return 0`
+
+/**
+ * Give back one hit taken by recordInboundRelayHit() for a message that
+ * turned out to be a duplicate. Copies of one envelope that arrive at the
+ * same time all pass the relayId dedup before any of them is stored, so
+ * each is charged; only one is stored, and the others end up on
+ * message.create's P2002 path. Best-effort: on a Redis error the hit
+ * stays counted.
+ */
+export async function refundInboundRelayHit(recipientId: number): Promise<void> {
+  try {
+    await redis.eval(REFUND_IF_POSITIVE, 1, KEY_INBOUND_RELAY(recipientId))
+  } catch (err: any) {
+    console.warn(`[DM Relay] refundInboundRelayHit failed for recipient=${recipientId}: ${err?.message ?? err}`)
+  }
+}
+
 const KEY_COLD = (senderId: number, recipientId: number) =>
   `caw:dm:rate:cold:${senderId}:${recipientId}`
 const KEY_WARM = (senderId: number, recipientId: number) =>

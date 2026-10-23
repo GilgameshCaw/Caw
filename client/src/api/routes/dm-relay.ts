@@ -26,6 +26,7 @@ import dmWebSocketService from '../../services/DmService/websocket'
 import { prisma } from '../../prismaClient'
 import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
+import { refundInboundRelayHit } from '../dmRateLimit'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
 import { peekInboundRelayRate, recordInboundRelayHit } from '../dmRateLimit'
@@ -420,6 +421,9 @@ router.post('/', async (req, res) => {
       })
     } catch (err: any) {
       if (err?.code === 'P2002') {
+        // The copy that won was charged at recordInboundRelayHit above;
+        // give this one's hit back.
+        await refundInboundRelayHit(Number(recipientId))
         const existingAfterRace = await prisma.message.findUnique({ where: { relayId }, select: { id: true } })
         return res.json({ status: 'duplicate', messageId: existingAfterRace?.id })
       }
