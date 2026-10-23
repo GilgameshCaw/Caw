@@ -28,6 +28,7 @@ import { getPeers } from '../../services/InstanceRegistryService'
 import { recoverAddressFromCanonical } from '../../services/InstanceRegistryService/envelopeCrypto'
 import { verifyDmSenderSig } from '../dmSenderSig'
 import { getNetworkId } from '../../utils/networkId'
+import { createOrFindOnRace } from '../../utils/createOrFindOnRace'
 import { peekInboundRelayRate, recordInboundRelayHit } from '../dmRateLimit'
 
 const router = Router()
@@ -121,17 +122,25 @@ async function ensureDmIdentity(userId: number): Promise<void> {
   })
   if (existing) return
 
-  await prisma.user.upsert({
-    where: { tokenId: userId },
-    update: {},
-    create: { id: userId, tokenId: userId, username: `user_${userId}` },
-  })
+  // A concurrent relay for the same user can create these rows between the
+  // check above and the upserts; createOrFindOnRace takes its row.
+  await createOrFindOnRace(
+    () => prisma.user.upsert({
+      where: { tokenId: userId },
+      update: {},
+      create: { id: userId, tokenId: userId, username: `user_${userId}` },
+    }),
+    () => prisma.user.findUnique({ where: { tokenId: userId } }),
+  )
 
-  await prisma.dmIdentity.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, walletAddress: '', publicKey: '' },
-  })
+  await createOrFindOnRace(
+    () => prisma.dmIdentity.upsert({
+      where: { userId },
+      update: {},
+      create: { userId, walletAddress: '', publicKey: '' },
+    }),
+    () => prisma.dmIdentity.findUnique({ where: { userId } }),
+  )
 }
 
 router.post('/', async (req, res) => {
@@ -348,30 +357,41 @@ router.post('/', async (req, res) => {
 
     // Get-or-create the conversation. On first contact we set the
     // recipient's participant.status per the rule above; the sender's
-    // is always ACCEPTED.
+    // is always ACCEPTED. Another relay for the same pair (a second
+    // message, or one going the other way) can create the conversation
+    // after the existingConv read above; we then use the one it created,
+    // which already has both participants.
     let conversation = existingConv
     if (!conversation) {
-      conversation = await prisma.conversation.create({
-        data: {
-          id: conversationId,
-          type: 'DM',
-          creatorId: Number(senderId),
-          participants: {
-            create: [
-              { userId: Number(senderId), status: 'ACCEPTED' },
-              { userId: Number(recipientId), status: recipientStatus },
-            ]
+      conversation = await createOrFindOnRace(
+        () => prisma.conversation.create({
+          data: {
+            id: conversationId,
+            type: 'DM',
+            creatorId: Number(senderId),
+            participants: {
+              create: [
+                { userId: Number(senderId), status: 'ACCEPTED' },
+                { userId: Number(recipientId), status: recipientStatus },
+              ]
+            }
           }
-        }
-      })
+        }),
+        () => prisma.conversation.findUnique({ where: { id: conversationId } }),
+      )
     } else {
       // Existing conversation — make sure the sender is a participant.
       // Idempotent upsert; status only set on insert.
-      await prisma.conversationParticipant.upsert({
-        where: { conversationId_userId: { conversationId, userId: Number(senderId) } },
-        create: { conversationId, userId: Number(senderId), status: 'ACCEPTED' },
-        update: {},
-      })
+      await createOrFindOnRace(
+        () => prisma.conversationParticipant.upsert({
+          where: { conversationId_userId: { conversationId, userId: Number(senderId) } },
+          create: { conversationId, userId: Number(senderId), status: 'ACCEPTED' },
+          update: {},
+        }),
+        () => prisma.conversationParticipant.findUnique({
+          where: { conversationId_userId: { conversationId, userId: Number(senderId) } },
+        }),
+      )
     }
 
     // Verify the inner sender sig (Round 7 #1b). The sig is signed
