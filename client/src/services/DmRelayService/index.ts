@@ -32,6 +32,14 @@
 //   SNI / common-name validation on standard Node https.Agent. Residual risk
 //   accepted for now: attacker must control both the peer's on-chain apiUrl
 //   AND the DNS resolver that serves this node. Documented here per audit.
+//   Redirects: both peer POSTs pass `redirect: 'error'`. fetch follows 3xx
+//   by default, and on 307/308 it re-sends the POST and its body to the
+//   Location, which nothing re-checks. A peer could point that at
+//   169.254.169.254 or a service on our loopback with control of its own
+//   server alone, no DNS needed, so following would sidestep the M-2
+//   assumption above. registerInstance is permissionless, so any address
+//   that pays for one tx can be a peer. A peer that moved updates its
+//   apiUrl on chain; the relay doesn't follow it.
 
 import 'dotenv/config'
 import { getPeers, getOwnInstanceId } from '../InstanceRegistryService'
@@ -41,38 +49,16 @@ import type { RelayEnvelope } from '../../api/routes/dm-relay'
 import { canonicalizeEnvelope } from '../../api/routes/dm-relay'
 import crypto from 'crypto'
 import { getNetworkId } from '../../utils/networkId'
+import { relayTargets } from './peerTargets'
 
 // Outbound relay fetches previously had no timeout: a hung/unreachable
 // peer would leave the request pending indefinitely, leaking a socket
-// per attempt. Both relay functions fire fetch() for every active peer
+// per attempt. Both relay functions fire fetch() for every peer URL
 // without awaiting or bounding concurrency, so a single unresponsive
 // peer (down for maintenance, network partition, overloaded) holds a
 // socket open indefinitely rather than failing fast. 5s is generous
 // for a same-network HTTP POST while still bounding the worst case.
 const DM_RELAY_TIMEOUT_MS = 5_000
-
-/**
- * Build a peer fetch URL using `new URL()` so path injection via a
- * maliciously-crafted apiUrl (e.g. "https://evil.com?x=") is blocked.
- *
- * Rules enforced (audit 2026-05-22 M-3):
- *   - apiUrl must not contain a query string or fragment — if it does,
- *     the path would be silently absorbed into the query param, sending
- *     the request to the wrong host.
- *   - The pathname is set (overwritten) explicitly to the given path so
- *     any trailing-path component in apiUrl also can't interfere.
- *
- * Throws on malformed apiUrl or disallowed query/fragment — callers
- * should catch and skip the peer rather than crashing the relay loop.
- */
-function buildPeerUrl(apiUrl: string, path: string): string {
-  const target = new URL(apiUrl)
-  if (target.search || target.hash) {
-    throw new Error(`peer apiUrl must have no query string or fragment: ${apiUrl}`)
-  }
-  target.pathname = path
-  return target.toString()
-}
 
 function requireClientId(): number {
   const raw = getNetworkId()
@@ -206,8 +192,8 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     }
   }
 
-  const peers = getPeers(networkId).filter(p => p.active && p.instanceId !== sourceInstanceId)
-  if (peers.length === 0) return { attempted: 0 }
+  const targets = relayTargets(getPeers(networkId), sourceInstanceId, '/api/dm/relay')
+  if (targets.length === 0) return { attempted: 0 }
 
   const envelope: RelayEnvelope = {
     encryptedPayload: params.encryptedPayload,
@@ -237,30 +223,25 @@ export async function relayDmToPeers(params: RelayParams): Promise<{ attempted: 
     senderSig: params.senderSig ?? null,
   })
 
-  for (const peer of peers) {
-    let peerUrl: string
-    try {
-      peerUrl = buildPeerUrl(peer.apiUrl, '/api/dm/relay')
-    } catch (urlErr: any) {
-      console.warn(`[DmRelay] Skipping peer ${peer.instanceId} — invalid apiUrl: ${urlErr.message}`)
-      continue
-    }
-    fetch(peerUrl, {
+  for (const target of targets) {
+    fetch(target.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
       signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
+      // A 3xx rejects instead of being followed (see "Redirects" above).
+      redirect: 'error',
     }).catch(err => {
       // Fire-and-forget. Network errors are routine (peer down,
       // unreachable), and so is the abort from the timeout above.
       // Don't spam the log on every failure.
       if (process.env.DM_RELAY_VERBOSE === '1') {
-        console.warn(`[DmRelay] Failed to relay to ${peer.apiUrl}:`, err.message)
+        console.warn(`[DmRelay] Failed to relay to ${target.apiUrl}:`, err.message)
       }
     })
   }
 
-  return { attempted: peers.length }
+  return { attempted: targets.length }
 }
 
 /**
@@ -320,8 +301,8 @@ export async function relayDmIdentityToPeers(params: {
   }
 
   const networkId = requireClientId()
-  const peers = getPeers(networkId).filter(p => p.active && p.instanceId !== sourceInstanceId)
-  if (peers.length === 0) return { attempted: 0 }
+  const targets = relayTargets(getPeers(networkId), sourceInstanceId, '/api/dm/identity/relay')
+  if (targets.length === 0) return { attempted: 0 }
 
   const envelope: IdentityRelayEnvelope = {
     userId: params.userId,
@@ -341,27 +322,21 @@ export async function relayDmIdentityToPeers(params: {
 
   const body = JSON.stringify({ ...envelope, signature })
 
-  for (const peer of peers) {
-    let peerUrl: string
-    try {
-      peerUrl = buildPeerUrl(peer.apiUrl, '/api/dm/identity/relay')
-    } catch (urlErr: any) {
-      console.warn(`[DmRelay] Skipping peer ${peer.instanceId} — invalid apiUrl: ${urlErr.message}`)
-      continue
-    }
-    fetch(peerUrl, {
+  for (const target of targets) {
+    fetch(target.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
       signal: AbortSignal.timeout(DM_RELAY_TIMEOUT_MS),
+      redirect: 'error',
     }).catch(err => {
       // Fire-and-forget, same as relayDmToPeers above — routine network
       // errors and timeout aborts are both expected here.
       if (process.env.DM_RELAY_VERBOSE === '1') {
-        console.warn(`[DmRelay] Failed to relay identity to ${peer.apiUrl}:`, err.message)
+        console.warn(`[DmRelay] Failed to relay identity to ${target.apiUrl}:`, err.message)
       }
     })
   }
 
-  return { attempted: peers.length }
+  return { attempted: targets.length }
 }
