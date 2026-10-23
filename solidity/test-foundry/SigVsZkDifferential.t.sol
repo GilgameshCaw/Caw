@@ -246,7 +246,6 @@ contract L2BalanceDifferentialTest is Test {
         MockLayerZeroEndpoint lzL2b = new MockLayerZeroEndpoint(3);           // base+4
 
         networkManager = new CawNetworkManager(address(buyAndBurn));          // base+5
-        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11); // no deploy
 
         // Deploy two CawProfileLedger instances — ctor wires cawProfile + cawActions
         l2A = new CawProfileLedger(   // base+6
@@ -287,6 +286,10 @@ contract L2BalanceDifferentialTest is Test {
         );
         require(address(cpA) == predictedCpA, "cpA nonce mismatch");
         require(address(cpB) == predictedCpB, "cpB nonce mismatch");
+
+        // After the predicted deploys: with isolation (forge's default), a
+        // state-changing call from this contract also bumps its nonce.
+        networkManager.createNetwork("TestNet", address(this), 2, 0, 0, 0, 0, 5e11);
 
         // Seed identical initial state: mint same tokens + deposit same amounts on both.
         // (minter is now immutable, set at construction above.)
