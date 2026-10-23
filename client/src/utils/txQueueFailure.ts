@@ -109,7 +109,13 @@ async function cleanupOptimisticRows(
       // currently sitting at status='published' (the processor flips it the
       // moment it queues the tx, before broadcast). Demote it to 'failed' so
       // the user sees it in the Failed tab on /scheduled instead of Published.
-      await prisma.scheduledCaw.updateMany({
+      //
+      // Skip that when this exact signed action is already indexed for
+      // (sender, cawonce): the failure belongs to a sibling submission
+      // (e.g. a peer mirror won the race and this row got "Cawonce already
+      // used"), and the post itself is on chain.
+      const alreadyIndexed = await signedActionIndexed(prisma, senderId, cawonce, actionData)
+      if (!alreadyIndexed) await prisma.scheduledCaw.updateMany({
         where: { userId: senderId, cawonce, status: 'published' },
         data: { status: 'failed' },
       })
@@ -283,6 +289,39 @@ async function cleanupOptimisticRows(
     }
   } catch (err: any) {
     console.warn(`[markTxQueueFailed] Optimistic cleanup failed for sender ${senderId}:`, err.message)
+  }
+}
+
+/**
+ * Whether the indexer already has an Action row for (senderId, cawonce)
+ * that is the same action as this signed payload. Same comparison as
+ * ValidatorService's sameActionAsPayload: the Action row's text is
+ * plaintext (RawEventsGatherer decompressed it), the payload's text is the
+ * signed smltxt hex. A failed lookup counts as "not indexed", which keeps
+ * the previous behaviour.
+ */
+async function signedActionIndexed(
+  prisma: PrismaClient,
+  senderId: number,
+  cawonce: number,
+  actionData: any
+): Promise<boolean> {
+  try {
+    const existing = await prisma.action.findFirst({
+      where: { senderId, cawonce },
+      select: { data: true },
+    })
+    if (!existing) return false
+    const ex = existing.data as any
+    return (
+      Number(ex?.actionType ?? -1) === Number(actionData.actionType) &&
+      Number(ex?.receiverId ?? -1) === Number(actionData.receiverId ?? 0) &&
+      Number(ex?.receiverCawonce ?? -1) === Number(actionData.receiverCawonce ?? 0) &&
+      (ex?.text ?? '') === decompressActionText(actionData.text)
+    )
+  } catch (err: any) {
+    console.warn(`[markTxQueueFailed] Action lookup failed for sender ${senderId} cawonce ${cawonce}:`, err.message)
+    return false
   }
 }
 
