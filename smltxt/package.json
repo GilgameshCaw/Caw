@@ -24,7 +24,7 @@
     "manual-test": "tsx programs/manualTest.ts"
   },
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "description": "Small-text compression for CAW posts",
   "devDependencies": {
     "@types/chai": "^4.3.16",
