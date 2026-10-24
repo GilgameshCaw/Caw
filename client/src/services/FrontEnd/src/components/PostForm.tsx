@@ -343,6 +343,8 @@ interface PostFormProps {
   placeholder?: string;
   /** force the spacious compose layout (used by the mobile compose sheet) */
   composeMode?: boolean;
+  /** Keep the main input visible while a responsive composer changes layout. */
+  keepInputVisible?: boolean;
   /** when true, publish draft state to the compose store so the mobile bottom nav can hide while typing */
   trackDraft?: boolean;
   /**
@@ -357,7 +359,7 @@ interface PostFormProps {
   mobileToolbarDivider?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false, autoFocus = true, mobileToolbarDivider = true }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, keepInputVisible = false, trackDraft = false, autoFocus = true, mobileToolbarDivider = true }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -2759,7 +2761,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       />
 
       {/* Mobile Layout - Input + Button */}
-      <div className={`${composeMode ? 'hidden' : 'md:hidden'} flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
+      <div className={`${composeMode || keepInputVisible ? 'hidden' : 'md:hidden'} flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
           {/* Input and Reply Button Row.
               min-w-0 on the input flex item is critical — without it
               the textarea's intrinsic min-content (1 line of text)
@@ -3325,7 +3327,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           glued to the keyboard edge while the textarea scrolls. On
           desktop the whole block lays out naturally — md: prefixes
           neutralize the mobile-only flex split. */}
-      <div className={`${composeMode ? 'flex flex-col flex-1 min-h-0 md:block' : 'hidden md:block'}`}>
+      <div className={`${composeMode ? 'flex flex-col flex-1 min-h-0 md:block' : keepInputVisible ? 'block' : 'hidden md:block'}`}>
         <div
           className={`${composeMode ? 'flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-4 md:p-0 md:max-h-[500px] md:overflow-y-auto' : 'md:max-h-[500px] md:overflow-y-auto'}`}
           onMouseMove={(e) => {
