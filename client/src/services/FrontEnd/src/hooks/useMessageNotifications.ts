@@ -17,9 +17,11 @@ function resolveSocketUrl(): string {
   return typeof window !== 'undefined' ? window.location.origin : ''
 }
 
+// The server sends the stored Message row (dm.ts, dm-relay.ts). Its text is
+// only in encryptedPayload, which this hook can't decrypt, so there is no
+// plaintext content to read here.
 interface Message {
   id: string
-  content: string
   senderId: number
   conversationId: string
   createdAt: string
@@ -67,9 +69,7 @@ export function useMessageNotifications({
     if (document.hasFocus()) return // Don't show if user is on the page
 
     const title = message.sender?.user.username || 'New Message'
-    const body = message.content.length > 100
-      ? message.content.substring(0, 100) + '...'
-      : message.content
+    const body = 'Encrypted message'
 
     const notification = new Notification(title, {
       body,
