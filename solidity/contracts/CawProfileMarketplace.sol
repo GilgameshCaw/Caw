@@ -8,7 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 interface ICawProfileTransfer is IERC721 {
-    function transferAndSync(address to, uint256 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable;
+    function syncTransfer(uint32 lzDestId, uint256 lzTokenAmount) external payable;
+    function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory);
+    function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool payInLzToken) external view returns (uint256 nativeFee, uint256 lzTokenFee);
 }
 
 /**
@@ -230,7 +232,8 @@ contract CawProfileMarketplace is ReentrancyGuard {
      * @param lzDestId The LZ eid of the L2 the token's owner-record should be
      *        synced to (the chain the buyer will actually use the profile on).
      *        Pass 0 to fall back to the marketplace's `defaultLzDestId`.
-     *        Excess ETH (msg.value - price) funds the LZ send; see transferAndSync.
+     *        Excess ETH (msg.value - price) funds the LZ send; what the send doesn't
+     *        use is returned to msg.sender (see _transferAndSync).
      */
     function buy(uint256 listingId, uint32 lzDestId) external payable nonReentrant {
         Listing storage listing = listings[listingId];
@@ -251,10 +254,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         emit PayoutQueued(listing.seller, price);
 
         // Transfer NFT to buyer and sync L2 ownership (excess ETH covers LZ fee)
-        uint256 lzFee = msg.value - price;
-        cawProfile.transferAndSync{value: lzFee}(
-            msg.sender, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
-        );
+        _transferAndSync(listing.seller, msg.sender, listing.tokenId, lzDestId, msg.value - price);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, address(0));
     }
@@ -284,9 +284,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         pendingTokenPayouts[listing.seller][listing.paymentToken] += price;
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(
-            msg.sender, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
-        );
+        _transferAndSync(listing.seller, msg.sender, listing.tokenId, lzDestId, msg.value);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, listing.paymentToken);
     }
@@ -399,9 +397,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to winner and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(
-            listing.highestBidder, listing.tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
-        );
+        _transferAndSync(listing.seller, listing.highestBidder, listing.tokenId, lzDestId, msg.value);
 
         emit AuctionSettled(listingId, listing.highestBidder, listing.highestBid);
     }
@@ -646,9 +642,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         }
 
         // Transfer NFT to offerer and sync L2 (msg.value covers LZ fee)
-        cawProfile.transferAndSync{value: msg.value}(
-            offer.offerer, tokenId, lzDestId == 0 ? defaultLzDestId : lzDestId, 0
-        );
+        _transferAndSync(msg.sender, offer.offerer, tokenId, lzDestId, msg.value);
 
         emit OfferAccepted(offerId, tokenId, msg.sender, offer.offerer, offer.amount, offer.paymentToken);
     }
@@ -776,6 +770,55 @@ contract CawProfileMarketplace is ReentrancyGuard {
     // ============================================
     // INTERNAL
     // ============================================
+
+    bytes4 private constant UPDATE_OWNERS_SELECTOR = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+
+    /// @dev Transfer the token, pay exactly the LZ fee for the owner sync, and
+    ///      return the rest of `lzEth` to msg.sender, who funded it.
+    ///
+    ///      Not transferAndSync: CawProfile refunds unused LZ ETH to tx.origin,
+    ///      which under an EIP-7702 relay (SmartEOA.executeBatch) is the relayer,
+    ///      not the buyer whose ETH it was. Quoting the queue on-chain after the
+    ///      transfer and sending that exact fee leaves CawProfile nothing to refund.
+    ///      Same queue flush as transferAndSync (syncTransfer → _updateNewOwners).
+    ///      Same MP-1 fallback as cancelOffer: a caller that can't take ETH gets
+    ///      it via pendingPayouts.
+    ///
+    ///      `from` is the seller the sale pays. Listings don't escrow the token,
+    ///      so a seller can transfer it away while the listing is still active;
+    ///      moving it from ownerOf() would then take the new owner's token (if
+    ///      they have approved the marketplace) and pay the old seller. With
+    ///      `from` the transfer reverts instead, and reclaimListing / reclaimBid
+    ///      clear the listing.
+    function _transferAndSync(address from, address to, uint256 tokenId, uint32 lzDestId, uint256 lzEth) internal {
+        cawProfile.transferFrom(from, to, tokenId);
+
+        uint32 eid = lzDestId == 0 ? defaultLzDestId : lzDestId;
+        (uint32[] memory ids, address[] memory owners, uint64[] memory stamps) =
+            cawProfile.pendingTransferUpdates(eid, address(0), 0);
+        uint256 fee;
+        // Empty queue: token not on this L2, or eid is mainnet (synced in the transfer).
+        if (ids.length > 0) {
+            (fee, ) = cawProfile.lzQuote(
+                0, UPDATE_OWNERS_SELECTOR, ids.length,
+                abi.encodeWithSelector(UPDATE_OWNERS_SELECTOR, ids, owners, stamps),
+                eid, false
+            );
+            // The contract also holds escrowed bids/offers/payouts. `lzEth - fee`
+            // below would revert anyway; this just says why.
+            require(lzEth >= fee, "Insufficient LZ fee");
+            cawProfile.syncTransfer{value: fee}(eid, 0);
+        }
+
+        uint256 refund = lzEth - fee;
+        if (refund > 0) {
+            (bool sent,) = msg.sender.call{value: refund, gas: 30000}("");
+            if (!sent) {
+                pendingPayouts[msg.sender] += refund;
+                emit PayoutQueued(msg.sender, refund);
+            }
+        }
+    }
 
     function _getCurrentPrice(Listing storage listing) internal view returns (uint256) {
         if (listing.listingType == ListingType.FIXED) {

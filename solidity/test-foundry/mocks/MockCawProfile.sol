@@ -5,8 +5,9 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
 /// @notice Minimal stand-in for CawProfile that satisfies the
 ///         `ICawProfileTransfer` interface used by CawProfileMarketplace.
-///         `transferAndSync` is a thin wrapper around `safeTransferFrom`,
-///         dropping the LayerZero side-effect (irrelevant under Foundry).
+///         Transfers are plain ERC721; there is no LayerZero (irrelevant under
+///         Foundry), so the owner-sync queue is always empty and the marketplace
+///         never sends a fee — it returns all of the LZ ETH to its caller.
 ///         The marketplace approves itself via `setApprovalForAll`.
 contract MockCawProfile is ERC721 {
     constructor() ERC721("MockCAW", "MCAW") {}
@@ -15,24 +16,15 @@ contract MockCawProfile is ERC721 {
         _safeMint(to, tokenId);
     }
 
-    /// @dev Mirrors `CawProfile.transferAndSync(to, tokenId, lzDestId, lzTokenAmount)`.
-    ///      Marketplace calls this with `value: lzFee` — we accept the ETH and
-    ///      forward nothing onward (no LZ in the test).
-    function transferAndSync(address to, uint256 tokenId, uint32 /*lzDestId*/, uint256 /*lzTokenAmount*/)
+    function pendingTransferUpdates(uint32, address, uint32)
         external
-        payable
-    {
-        // The marketplace pre-checks ownership/approval; mirror real semantics.
-        address from = ownerOf(tokenId);
-        // Marketplace is approved-for-all by the seller, so it's authorized to
-        // initiate this. We don't enforce that here — this is a test stand-in.
-        _transfer(from, to, tokenId);
+        pure
+        returns (uint32[] memory, address[] memory, uint64[] memory)
+    {}
 
-        // Refund any ETH the marketplace forwarded for "LZ fee" — keeps the
-        // marketplace's ETH balance clean and avoids leaking value to a mock.
-        if (msg.value > 0) {
-            (bool ok, ) = msg.sender.call{value: msg.value}("");
-            require(ok, "refund fail");
-        }
+    function lzQuote(uint32, bytes4, uint256, bytes memory, uint32, bool) external pure returns (uint256, uint256) {}
+
+    function syncTransfer(uint32, uint256) external payable {
+        revert("no LZ queue in mock");
     }
 }
