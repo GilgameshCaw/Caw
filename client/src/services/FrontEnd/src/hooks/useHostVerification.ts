@@ -103,9 +103,12 @@ export const useHostVerificationStore = create<HostVerificationState>()(
 )
 
 /**
- * Verify a post by checking the EIP-712 signature against the action data.
- * Fetches the proof from /api/caws/verify/:userId/:cawonce, then recovers
- * the signer and checks it matches the expected author address.
+ * Fetches the proof from /api/caws/verify/:userId/:cawonce and checks that its
+ * signed text contains the displayed content. The EIP-712 signature is checked
+ * only when `authorAddress` is given, and Feed (the only caller) doesn't pass
+ * one, so this is a content check. The data, domain, types and signature all
+ * come from the host being checked, so a host that lies on purpose can return
+ * a proof that passes.
  */
 async function verifyPostSignature(
   userId: number,
@@ -138,7 +141,10 @@ async function verifyPostSignature(
     }
 
     // Recover the signer from the EIP-712 signature
-    // If we have the author's address, verify it matches
+    // If we have the author's address, verify it matches. Feed doesn't pass
+    // one (CawItem.user has no address). Passing the owner's address alone
+    // would fail honest posts: an action signed with a session key recovers
+    // to the session key, not the owner.
     if (authorAddress) {
       const isValid = await verifyTypedData({
         address: authorAddress as `0x${string}`,
@@ -163,8 +169,14 @@ async function verifyPostSignature(
 }
 
 /**
- * Hook that spot-checks posts from the feed by verifying EIP-712 signatures.
- * Randomly verifies ~5% of posts. If verification fails, flags the current host.
+ * Hook that spot-checks posts from the feed against the host's own proof.
+ * Randomly checks ~5% of posts. If a check fails, flags the current host.
+ *
+ * NOTE: signatures aren't verified today (see verifyPostSignature), and the
+ * proof comes from the host itself, so this can't catch a dishonest host.
+ * That needs the author's keys and the EIP-712 domain from outside the host
+ * (chain or config), and a check that the proof is for the requested userId
+ * and cawonce.
  *
  * @param posts Array of posts with user info, cawonce, content, and status
  */

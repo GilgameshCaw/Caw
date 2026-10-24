@@ -399,7 +399,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     }
   }), [cacheKey])
 
-  // Spot-check posts against on-chain data to detect dishonest API hosts
+  // Spot-check posts against the host's /api/caws/verify proof. This is a
+  // content check, not a signature or on-chain check: no author address is
+  // passed (see useHostVerification).
   // Memoize to avoid creating new arrays on every render
   const verificationItems = useMemo(() => filteredItems.map(item => ({
     user: { tokenId: item.user?.tokenId || 0 },
