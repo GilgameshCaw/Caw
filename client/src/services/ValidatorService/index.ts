@@ -11,6 +11,7 @@ import { deployments, type Env, type ChainKey } from '../../abi/deployments'
 import { WebSocketProvider, JsonRpcProvider, Contract, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
+import { rpcErrorText, revertReasonText } from '../../utils/rpcErrorText'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
@@ -2094,8 +2095,8 @@ export const validatorService: Service = {
           const errData: string | undefined =
             err?.data || err?.error?.data || err?.info?.error?.data
           const decoded = errData ? decodeCustomError(errData) : null
-          const revertMatch = err.message.match(/execution reverted: (.+)/);
-          const revertReason = decoded || revertMatch?.[1] || err.message;
+          // Not err.message: it carries the whole tx (from, calldata), see rpcErrorText.
+          const revertReason = revertReasonText(err, decoded);
           console.log(`Execution reverted with reason: ${revertReason}`);
 
           // Check for specific duplicate cawonce error
@@ -2151,7 +2152,7 @@ export const validatorService: Service = {
           } else if (err.message?.includes('already known')) {
             return 'Transaction already known - duplicate cawonce';
           } else {
-            return `Simulation error: ${err.message || 'Unknown error'}`;
+            return `Simulation error: ${rpcErrorText(err) || 'Unknown error'}`;
           }
         });
 
