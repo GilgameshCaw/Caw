@@ -76,10 +76,10 @@ contract SmartEOATest is Test {
     bytes32 constant TEST_DIGEST = bytes32(0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef);
 
     // =========================================================================
-    // WebAuthn authenticatorData (37-byte minimal)
+    // WebAuthn authenticatorData (37-byte minimal, flags = UP|UV)
     // =========================================================================
 
-    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000000000000";
+    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000500000000";
 
     // =========================================================================
     // Test infrastructure

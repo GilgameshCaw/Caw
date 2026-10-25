@@ -66,7 +66,7 @@ contract SmartEOAGasTest is Test {
     // =========================================================================
 
     /// @dev 37-byte minimal authenticatorData (all zeros — valid for testing).
-    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000000000000";
+    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000500000000";
 
     /// @dev The ERC-1271 digest we test against.
     bytes32 constant TEST_DIGEST = bytes32(0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef);

@@ -15,7 +15,7 @@ contract SmartEOAExecuteTest is Test {
     bytes32 constant PK1_Y = bytes32(0xf18e3dafea96113646f34a71badc522653c4f0bdc86ffc6255db7823b4edd221);
     bytes32 constant SIG_R = bytes32(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);
     bytes32 constant SIG_S = bytes32(0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
-    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000000000000";
+    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000500000000";
 
     uint256 internal constant ECDSA_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     uint256 internal constant OTHER_PK = 0xde9be858da4a475276426320d5e9262ecfc3ba460bfac56360bfa6c4c28b4ee0;

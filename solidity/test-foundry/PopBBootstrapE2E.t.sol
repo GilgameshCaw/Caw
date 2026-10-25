@@ -299,7 +299,7 @@ contract PopBBootstrapE2ETest is Test {
     bytes32 constant SIG_S = bytes32(0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
 
     // Minimal 37-byte authenticatorData (all zeros).
-    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000000000000";
+    bytes constant AUTH_DATA = hex"00000000000000000000000000000000000000000000000000000000000000000500000000";
 
     // =========================================================================
     // secp256k1 key for ecdsaFallback

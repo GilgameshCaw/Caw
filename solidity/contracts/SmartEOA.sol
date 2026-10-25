@@ -728,6 +728,7 @@ contract SmartEOA {
     ///
     ///      Steps:
     ///      1. ABI-decode authenticatorData, clientDataJSON, r, s from sig.
+    ///      1a. Check UP + UV flags and clientDataJSON type (_webAuthnEnvelopeOk).
     ///      2. Parse "challenge" field from clientDataJSON.
     ///      3. Base64url-decode the challenge and compare to digest.
     ///      4. Compute sha256(authenticatorData || sha256(clientDataJSON)).
@@ -745,6 +746,11 @@ contract SmartEOA {
             bytes32 r,
             bytes32 s
         ) = abi.decode(sig, (bytes, bytes, bytes32, bytes32));
+
+        // Step 1a: assertion envelope (UP + UV, type "webauthn.get").
+        if (!_webAuthnEnvelopeOk(authenticatorData, clientDataJSON)) {
+            return ERC1271_FAIL_VALUE;
+        }
 
         // Step 2 + 3: parse challenge and verify it equals digest.
         if (!_challengeMatchesDigest(clientDataJSON, digest)) {
@@ -794,6 +800,30 @@ contract SmartEOA {
         bytes memory input = abi.encodePacked(h, r, s, qx, qy);
         (bool ok, bytes memory result) = P256_PRECOMPILE.staticcall(input);
         return ok && result.length == 32 && uint256(bytes32(result)) == 1;
+    }
+
+    /// @dev Check the parts of a WebAuthn assertion that the P-256 signature
+    ///      alone does not pin down:
+    ///      - authenticatorData flags (byte 32) have UP (0x01) and UV (0x04) set.
+    ///        The FE requests userVerification: 'required' on every ceremony,
+    ///        so honest assertions always carry both.
+    ///      - clientDataJSON starts with `{"type":"webauthn.get",`.  WebAuthn
+    ///        §5.8.1.1 serialises `type` first, and every browser follows it.
+    ///        This rejects a webauthn.create (registration) signature, or any
+    ///        other payload the credential signed, presented as an assertion.
+    ///      rpIdHash and origin are not checked here (see passkeyVerify.ts).
+    function _webAuthnEnvelopeOk(bytes memory authenticatorData, bytes memory clientDataJSON)
+        internal
+        pure
+        returns (bool)
+    {
+        if (authenticatorData.length < 37) return false;
+        if (uint8(authenticatorData[32]) & 0x05 != 0x05) return false;
+
+        // bytes23(...) reads the first 23 bytes (zero-padded if shorter, hence
+        // the length check).
+        if (clientDataJSON.length < 23) return false;
+        return bytes23(clientDataJSON) == bytes23('{"type":"webauthn.get",');
     }
 
     /// @dev Parse the "challenge" field from clientDataJSON and verify it matches
@@ -992,6 +1022,11 @@ contract SmartEOA {
             r = _r;
             s = _s;
         } catch {
+            return (bytes32(0), false);
+        }
+
+        // Assertion envelope (UP + UV, type "webauthn.get").
+        if (!_webAuthnEnvelopeOk(authenticatorData, clientDataJSON)) {
             return (bytes32(0), false);
         }
 
