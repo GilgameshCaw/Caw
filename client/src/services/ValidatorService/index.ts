@@ -22,6 +22,7 @@ import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
+import { isCawonceUsedRejection, settleCawonceUsedRejection, type CawonceUsedSettlement } from '../../utils/cawonceUsedRejection'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 
@@ -2838,6 +2839,39 @@ console.log("succeededKeys", succeededKeys)
       }))
     }
 
+    /**
+     * A row the simulation rejected with "Cawonce already used" in a batch
+     * where other rows passed: resolve it as the all-rejected paths do.
+     * See utils/cawonceUsedRejection for what each result leaves to the caller.
+     */
+    async function settleCawonceUsed(entry: any): Promise<CawonceUsedSettlement> {
+      const data = (entry.payload as any).data
+      const settled = await settleCawonceUsedRejection({
+        resolve: () => resolveCawonceUsed(data, entry.updatedAt, httpProvider),
+        markValidatedByPeer: () => markTxQueueValidatedByPeer(entry.id, entry.payload, entry.signedTx),
+        markAwaitingIndexer: () => prisma.txQueue.update({
+          where: { id: entry.id },
+          data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+        }),
+        resetToPending: (err: any) => {
+          console.warn(`[Validator] TxQueue ${entry.id}: resolving Cawonce ${data.cawonce} threw, resetting to pending — ${err?.message ?? String(err)}`)
+          return prisma.txQueue.updateMany({
+            where: { id: entry.id, status: 'processing' },
+            data: { status: 'pending' },
+          })
+        },
+        writeFailed: (err: any) => {
+          console.error(`[Validator] TxQueue ${entry.id}: status write for Cawonce ${data.cawonce} failed, leaving the row for the next poll — ${err?.message ?? String(err)}`)
+        },
+      })
+      if (settled === 'done') {
+        console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
+      } else if (settled === 'awaiting_indexer') {
+        console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} reported used but Action row not yet indexed — deferring`)
+      }
+      return settled
+    }
+
     function computeTotalTip(
       entries: Array<{ payload: any; implicitTip?: string | null }>
     ): bigint {
@@ -3208,6 +3242,8 @@ console.log("succeededKeys", succeededKeys)
                   // drift bug (project_session_spend_drift_sub_batch_finalize.md).
                   await markTxQueueDone(entry.id, entry.payload, (entry as any).signedTx)
                 } else {
+                  if (isCawonceUsedRejection(simResult.rejectionMessages?.[idx])
+                    && await settleCawonceUsed(entry) !== 'failed') return
                   const failReason = simResult.rejectionMessages?.[idx] || 'Transaction failed'
                   await markTxQueueFailed(entry.id, failReason, data.senderId, data)
                 }
@@ -3692,6 +3728,20 @@ console.log("succeededKeys", succeededKeys)
         // recovery verdict and not in finalized gets marked failed.
       }
 
+      // Rows the simulation rejected with "Cawonce already used" while other
+      // rows passed. Resolved here, after the submission, so the indexer has
+      // had the most time to write the Action row. 'done' is reconciled as
+      // succeeded below; rows moved to awaiting_indexer or back to pending
+      // are left out of the reconciliation; 'failed' keeps it.
+      const landedByPeer = new Set<number>()
+      const handedOff = new Set<number>()
+      await Promise.all(validatedEntries.map(async (entry, index) => {
+        if (succeededEntries.includes(entry) || !isCawonceUsedRejection(rejectionMessages[index])) return
+        const settled = await settleCawonceUsed(entry)
+        if (settled === 'done') landedByPeer.add(entry.id)
+        else if (settled !== 'failed') handedOff.add(entry.id)
+      }))
+
       // 4) update database - properly track which entries succeeded vs failed
       // Build array to track success/failure for each original entry. The
       // recovery path (re-sim + bisect) may have already resolved some
@@ -3713,6 +3763,7 @@ console.log("succeededKeys", succeededKeys)
         // Check if this entry was in the succeeded set that got submitted
         const wasSubmitted = succeededEntries.includes(entry)
         if (!wasSubmitted) {
+          if (landedByPeer.has(entry.id)) return { succeeded: true, reason: null }
           // This entry failed simulation
           // The rejection message for this specific entry is at rejectionMessages[index]
           return { succeeded: false, reason: rejectionMessages[index] || 'Simulation failed' }
@@ -3740,6 +3791,7 @@ console.log("succeededKeys", succeededKeys)
       let txFailed = 0
       let txPending = 0
       await Promise.all(validatedEntries.map(async (entry, index) => {
+        if (handedOff.has(entry.id)) return
         const status = finalStatuses[index]
         const { succeeded, reason } = status
         const data = (entry.payload as any).data
@@ -3814,7 +3866,7 @@ console.log("succeededKeys", succeededKeys)
 
         // Pending requeues (recovery path): leave Caw row alone — it's still
         // in flight, will resolve next poll.
-        if (status.pending) return
+        if (status.pending || handedOff.has(entry.id)) return
 
         // Check if this is a CAW action
         if (data.actionType === 0 || data.actionType === 'caw') {
