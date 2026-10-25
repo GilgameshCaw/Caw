@@ -1,4 +1,5 @@
 import { prisma } from '../../prismaClient'
+import { getActiveParticipant } from './groupService'
 import { deterministicConversationId } from '../DmRelayService'
 
 export class DmService {
@@ -244,9 +245,7 @@ export class DmService {
    * the caller's per-recipient ciphertext so the FE shape stays stable.
    */
   async getMessages(conversationId: string, userId: number, limit = 50, before?: string) {
-    const participant = await prisma.conversationParticipant.findUnique({
-      where: { conversationId_userId: { conversationId, userId } }
-    })
+    const participant = await getActiveParticipant(prisma, conversationId, userId)
     if (!participant) throw new Error('Not a participant in this conversation')
 
     const conversation = await prisma.conversation.findUnique({

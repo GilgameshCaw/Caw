@@ -127,6 +127,8 @@ router.delete('/groups/:id/members/:userId',
         kind: 'member-removed',
         targetUserId: Number(req.params.userId),
       })
+      // After the broadcast, so the removed member's client still hears it.
+      dmWebSocketService.removeUserFromConversation(Number(req.params.userId), req.params.id)
       return res.json(conv)
     } catch (error: any) {
       return handleError(res, 'DELETE /api/dm/groups/:id/members/:userId', error)
@@ -148,6 +150,7 @@ router.post('/groups/:id/leave',
         targetUserId: Number(userId),
         newOwnerUserId: result.newOwnerUserId,
       })
+      dmWebSocketService.removeUserFromConversation(Number(userId), req.params.id)
       return res.json(result)
     } catch (error: any) {
       return handleError(res, 'POST /api/dm/groups/:id/leave', error)
@@ -262,7 +265,8 @@ router.post('/groups/join/:token',
         actorUserId: Number(userId),
       })
       if (out.conversation) {
-        const others = (out.conversation as any).participants?.filter((p: any) => p.userId !== Number(userId)) || []
+        // participants includes members who left; they get nothing.
+        const others = (out.conversation as any).participants?.filter((p: any) => p.userId !== Number(userId) && !p.leftAt) || []
         for (const p of others) {
           dmWebSocketService.notifyNewConversation(p.userId, out.conversation)
         }

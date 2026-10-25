@@ -788,7 +788,7 @@ router.post('/messages/:messageId/hide',
       where: { id: req.params.messageId },
       include: { conversation: { include: { participants: true } } }
     })
-    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
+    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId && !p.leftAt)
     return isParticipant ? userId : undefined
   }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
@@ -867,7 +867,7 @@ router.post('/messages/:messageId/reactions',
       where: { id: req.params.messageId },
       include: { conversation: { include: { participants: true } } },
     })
-    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
+    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId && !p.leftAt)
     return isParticipant ? userId : undefined
   }, verifyOwnership: true }),
   async (req: Request, res: Response) => {

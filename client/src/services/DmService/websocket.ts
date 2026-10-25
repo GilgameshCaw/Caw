@@ -3,6 +3,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io'
 import { prisma } from '../../prismaClient'
 import { getSession } from '../../api/sessionStore'
 import { SESSION_COOKIE_NAME } from '../../api/middleware/auth'
+import { getActiveParticipant } from './groupService'
 
 interface AuthenticatedSocket extends Socket {
   userId?: number
@@ -55,6 +56,9 @@ function consumeToken(
 export class DmWebSocketService {
   private io: SocketIOServer | null = null
   private userSockets: Map<number, Set<string>> = new Map()
+  // How many times each user has been taken out of a conversation's room
+  // (removeUserFromConversation). See readMembership.
+  private removals: Map<number, number> = new Map()
 
   initialize(server: HttpServer) {
     console.log('[DM-WS] Initializing WebSocket server on path: /dm-ws')
@@ -141,18 +145,13 @@ export class DmWebSocketService {
       this.joinUserConversations(socket)
 
       socket.on('join-conversation', async (conversationId: string) => {
-        const participant = await prisma.conversationParticipant.findUnique({
-          where: {
-            conversationId_userId: {
-              conversationId,
-              userId: socket.userId!
-            }
-          }
-        })
-
-        if (participant) {
-          socket.join(`conversation:${conversationId}`)
-        }
+        await this.readMembership(
+          socket.userId!,
+          () => getActiveParticipant(prisma, conversationId, socket.userId!),
+          participant => {
+            if (participant) socket.join(`conversation:${conversationId}`)
+          },
+        )
       })
 
       socket.on('leave-conversation', (conversationId: string) => {
@@ -187,7 +186,7 @@ export class DmWebSocketService {
 
         const convIds = [...new Set(rawMessages.map(m => m.conversationId))]
         const memberships = await prisma.conversationParticipant.findMany({
-          where: { conversationId: { in: convIds }, userId: socket.userId! },
+          where: { conversationId: { in: convIds }, userId: socket.userId!, leftAt: null },
           select: { conversationId: true }
         })
         const memberConvIds = new Set(memberships.map(p => p.conversationId))
@@ -232,13 +231,41 @@ export class DmWebSocketService {
   private async joinUserConversations(socket: AuthenticatedSocket) {
     if (!socket.userId) return
 
-    const conversations = await prisma.conversationParticipant.findMany({
-      where: { userId: socket.userId },
-      select: { conversationId: true }
-    })
+    const userId = socket.userId
+    await this.readMembership(
+      userId,
+      () => prisma.conversationParticipant.findMany({
+        where: { userId, leftAt: null },
+        select: { conversationId: true }
+      }),
+      conversations => {
+        for (const { conversationId } of conversations) {
+          socket.join(`conversation:${conversationId}`)
+        }
+      },
+    )
+  }
 
-    for (const { conversationId } of conversations) {
-      socket.join(`conversation:${conversationId}`)
+  /**
+   * Run a membership read for a joining socket, and run it again if the
+   * user was taken out of a room while it was in flight. A leave or removal
+   * commits, then calls removeUserFromConversation; a read that started
+   * before the commit can still report the membership, and joining on it
+   * after the socketsLeave would put the socket back in the room. A read
+   * that starts after the count moved sees the commit. join runs right
+   * after the check, with no await in between, so a removal can't land
+   * between them. (The caller's own await on this method would be a later
+   * microtask.) This holds for the default in-memory adapter, where
+   * socket.join and socketsLeave take effect synchronously.
+   */
+  private async readMembership<T>(userId: number, read: () => Promise<T>, join: (result: T) => void): Promise<void> {
+    for (;;) {
+      const before = this.removals.get(userId) ?? 0
+      const result = await read()
+      if ((this.removals.get(userId) ?? 0) === before) {
+        join(result)
+        return
+      }
     }
   }
 
@@ -285,6 +312,18 @@ export class DmWebSocketService {
     // Splice in conversationId so receivers can route by conversation
     // without joining every event to its room context.
     this.emitToConversation(conversationId, 'conversation-update', { conversationId, ...update })
+  }
+
+  /**
+   * Take every socket of a user who just left or was removed out of the
+   * group's room, so live events stop at once instead of at their next
+   * reconnect (joinUserConversations skips left rows). Every socket of a
+   * user is in `user:<id>` (see 'connection').
+   */
+  removeUserFromConversation(userId: number, conversationId: string) {
+    if (!this.io) return
+    this.removals.set(userId, (this.removals.get(userId) ?? 0) + 1)
+    this.io.in(`user:${userId}`).socketsLeave(`conversation:${conversationId}`)
   }
 
   notifyNewConversation(userId: number, conversation: any) {

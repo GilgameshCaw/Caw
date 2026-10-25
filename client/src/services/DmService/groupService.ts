@@ -70,7 +70,11 @@ async function assertIdentitiesExist(userIds: number[]) {
   }
 }
 
-async function getActiveParticipant(tx: Prisma.TransactionClient, conversationId: string, userId: number) {
+// Leaving or being removed sets leftAt and keeps the row (a re-add or invite
+// reactivates it), so "has a participant row" is not "is in the conversation".
+// Every read of a conversation goes through this, not a bare row lookup.
+// 1:1 rows never get leftAt.
+export async function getActiveParticipant(tx: Prisma.TransactionClient, conversationId: string, userId: number) {
   const p = await tx.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
     select: { id: true, role: true, leftAt: true, conversationId: true, userId: true },
