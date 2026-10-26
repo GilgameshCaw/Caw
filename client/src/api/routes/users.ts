@@ -192,8 +192,11 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       where: { tokenId: userId },
       select: { address: true },
     })
+    // leftAt: null leaves out groups the user left or was removed from, as
+    // the inbox list does; their unread count would otherwise stay in the
+    // badge with no conversation to open and clear it.
     const dmConversationsPromise = prisma.conversation.findMany({
-      where: { participants: { some: { userId } } },
+      where: { participants: { some: { userId, leftAt: null } } },
       select: {
         id: true,
         participants: { where: { userId }, select: { unreadCount: true } },

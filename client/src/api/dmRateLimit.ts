@@ -144,7 +144,9 @@ async function isWarm(senderId: number, recipientId: number): Promise<boolean> {
     prisma.message.findFirst({
       where: {
         senderId: recipientId,
-        conversation: { participants: { some: { userId: senderId } } },
+        // Only conversations the sender is still in: after leaving a group
+        // (leftAt set), the recipient's messages there aren't a reply.
+        conversation: { participants: { some: { userId: senderId, leftAt: null } } },
       },
       select: { id: true },
     }),
