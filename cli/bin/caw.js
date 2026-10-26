@@ -405,8 +405,12 @@ program
       })
 
       // Step 8: Recovery-backup email transport (optional). Runs before
-      // generate so the keys land in .env on the first write.
-      const emailConfig = await collectEmailConfig(false)
+      // generate so the keys land in .env on the first write. Only the API
+      // sends these emails (api/util/resendMailer.ts), so other node types
+      // skip the step and get no RESEND_KEY they would never read.
+      const emailConfig = ['full', 'frontend-api', 'api-only'].includes(nodeType)
+        ? await collectEmailConfig(false)
+        : {}
 
       // Step 9: Infrastructure phase 2 — DB / Redis / Elasticsearch / API
       // port. None of these need on-chain state, so they happen after the

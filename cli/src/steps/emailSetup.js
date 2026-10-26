@@ -45,9 +45,11 @@ export async function collectEmailConfig(nonInteractive = false) {
   }
 
   tipBlock([
-    'CAW sends ONE transactional email per user: the encrypted recovery backup',
-    'file (ciphertext only — vault password never included). Users can always',
-    'download the backup file directly. Email is a durable second copy.',
+    'Passkey (Population B) users get an encrypted recovery file at signup.',
+    'CAW sends ONE transactional email per user: that file (ciphertext only —',
+    'vault password never included), as a durable backstop — if they lose every',
+    'device they can still recover with the file + their vault password.',
+    'Users can always download the backup file directly as well.',
     '',
     `${dim('Skipping this step is safe — email can be configured in client/.env later.')}`,
   ])
