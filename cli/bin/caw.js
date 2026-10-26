@@ -5,16 +5,18 @@
 // Node — often years older than what nvm has set up in their shell. The
 // resulting "ReferenceError: structuredClone is not defined" or
 // "SyntaxError: ?? unexpected" is opaque; a clear error here saves the
-// detour. Bail out fast on <20.
+// detour. Bail out fast on <20.9 — sharp 0.35 (client/package.json) requires
+// Node >=20.9.0 and fails to load below it.
 {
-  const major = Number(process.versions.node.split('.')[0])
-  if (Number.isFinite(major) && major < 20) {
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  const tooOld = Number.isFinite(major) && (major < 20 || (major === 20 && minor < 9))
+  if (tooOld) {
     const which = (() => {
       try { return require('child_process').execSync('command -v node', { stdio: ['ignore','pipe','ignore'], shell: '/bin/bash' }).toString().trim() }
       catch { return process.execPath }
     })()
     process.stderr.write(
-      `\nNode ${process.versions.node} is too old — this CLI needs Node 20+.\n` +
+      `\nNode ${process.versions.node} is too old — this CLI needs Node 20.9+.\n` +
       `Running: ${which}\n\n` +
       `If you have a newer Node via nvm: sudo strips your PATH so it doesn't see it.\n` +
       `Either:\n` +

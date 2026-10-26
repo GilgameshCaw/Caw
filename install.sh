@@ -522,8 +522,10 @@ else
 
   # Node 22 from NodeSource — the version the app's tested on. Distro Node is
   # typically too old (and we don't want to surprise the operator with whatever
-  # version Ubuntu ships).
-  if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 20 ]]; then
+  # version Ubuntu ships). Install it when Node is missing or older than 20.9,
+  # the floor the CLI checks (sharp 0.35 needs it); comparing only the major
+  # version would skip the install on 20.0-20.8 and the CLI would then stop.
+  if ! command -v node >/dev/null 2>&1 || [[ "$(printf '%s\n' 20.9.0 "$(node -v | tr -d v)" | sort -V | head -1)" != 20.9.0 ]]; then
     quiet "Adding NodeSource repo" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
     quiet "Installing Node.js 22" apt-get install -y -qq nodejs
   fi
