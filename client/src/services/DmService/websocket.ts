@@ -258,15 +258,11 @@ export class DmWebSocketService {
 
     const room = `conversation:${conversationId}`
 
+    // Every socket of a user is in `user:<id>` (joined on connect), so one
+    // emit leaves out all of the excluded user's sockets. An emit per socket,
+    // each leaving out only that one, reached everyone else once per socket.
     if (excludeUserId) {
-      const excludedSockets = this.userSockets.get(excludeUserId)
-      if (excludedSockets) {
-        for (const socketId of excludedSockets) {
-          this.io.to(room).except(socketId).emit(event, data)
-        }
-      } else {
-        this.io.to(room).emit(event, data)
-      }
+      this.io.to(room).except(`user:${excludeUserId}`).emit(event, data)
     } else {
       this.io.to(room).emit(event, data)
     }
