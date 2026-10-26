@@ -20,6 +20,7 @@ import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider
 import { getIndexerStats } from '../../utils/indexerHealth'
 import type { AbstractProvider } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
+import { settleEachWrite, failSubBatch } from '../../utils/subBatchFailure'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
@@ -3100,6 +3101,12 @@ console.log("succeededKeys", succeededKeys)
             console.log(`[Validator] Processing network ${networkId}: ${subBatchEntries.length} entries`)
 
             const subBatch = buildMultiActionData(subBatchEntries)
+            // Set once the simulation has picked the rows to send; the catch
+            // fails only those.
+            let sentIds: Set<number> | null = null
+            const subBatchWriteFailed = (ids: number[], err: any) => {
+              console.error(`[Validator] Network ${networkId}: status write for TxQueue ${ids.join(',')} failed, leaving the rows for the next poll — ${err?.message ?? String(err)}`)
+            }
 
             try {
               const simResult = await span('validator.simulate', {
@@ -3109,7 +3116,7 @@ console.log("succeededKeys", succeededKeys)
               }, () => simulateActions(validatorId, subBatch))
               if (!simResult || !simResult.successfulActions?.length) {
                 console.log(`[Validator] Network ${networkId} simulation failed or no successful actions`)
-                await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
+                await settleEachWrite(subBatchEntries, async (entry: any, idx) => {
                   const data = (entry.payload as any).data
                   const rejection = simResult?.rejectionMessages?.[idx] || ''
                   const cawonceUsed = rejection.includes('Cawonce already used')
@@ -3145,7 +3152,7 @@ console.log("succeededKeys", succeededKeys)
                       data: { status: failStatus, reason: failReason }
                     })
                   }
-                }))
+                }, subBatchWriteFailed)
                 continue
               }
 
@@ -3158,6 +3165,7 @@ console.log("succeededKeys", succeededKeys)
               })
 
               if (succeededSubEntries.length === 0) continue
+              sentIds = new Set(succeededSubEntries.map(e => e.id))
 
               const succeededData = buildMultiActionData(succeededSubEntries)
               const subQuote = await recalculateQuoteForActions(succeededData)
@@ -3197,7 +3205,7 @@ console.log("succeededKeys", succeededKeys)
               }
 
               const finalizedKeys = new Set(finalized.map((f: any) => `${f.senderId}-${f.cawonce}`))
-              await Promise.all(subBatchEntries.map(async (entry, idx) => {
+              await settleEachWrite(subBatchEntries, async (entry, idx) => {
                 const data = (entry.payload as any).data
                 const key = `${data.senderId}-${data.cawonce}`
                 const succeeded = finalizedKeys.has(key)
@@ -3211,7 +3219,7 @@ console.log("succeededKeys", succeededKeys)
                   const failReason = simResult.rejectionMessages?.[idx] || 'Transaction failed'
                   await markTxQueueFailed(entry.id, failReason, data.senderId, data)
                 }
-              }))
+              }, subBatchWriteFailed)
             } catch (err: any) {
               console.error(`[Validator] Network ${networkId} batch failed:`, err.message)
               // Classify RPC-transient errors the same way the single-network submission
@@ -3258,10 +3266,23 @@ console.log("succeededKeys", succeededKeys)
                   rebuildHttpProvider(`multi-network transient: ${errMsg.slice(0, 80)}`)
                 }
               } else {
-                await Promise.all(subBatchEntries.map(async (entry) => {
-                  const data = (entry.payload as any).data
-                  await markTxQueueFailed(entry.id, err.message, data.senderId, data)
-                }))
+                await failSubBatch({
+                  entries: subBatchEntries,
+                  sentIds,
+                  stillProcessing: async (ids) => (await prisma.txQueue.findMany({
+                    where: { id: { in: ids }, status: 'processing' },
+                    select: { id: true },
+                  })).map(row => row.id),
+                  resetToPending: (ids) => prisma.txQueue.updateMany({
+                    where: { id: { in: ids }, status: 'processing' },
+                    data: { status: 'pending' },
+                  }),
+                  markFailed: (entry) => {
+                    const data = (entry.payload as any).data
+                    return markTxQueueFailed(entry.id, err.message, data.senderId, data)
+                  },
+                  writeFailed: subBatchWriteFailed,
+                })
               }
             }
           }
