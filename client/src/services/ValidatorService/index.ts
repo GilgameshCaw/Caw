@@ -3108,6 +3108,32 @@ console.log("succeededKeys", succeededKeys)
                 'client.id': networkId,
               }, () => simulateActions(validatorId, subBatch))
               if (!simResult || !simResult.successfulActions?.length) {
+                // A rejection that means "try again later" (RPC timeout, network
+                // error, withdraw quote failed, auth or session not on L2 yet)
+                // puts the rows back to pending, as the single-network path does.
+                // Same list as hasTemporaryError there; keep the two in step.
+                const subHasTemporaryError = (simResult?.rejectionMessages ?? []).some((msg: string) => {
+                  const lowerMsg = msg?.toLowerCase() || ''
+                  return lowerMsg.includes('timeout') ||
+                         lowerMsg.includes('network') ||
+                         lowerMsg.includes('connection') ||
+                         lowerMsg.includes('rpc') ||
+                         lowerMsg.includes('will retry') ||
+                         lowerMsg.includes('too many requests') ||
+                         lowerMsg.includes('429') ||
+                         lowerMsg.includes('rate limit') ||
+                         lowerMsg.includes('missing response') ||
+                         lowerMsg.includes('not authenticated with this client') ||
+                         lowerMsg.includes('session expired or not found')
+                })
+                if (subHasTemporaryError) {
+                  console.log(`[Validator] Network ${networkId} simulation failed with a temporary rejection — resetting ${subBatchEntries.length} entries to pending for retry`)
+                  await prisma.txQueue.updateMany({
+                    where: { id: { in: subBatchEntries.map(e => e.id) }, status: 'processing' },
+                    data: { status: 'pending' },
+                  })
+                  continue
+                }
                 console.log(`[Validator] Network ${networkId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
                   const data = (entry.payload as any).data
