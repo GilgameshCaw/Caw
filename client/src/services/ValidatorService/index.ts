@@ -2254,10 +2254,20 @@ export const validatorService: Service = {
         await prev
       } catch { /* prior failed — fine, continue */ }
 
-      const feeData = await httpProvider.getFeeData();
+      // These two run before the try/finally below that releases the slot.
+      // If either throws, release it here, or every later submission waits
+      // on `prev` forever.
+      let feeData: Awaited<ReturnType<AbstractProvider['getFeeData']>>
+      let nonce: number
+      try {
+        feeData = await httpProvider.getFeeData();
 
-      // Pre-fetch nonce so sendTransaction doesn't need to (throttle handles spacing)
-      const nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
+        // Pre-fetch nonce so sendTransaction doesn't need to (throttle handles spacing)
+        nonce = await httpProvider.getTransactionCount(signer.getAddress(), 'pending')
+      } catch (err) {
+        releaseSlot()
+        throw err
+      }
 
       // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
       let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
