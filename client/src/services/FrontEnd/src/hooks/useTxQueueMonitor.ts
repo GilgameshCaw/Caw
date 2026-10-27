@@ -11,6 +11,12 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { TYPES, DOMAIN, allocateCawonces, retryBatchByBatchId } from '~/api/actions'
 import { keccak256 } from 'viem'
+import {
+  isCawonceUsedReason,
+  shouldRetryCawonceUsed,
+  pickCawonceUsedRetries,
+  type LandedVerdict,
+} from '~/utils/cawonceUsedReason'
 
 // ---------------------------------------------------------------------------
 // Payload integrity: store a keccak256 hash of the signed amounts+recipients
@@ -68,6 +74,17 @@ function saveRetries(map: Map<number, number>) {
 }
 const cawonceRetries = loadRetries()
 const MAX_CAWONCE_RETRIES = 2
+
+/** Whether a "Cawonce already used" row's own action is on chain (DB-only check). */
+async function checkCawonceUsedLanded(txQueueId: number): Promise<LandedVerdict> {
+  try {
+    const res = await apiFetch<{ landed: LandedVerdict }>(`/api/txqueue/check-landed/${txQueueId}`)
+    return res?.landed ?? 'unknown'
+  } catch (err) {
+    console.warn(`[TxQueueMonitor] check-landed failed for ${txQueueId}:`, err)
+    return 'unknown'
+  }
+}
 
 // Global callbacks for feed updates - set by Feed component
 let feedRefreshCallback: (() => void) | null = null
@@ -132,7 +149,8 @@ export function useTxQueueMonitor() {
           if (status.status === 'failed') {
             const reason = (status.reason || '').toLowerCase()
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} failed: ${status.reason}`)
-            const willRetry = reason.includes('cawonce already used') && !cawonceRetries.has(status.id)
+            const cawonceUsed = isCawonceUsedReason(status.reason)
+            const willRetry = cawonceUsed && !cawonceRetries.has(status.id)
             if (!willRetry) {
               // Only remove pending post if we're NOT going to auto-retry
               removePendingPostByTxQueueId(status.id)
@@ -213,7 +231,7 @@ export function useTxQueueMonitor() {
                   onRetry,
                 )
               }
-            } else if (reason.includes('cawonce already used')) {
+            } else if (cawonceUsed) {
               // Cawonce collision — auto-retry with a fresh cawonce using Quick Sign.
               // Each txqueue ID gets exactly one retry attempt.
               if (cawonceRetries.has(status.id)) {
@@ -254,46 +272,42 @@ export function useTxQueueMonitor() {
                     //                 row done client-side and skip retry.
                     //   'collision' → slot used by different content; real
                     //                 retry needed.
-                    //   'unknown'   → indexer hasn't caught up; proceed with
-                    //                 retry (same behaviour as today —
-                    //                 worst case stays no worse than the
-                    //                 status quo).
-                    try {
-                      const landedRes = await apiFetch<{ landed: 'ours' | 'collision' | 'unknown' }>(
-                        `/api/txqueue/check-landed/${status.id}`,
-                      )
-                      if (landedRes?.landed === 'ours') {
-                        console.log(`[TxQueueMonitor] TxQueue ${status.id} action already landed on chain — skipping retry to avoid duplicate`)
-                        // Clean up the failed-state UI for this row. The
-                        // server keeps TxQueue.status='failed' (the row
-                        // never made it through the validator's success
-                        // path) but the user-visible truth is "this
-                        // succeeded" — hide the failure notification and
-                        // drop the pending post tracking so the indexed
-                        // Caw row (which already has status=SUCCESS) is
-                        // the only copy the feed dedup sees.
-                        try {
-                          await apiFetch('/api/notifications/hide-by-original-tx', {
-                            method: 'POST',
-                            body: JSON.stringify({ userId: senderId, txQueueId: status.id }),
-                          })
-                        } catch { /* non-fatal */ }
-                        // The pending post was kept earlier under the
-                        // assumption a retry would hook into it. Since we
-                        // ARE NOT retrying, drop it now — the chain Caw
-                        // row is the canonical post.
-                        removePendingPostByTxQueueId(status.id)
-                        retrySucceeded = true // for the cleanup flag below
-                        return
-                      }
-                      // 'collision' or 'unknown' → fall through to the
-                      // existing retry flow below.
-                    } catch (err) {
-                      // check-landed failure is non-fatal — fall through to
-                      // the original retry path. The dedup safety here is
-                      // strictly additive; if the check errors we're no
-                      // worse off than before this commit.
-                      console.warn(`[TxQueueMonitor] check-landed failed for ${status.id}, proceeding with retry:`, err)
+                    //   'unknown'   → indexer hasn't caught up (or the check
+                    //                 failed); don't retry now. This poll sees
+                    //                 the failure seconds after it's written,
+                    //                 before a peer validator's landing of the
+                    //                 same action is indexed, so a retry here
+                    //                 would post it twice. The mount-time pass
+                    //                 (retryFailedCawonceEntries) asks again.
+                    const landed = await checkCawonceUsedLanded(status.id)
+                    if (landed === 'ours') {
+                      console.log(`[TxQueueMonitor] TxQueue ${status.id} action already landed on chain — skipping retry to avoid duplicate`)
+                      // Clean up the failed-state UI for this row. The
+                      // server keeps TxQueue.status='failed' (the row
+                      // never made it through the validator's success
+                      // path) but the user-visible truth is "this
+                      // succeeded" — hide the failure notification and
+                      // drop the pending post tracking so the indexed
+                      // Caw row (which already has status=SUCCESS) is
+                      // the only copy the feed dedup sees.
+                      try {
+                        await apiFetch('/api/notifications/hide-by-original-tx', {
+                          method: 'POST',
+                          body: JSON.stringify({ userId: senderId, txQueueId: status.id }),
+                        })
+                      } catch { /* non-fatal */ }
+                      // The pending post was kept earlier under the
+                      // assumption a retry would hook into it. Since we
+                      // ARE NOT retrying, drop it now — the chain Caw
+                      // row is the canonical post.
+                      removePendingPostByTxQueueId(status.id)
+                      retrySucceeded = true // for the cleanup flag below
+                      return
+                    }
+                    if (!shouldRetryCawonceUsed(landed)) {
+                      console.log(`[TxQueueMonitor] TxQueue ${status.id} not indexed yet — not retrying now`)
+                      removePendingPostByTxQueueId(status.id)
+                      return
                     }
 
                     // Allocate a fresh cawonce via the same allocator
@@ -507,11 +521,6 @@ export function useTxQueueMonitor() {
         const res = await apiFetch(`/api/txqueue/failed-cawonce/${senderId}`)
         if (!res?.entries?.length) return
 
-        // Cap at 3 retries per page load to prevent storms
-        const MAX_MOUNT_RETRIES = 3
-        const entries = res.entries.slice(0, MAX_MOUNT_RETRIES)
-        console.log(`[TxQueueMonitor] Found ${res.entries.length} retryable cawonce failures, retrying ${entries.length}`)
-
         // Fetch session key and cawonce ONCE for all retries
         const user = await apiFetch(`/api/users/by-token/${senderId}`)
         const ownerAddress = user?.address?.toLowerCase()
@@ -523,6 +532,15 @@ export function useTxQueueMonitor() {
           console.log(`[TxQueueMonitor] No active session key for mount-retry`)
           return
         }
+
+        // Cap at 3 retries per page load to prevent storms. Ask check-landed
+        // about each row first and retry only a 'collision': a row usually
+        // fails this way because a peer validator landed the same action,
+        // and retrying it would post it twice.
+        const MAX_MOUNT_RETRIES = 3
+        const unseen: any[] = res.entries.filter((e: any) => !processedIds.current.has(e.id) && e.payload?.data)
+        const { retry: entries, landed } = await pickCawonceUsedRetries(unseen, checkCawonceUsedLanded, MAX_MOUNT_RETRIES)
+        console.log(`[TxQueueMonitor] Found ${res.entries.length} cawonce failures, ${landed.length} already on chain, retrying ${entries.length}`)
 
         // Allocate a contiguous block of cawonces for the whole batch
         // via the shared allocator (same path as the original

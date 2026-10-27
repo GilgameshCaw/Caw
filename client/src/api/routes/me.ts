@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { CAWONCE_USED_REASON } from '../../utils/sanitizeFailureReason'
 import { prisma } from '../../prismaClient'
 import { extractSession } from '../middleware/auth'
 
@@ -298,7 +299,7 @@ async function fetchFailedRetries(tokenId: number) {
       where: {
         senderId: tokenId,
         status: 'failed',
-        reason: 'Cawonce already used',
+        reason: CAWONCE_USED_REASON,
       },
       select: {
         id: true,

@@ -18,6 +18,13 @@
  * "Insufficient balance") pass through untouched.
  */
 
+/**
+ * What a "Cawonce already used" failure is stored as. The routes that list
+ * these rows for the FE's auto-retry match on it, so they use this constant
+ * rather than the raw validator phrase, which never reaches the DB.
+ */
+export const CAWONCE_USED_REASON = 'This action was already processed.'
+
 /** Heuristics that mark a string as raw technical noise unfit for a user. */
 function looksLikeRawTechnicalError(msg: string): boolean {
   const m = msg.toLowerCase()
@@ -76,7 +83,7 @@ export function sanitizeFailureReason(reason: string | null | undefined, fallbac
 
   // ── Already applied on-chain (not really a failure) ────────────────────────
   if (m.includes('cawonce already used')) {
-    return 'This action was already processed.'
+    return CAWONCE_USED_REASON
   }
 
   // ── Session ────────────────────────────────────────────────────────────────

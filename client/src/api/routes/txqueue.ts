@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 import { countManager } from '../../services/CountManager'
 import { decompressActionText } from '../../utils/decompressActionText'
+import { CAWONCE_USED_REASON } from '../../utils/sanitizeFailureReason'
 
 const router = Router()
 
@@ -224,7 +225,7 @@ router.get('/failed-cawonce/:senderId',
       where: {
         senderId,
         status: 'failed',
-        reason: 'Cawonce already used',
+        reason: CAWONCE_USED_REASON,
       },
       select: {
         id: true,
