@@ -1210,13 +1210,16 @@ router.get('/:username', async (req, res) => {
       }),
     ])
 
-    // Compute actual follow counts from the follow table (cached counters can drift)
+    // Compute actual follow counts from the follow table (cached counters can drift).
+    // A pending FOLLOW is counted at submit time, like a like, so count it here
+    // too. Otherwise the write-back below drops it, and the later confirm (no
+    // count change) or failure / block (decrement) leaves the counter one low.
     const [actualFollowerCount, actualFollowingCount] = await Promise.all([
       prisma.follow.count({
-        where: { followingId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' }
+        where: { followingId: user.tokenId, action: 'FOLLOW', status: { in: ['SUCCESS', 'PENDING'] } }
       }),
       prisma.follow.count({
-        where: { followerId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' }
+        where: { followerId: user.tokenId, action: 'FOLLOW', status: { in: ['SUCCESS', 'PENDING'] } }
       }),
     ])
 

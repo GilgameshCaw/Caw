@@ -1448,26 +1448,57 @@ router.post('/', async (req, res) => {
           })
         ])
 
-        // Create pending follow (or update existing to pending)
-        const pendingFollow = await prisma.follow.upsert({
-          where: {
-            followerId_followingId: {
+        // Create pending follow (or update existing to pending) and bump the
+        // counts, like the optimistic LIKE does. The indexer treats a
+        // PENDING->SUCCESS follow as "counts already set", and the FAILED /
+        // cancel rollbacks decrement, so the increment has to happen here.
+        //
+        // Only count when the row moves from an uncounted state (no row,
+        // pending unfollow, failed) to a pending FOLLOW. A pending FOLLOW is
+        // already counted. A confirmed FOLLOW is left alone: flipping it back
+        // to PENDING would let a failed duplicate tx mark a live on-chain
+        // follow as FAILED.
+        await prisma.$transaction(async (tx: any) => {
+          const existingFollow = await tx.follow.findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: data.senderId,
+                followingId: data.receiverId
+              }
+            }
+          })
+          if (existingFollow && existingFollow.action === 'FOLLOW' && existingFollow.status === 'SUCCESS') {
+            console.log('Follow already confirmed, leaving row as is:', existingFollow.id)
+            return
+          }
+          const alreadyCounted = !!existingFollow && existingFollow.action === 'FOLLOW' && existingFollow.status === 'PENDING'
+
+          const pendingFollow = await tx.follow.upsert({
+            where: {
+              followerId_followingId: {
+                followerId: data.senderId,
+                followingId: data.receiverId
+              }
+            },
+            update: {
+              status: 'PENDING',
+              action: 'FOLLOW'
+            },
+            create: {
+              followerId: data.senderId,
+              followingId: data.receiverId,
+              action: 'FOLLOW',
+              status: 'PENDING'
+            }
+          })
+          if (!alreadyCounted) {
+            await countManager.onFollowCreated(tx, {
               followerId: data.senderId,
               followingId: data.receiverId
-            }
-          },
-          update: {
-            status: 'PENDING',
-            action: 'FOLLOW'
-          },
-          create: {
-            followerId: data.senderId,
-            followingId: data.receiverId,
-            action: 'FOLLOW',
-            status: 'PENDING'
+            })
           }
+          console.log('Successfully created/updated pending follow:', pendingFollow.id)
         })
-        console.log('Successfully created/updated pending follow:', pendingFollow.id)
       } catch (followErr) {
         console.error('Failed to create pending follow:', followErr)
         // Continue even if pending follow creation fails
@@ -1480,11 +1511,11 @@ router.post('/', async (req, res) => {
       console.log('Unfollower:', data.senderId, 'Unfollowing:', data.receiverId)
 
       try {
-        // Look up the existing confirmed FOLLOW row so we can decide whether
-        // to apply the optimistic-undo decrement. Only the SUCCESS→PENDING
-        // transition decrements; if the row is already pending or absent
-        // (e.g. fresh unfollow from a mirror, or double-tap) we skip the
-        // count side effect.
+        // Look up the existing FOLLOW row so we can decide whether to apply
+        // the optimistic-undo decrement. Only a counted row (confirmed or
+        // pending FOLLOW) decrements; if the row is already a pending
+        // unfollow, failed, or absent (e.g. fresh unfollow from a mirror, or
+        // double-tap) we skip the count side effect.
         const existingFollow = await prisma.follow.findUnique({
           where: {
             followerId_followingId: {
@@ -1510,7 +1541,11 @@ router.post('/', async (req, res) => {
         })
         console.log('Marked follow as pending for removal:', updatedFollow.count, 'records')
 
-        if (existingFollow && existingFollow.action === 'FOLLOW' && existingFollow.status === 'SUCCESS') {
+        // A pending FOLLOW is counted too (the optimistic FOLLOW above bumps
+        // it), so unfollowing it before it confirms must decrement as well.
+        // Otherwise the confirmed FOLLOW later sees this PENDING UNFOLLOW row,
+        // counts +1 as a re-follow, and the UNFOLLOW confirms as a no-op.
+        if (existingFollow && existingFollow.action === 'FOLLOW' && (existingFollow.status === 'SUCCESS' || existingFollow.status === 'PENDING')) {
           await countManager.onStatusChanged(prisma, 'follow', existingFollow.id, 'SUCCESS', 'PENDING', {
             followerId: data.senderId,
             followingId: data.receiverId,
