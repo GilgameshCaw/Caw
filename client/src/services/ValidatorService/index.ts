@@ -14,6 +14,7 @@ import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
+import { finalizeOwnPendingSubmissions } from '../../utils/archiveFinalize'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
@@ -4356,6 +4357,8 @@ console.log("succeededKeys", succeededKeys)
     const archiveAbi = [
       'function stakes(address) view returns (uint256)',
       'function pendingCount(address) view returns (uint256)',
+      'function getValidatorSubmissionCount(address) view returns (uint256)',
+      'function validatorSubmissions(address,uint256) view returns (uint256)',
       'function deposit() payable',
       'function withdraw(uint256)',
       'function submitReplication(uint32 networkId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
@@ -4825,6 +4828,7 @@ console.log("succeededKeys", succeededKeys)
     // ticks every replicationInterval (60s default) but finalization only
     // needs to run hourly — see the gate inside the loop body.
     let lastFinalizeRunAt = 0
+    const FINALIZE_INTERVAL_MS = 60 * 60_000
 
     // Concurrency guard for autoFinalizeSubmissions. The current call site
     // awaits this function inline in the replication loop, so overlapping
@@ -4968,6 +4972,16 @@ console.log("succeededKeys", succeededKeys)
         const pending = Number(await archive.pendingCount(w.getAddress()))
         if (pending >= maxPending) {
           console.log(`[OptimisticReplication] pendingCount=${pending} >= MAX_PENDING_SUBMISSIONS=${maxPending} — waiting for existing submission(s) to finalize or slash before queueing more`)
+          // Finalizing is exactly what frees a pending slot, so it must run
+          // on this path too. It used to be reached only at the end of the
+          // loop, after this early return, so once pendingCount hit the cap
+          // nothing ever finalized and replication stayed halted for good.
+          // Same hourly gate as the end of the loop: pendingCount stays at the
+          // cap for the whole challenge period, so every tick takes this path.
+          if (Date.now() - lastFinalizeRunAt > FINALIZE_INTERVAL_MS) {
+            await autoFinalizeSubmissions()
+            lastFinalizeRunAt = Date.now()
+          }
           return
         }
 
@@ -5174,7 +5188,6 @@ console.log("succeededKeys", succeededKeys)
         // reason to scan every replicationInterval (60s default) when the
         // challenge window is days. Hourly hits the right tradeoff between
         // "stake released promptly" and "don't burn RPC for empty scans."
-        const FINALIZE_INTERVAL_MS = 60 * 60_000
         if (Date.now() - lastFinalizeRunAt > FINALIZE_INTERVAL_MS) {
           await autoFinalizeSubmissions()
           lastFinalizeRunAt = Date.now()
@@ -5270,6 +5283,14 @@ console.log("succeededKeys", succeededKeys)
         const pendingRetries: RetryItem[] = Array.isArray(retryRecord?.value) ? retryRecord.value as any : []
         const nextRetries: RetryItem[] = []
 
+        // Finalize this validator's own due submissions straight from contract
+        // state first. The event scan below only sees submissions at or after
+        // the stored checkpoint, so a submission the checkpoint has already
+        // passed (a validator stuck before the checkpoint/retry-queue fixes) is
+        // otherwise never found. Anything finalized here reads as not pending in
+        // the retry queue and event scan below and is dropped there.
+        await finalizeOwnPendingSubmissions({ archive: archive as any, archiveW: archiveW as any, self: w.getAddress() })
+
         for (const item of pendingRetries) {
           // getSubmission (read) and finalizeSubmission (write) are
           // deliberately in separate try/catches. Both used to share one
@@ -5341,7 +5362,19 @@ console.log("succeededKeys", succeededKeys)
 
               const finalizedAt = Number(sub[5])
               const now = Math.floor(Date.now() / 1000)
-              if (now < finalizedAt) continue // Challenge period still active
+              if (now < finalizedAt) {
+                // Challenge period still active. Queue it rather than skip it:
+                // the checkpoint below advances past this block regardless, so
+                // a submission skipped here was never looked at again and
+                // stayed PENDING forever (pinning pendingCount at
+                // MAX_PENDING_SUBMISSIONS and halting replication). The retry
+                // loop above already waits out the challenge period without
+                // spending a retry.
+                if (!nextRetries.some(r => r.id === submissionId)) {
+                  nextRetries.push({ id: submissionId, retries: 0 })
+                }
+                continue
+              }
 
               console.log(`[OptimisticReplication] Finalizing submission ${submissionId}...`)
               const tx = await archiveW.finalizeSubmission(submissionId)
@@ -5378,18 +5411,23 @@ console.log("succeededKeys", succeededKeys)
         // silently drop out of the retry queue forever — the exact bug this
         // whole change exists to fix, just reintroduced at a lower
         // probability. Committing them together closes that gap.
-        await prisma.$transaction([
-          prisma.chainData.upsert({
+        // Interactive form, not the array form: the shared prisma client wraps
+        // model methods (auto-reconnect) so they return plain Promises, and
+        // $transaction([...]) rejects anything that isn't a PrismaPromise
+        // ("All elements of the array need to be Prisma Client promises").
+        // `tx` here is the unwrapped client, so both writes stay atomic.
+        await prisma.$transaction(async (tx) => {
+          await tx.chainData.upsert({
             where: { key: checkpointKey },
             create: { key: checkpointKey, value: latestBlock as any },
             update: { value: latestBlock as any },
-          }),
-          prisma.chainData.upsert({
+          })
+          await tx.chainData.upsert({
             where: { key: retryKey },
             create: { key: retryKey, value: nextRetries as any },
             update: { value: nextRetries as any },
-          }),
-        ])
+          })
+        })
       } catch (err: any) {
         console.error(`[OptimisticReplication] Auto-finalize error: ${err?.shortMessage || err?.message}`)
       } finally {
