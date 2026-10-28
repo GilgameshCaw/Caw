@@ -2588,6 +2588,19 @@ export const validatorService: Service = {
       return true
     }
 
+    // ethers reports every non-2xx HTTP answer as SERVER_ERROR, with the
+    // status in info.responseStatus ("502 Bad Gateway"). 5xx and 429 are the
+    // RPC having a bad moment (ethers retries a 429 itself and then reports
+    // it as 599). Other 4xx won't change on a retry: 401 is a bad API key,
+    // 413 a request body the RPC won't take. A SERVER_ERROR without a status
+    // (gunzip failure, FallbackProvider's own quorum errors) stays
+    // non-transient, as before.
+    function isTransientHttpError(err: any): boolean {
+      if (err?.code !== 'SERVER_ERROR') return false
+      const status = parseInt(String(err?.info?.responseStatus ?? ''), 10)
+      return status === 429 || (status >= 500 && status <= 599)
+    }
+
     // Recognize errors that mean "RPC blip, not a contract revert". We must
     // never mark TxQueue rows failed for these — keep them pending so the
     // next poll retries.  Mirrors the gate at the submission catch around
@@ -2595,6 +2608,7 @@ export const validatorService: Service = {
     function isTransientRpcError(err: any): boolean {
       const msg = (err?.message || '').toLowerCase()
       return (
+        isTransientHttpError(err) ||
         err?.code === 'UNSUPPORTED_OPERATION' ||
         err?.code === 'BAD_DATA' ||
         err?.code === 'UNKNOWN_ERROR' ||
@@ -3224,6 +3238,7 @@ console.log("succeededKeys", succeededKeys)
               // the provider if it was destroyed so the retry gets a fresh one.
               const errMsg = (err?.message || '').toLowerCase()
               const isTransient =
+                isTransientHttpError(err) ||
                 err?.code === 'UNSUPPORTED_OPERATION' ||
                 err?.code === 'BAD_DATA' ||
                 err?.code === 'UNKNOWN_ERROR' ||
@@ -3634,6 +3649,7 @@ console.log("succeededKeys", succeededKeys)
         // Check if this is a provider/network/rate-limit error that should be retried
         const errMsg = (submitErr.message || '').toLowerCase()
         const isTransient =
+          isTransientHttpError(submitErr) ||
           submitErr.code === 'UNSUPPORTED_OPERATION' ||
           submitErr.code === 'BAD_DATA' ||
           submitErr.code === 'UNKNOWN_ERROR' ||
