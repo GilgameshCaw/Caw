@@ -1,12 +1,11 @@
+import { redis } from '../lib/redisClient'
 import Redis from 'ioredis'
 import { randomBytes, createHash } from 'crypto'
 
 // Honor REDIS_URL when set so multi-install setups can isolate Redis
 // state into different logical databases (redis://host:port/N). Falls
 // back to the legacy hardcoded localhost:6379 default.
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const KEY_PREFIX = 'caw:session:'
 // Reverse index: caw:tokenAuth:<tokenId> is a Redis Set of session tokens

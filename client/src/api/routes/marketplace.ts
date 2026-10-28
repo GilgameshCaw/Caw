@@ -1,12 +1,11 @@
+import { redis } from '../../lib/redisClient'
 import { Router } from 'express'
 import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 import { createNotificationWithGroup } from '../../services/NotificationService'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const router = Router()
 

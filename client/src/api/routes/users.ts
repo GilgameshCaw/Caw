@@ -1,4 +1,5 @@
 // src/api/routes/users.ts
+import { redis } from '../../lib/redisClient'
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
@@ -24,9 +25,7 @@ import { pokeIndexTokenId } from '../util/indexerPoke'
 // isPasskey cache + L1 provider (lazy, reused across requests)
 // ---------------------------------------------------------------------------
 
-const _isPasskeyRedis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+const _isPasskeyRedis = redis
 
 const IS_PASSKEY_TTL = 3600 // 1 hour — 7702 delegation is effectively permanent
 

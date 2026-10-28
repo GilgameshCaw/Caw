@@ -1,3 +1,4 @@
+import { redis } from '../../lib/redisClient'
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { ethers, Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
@@ -15,9 +16,7 @@ import Redis from 'ioredis'
 
 const router = Router()
 // Honor REDIS_URL — see sessionStore.ts for the same pattern + reasoning.
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 // Rate limiting: 20 registrations per address per day (Redis-backed, survives restarts)
 const RATE_LIMIT_MAX = 20

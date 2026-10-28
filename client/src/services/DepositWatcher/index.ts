@@ -20,6 +20,7 @@
 // mental model.
 
 import 'dotenv/config'
+import { closeRedis, createSafeRedis, whenReady } from '../../lib/redisClient'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
@@ -80,7 +81,7 @@ export const depositWatcherService: Service = {
 
     const rpcUrl = getL1HttpRpcUrl(cfg.l1RpcUrl)
     const contractAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
-    const redis = new Redis(cfg.redisUrl)
+    const redis = createSafeRedis(cfg.redisUrl)
 
     let alive = true
     let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -105,6 +106,7 @@ export const depositWatcherService: Service = {
 
       const cpKey = checkpointKey(cfg.chainId, contractAddress)
       let lastBlock: number
+      await whenReady(redis)
       const cp = await redis.get(cpKey)
       if (cp) {
         lastBlock = parseInt(cp, 10)
@@ -268,12 +270,14 @@ export const depositWatcherService: Service = {
       async stop() {
         alive = false
         if (pollTimer) clearTimeout(pollTimer)
-        await redis.quit()
+        await closeRedis(redis)
       },
       async stats() {
         const cpKey = checkpointKey(cfg.chainId, contractAddress)
-        const cp = await redis.get(cpKey)
-        return `last processed block: ${cp ?? '(none)'}`
+        // runServices treats a rejected stats() as a crash, so a Redis outage must
+        // not surface here.
+        const cp = await redis.get(cpKey).catch(() => undefined)
+        return `last processed block: ${cp === undefined ? '(redis unavailable)' : cp ?? '(none)'}`
       },
     }
   },

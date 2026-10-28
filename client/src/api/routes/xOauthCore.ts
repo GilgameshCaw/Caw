@@ -13,12 +13,11 @@
  * Neither auth gating nor DB persistence lives here — that's the consumers'
  * job, because the two flows differ on exactly those axes.
  */
+import { redis } from '../../lib/redisClient'
 import crypto from 'crypto'
 import Redis from 'ioredis'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 // X kept twitter.com alive for back-compat, but x.com is canonical so the
 // popup reads "authorize on X" and we don't depend on a redirect chain.

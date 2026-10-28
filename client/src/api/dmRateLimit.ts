@@ -16,12 +16,11 @@
 // follows recipient", or "recipient follows sender". These are the same
 // signals the request-inbox gate uses, so the labels stay consistent.
 
+import { redis } from '../lib/redisClient'
 import Redis from 'ioredis'
 import { prisma } from '../prismaClient'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const COLD_LIMIT_PER_HOUR = Number(process.env.DM_SEND_COLD_LIMIT_PER_HOUR) || 10
 const WARM_LIMIT_PER_HOUR = Number(process.env.DM_SEND_WARM_LIMIT_PER_HOUR) || 100

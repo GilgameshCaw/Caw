@@ -20,6 +20,7 @@
  * Redis-backed (matches the existing sponsor rate-limit infra) rather than a
  * signed JWT, so the mint can atomically check-and-burn it.
  */
+import { redis } from '../../lib/redisClient'
 import { Router } from 'express'
 import crypto from 'crypto'
 import Redis from 'ioredis'
@@ -42,9 +43,7 @@ import {
 
 const router = Router()
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 // Signup flow uses its OWN state prefix + close-page localStorage key so it
 // never collides with the account-linking flow's signals.

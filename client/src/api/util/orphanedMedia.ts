@@ -24,12 +24,11 @@
 // to a key happens on the way in. Keys are stable; URLs depend on the
 // MEDIA_PUBLIC_URL_BASE config which can change.
 
+import { redis } from '../../lib/redisClient'
 import Redis from 'ioredis'
 import { mediaStorage, type MediaKind } from './mediaStorage'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const ZSET_KEY = 'orphan_media'
 const GRACE_MS = 7 * 24 * 60 * 60 * 1000

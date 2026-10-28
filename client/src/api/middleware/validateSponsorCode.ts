@@ -21,6 +21,7 @@
  *   sponsor:coderate:{codeHash}:{ip}    — per-code per-IP 1/hr rate limit
  */
 
+import { redis } from '../../lib/redisClient'
 import Redis from 'ioredis'
 import { prisma as _prismaDefault } from '../../prismaClient'
 import { hashCode } from '../../services/SponsorService/codes'
@@ -38,9 +39,7 @@ function getPrisma(): typeof _prismaDefault {
 
 // ─── Redis ────────────────────────────────────────────────────────────────────
 
-const _redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+const _redis = redis
 
 // Allow tests to inject a different Redis instance.
 let _redisOverride: Redis | null = null

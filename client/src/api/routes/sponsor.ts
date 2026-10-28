@@ -18,6 +18,7 @@
  * HTTP status codes. On-chain reverts surface as 400 with structured codes.
  */
 
+import { redis } from '../../lib/redisClient'
 import { Router } from 'express'
 import { z, ZodError } from 'zod'
 import Redis from 'ioredis'
@@ -49,9 +50,7 @@ const router = Router()
 
 // ─── Redis for rate limiting ─────────────────────────────────────────────────
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 // ─── Rate limit helpers ──────────────────────────────────────────────────────
 

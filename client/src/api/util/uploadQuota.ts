@@ -17,11 +17,10 @@
 // (b) it survives restarts, (c) checking the running total is O(N) over
 // today's entries which stays small at sane caps.
 
+import { redis } from '../../lib/redisClient'
 import Redis from 'ioredis'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const WINDOW_SECONDS = 24 * 60 * 60
 

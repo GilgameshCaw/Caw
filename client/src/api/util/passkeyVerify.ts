@@ -21,15 +21,14 @@
 // challenge and replay it). It is single-use via an atomic GETDEL. See the
 // security findings addressed in the verify-passkey route.
 
+import { redis } from '../../lib/redisClient'
 import { Contract } from 'ethers'
 import { randomBytes } from 'crypto'
 import Redis from 'ioredis'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { smartEoaAbi } from '../../abi/generated'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const CHALLENGE_PREFIX = 'passkey-challenge:'
 const CHALLENGE_TTL_SECONDS = 300 // 5 minutes

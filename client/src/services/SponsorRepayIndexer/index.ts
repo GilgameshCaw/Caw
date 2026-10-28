@@ -24,6 +24,7 @@
 // DepositWatcher in the L1 watcher family; L2 is an independent poll loop.
 
 import 'dotenv/config'
+import { closeRedis, createSafeRedis, whenReady } from '../../lib/redisClient'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
@@ -79,6 +80,7 @@ const cpKey = (chain: string, contract: string) =>
   `sponsor-repay-indexer:${chain}:${contract.toLowerCase()}:last-block`
 
 async function loadCheckpoint(redis: Redis, key: string, fallback: number): Promise<number> {
+  await whenReady(redis)
   const stored = await redis.get(key)
   if (stored) return parseInt(stored, 10)
   return fallback
@@ -295,7 +297,7 @@ export const sponsorRepayIndexerService: Service = {
     ctx.declareLoop('SponsorRepayIndexer:L1', Math.max(cfg.pollIntervalMs * 3, 180_000))
     ctx.declareLoop('SponsorRepayIndexer:L2', Math.max(cfg.pollIntervalMs * 3, 180_000))
 
-    const redis = new Redis(cfg.redisUrl)
+    const redis = createSafeRedis(cfg.redisUrl)
 
     let isAlive = true
     let l1Loop: ReturnType<typeof makePollLoop> | null = null
@@ -395,7 +397,7 @@ export const sponsorRepayIndexerService: Service = {
         isAlive = false
         l1Loop?.stop()
         l2Loop?.stop()
-        await redis.quit()
+        await closeRedis(redis)
         await prisma.$disconnect()
       },
       stats: async () => {

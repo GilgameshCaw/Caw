@@ -7,6 +7,7 @@
 // Once this service is running, profile pickers and /user/:tokenId pages
 // stay accurate without any poll-style scan of all users.
 import 'dotenv/config'
+import { closeRedis, createSafeRedis, whenReady } from '../../lib/redisClient'
 import { z } from 'zod'
 import { ethers } from 'ethers'
 import Redis from 'ioredis'
@@ -218,22 +219,27 @@ export const nftTransferWatcherService: Service = {
 
     const rpcUrl = getL1HttpRpcUrl(cfg.l1RpcUrl)
     const contractAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
-    const redis = new Redis(cfg.redisUrl)
+    const redis = createSafeRedis(cfg.redisUrl)
 
     // Separate subscriber connection — ioredis connections in subscriber mode
     // cannot run normal commands. Subscribe to the poke channel so the API
     // can trigger an immediate targeted index without waiting for the poll cycle.
-    const subscriber = new Redis(cfg.redisUrl)
+    const subscriber = createSafeRedis(cfg.redisUrl)
     // In-flight de-dupe: skip concurrent findOrCreateUser calls for the same
     // tokenId if a poke burst arrives before the first call completes.
     const indexingInFlight = new Set<number>()
 
-    subscriber.subscribe('caw:index-token', (err) => {
-      if (err) {
-        console.warn('[NftTransferWatcher] Failed to subscribe to caw:index-token:', err.message)
-        return
-      }
-      console.log('[NftTransferWatcher] Listening on caw:index-token for reactive pokes')
+    // createSafeRedis disables the offline queue, so a command sent before the
+    // connection is ready is rejected instead of queued. Subscribe once the
+    // connection is ready; ioredis re-subscribes by itself after a reconnect.
+    subscriber.once('ready', () => {
+      subscriber.subscribe('caw:index-token', (err) => {
+        if (err) {
+          console.warn('[NftTransferWatcher] Failed to subscribe to caw:index-token:', err.message)
+          return
+        }
+        console.log('[NftTransferWatcher] Listening on caw:index-token for reactive pokes')
+      })
     })
 
     subscriber.on('message', (_channel: string, message: string) => {
@@ -282,6 +288,7 @@ export const nftTransferWatcherService: Service = {
       // what you want for this use case).
       const cpKey = checkpointKey(cfg.chainId, contractAddress)
       let lastBlock: number
+      await whenReady(redis)
       const cp = await redis.get(cpKey)
       if (cp) {
         lastBlock = parseInt(cp, 10)
@@ -501,12 +508,14 @@ export const nftTransferWatcherService: Service = {
       async stop() {
         alive = false
         if (pollTimer) clearTimeout(pollTimer)
-        await Promise.all([redis.quit(), subscriber.quit()])
+        await Promise.all([closeRedis(redis), closeRedis(subscriber)])
       },
       async stats() {
         const cpKey = checkpointKey(cfg.chainId, contractAddress)
-        const cp = await redis.get(cpKey)
-        return `last processed block: ${cp ?? '(none)'}`
+        // runServices treats a rejected stats() as a crash, so a Redis outage must
+        // not surface here.
+        const cp = await redis.get(cpKey).catch(() => undefined)
+        return `last processed block: ${cp === undefined ? '(redis unavailable)' : cp ?? '(none)'}`
       },
     }
   },

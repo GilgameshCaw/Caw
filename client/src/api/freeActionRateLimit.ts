@@ -7,11 +7,10 @@
 // by spreading requests across workers (effective limit = N×30/min for
 // N workers).
 
+import { redis } from '../lib/redisClient'
 import Redis from 'ioredis'
 
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 const FREE_ACTION_LIMIT = Number(process.env.FREE_ACTION_LIMIT_PER_MIN) || 30
 const WINDOW_SECONDS = 60

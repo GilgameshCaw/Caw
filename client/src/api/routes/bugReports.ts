@@ -1,3 +1,4 @@
+import { redis } from '../../lib/redisClient'
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import {
@@ -7,9 +8,7 @@ import {
 import Redis from 'ioredis'
 
 const router = Router()
-const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL)
-  : new Redis({ port: 6379, host: '127.0.0.1' })
+
 
 // Per-IP throttle for the unauthenticated POST /api/bug-reports endpoint.
 // Prevents anonymous spam + impersonation flood. Authenticated reports

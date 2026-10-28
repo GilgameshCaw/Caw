@@ -7,15 +7,14 @@
 //
 // A poke failure must NEVER break the request — Redis errors are swallowed
 // and logged at warn level only.
+import { redis } from '../../lib/redisClient'
 import Redis from 'ioredis'
 
 let _publisher: Redis | null = null
 
 function getPublisher(): Redis {
   if (!_publisher) {
-    _publisher = process.env.REDIS_URL
-      ? new Redis(process.env.REDIS_URL)
-      : new Redis({ port: 6379, host: '127.0.0.1' })
+    _publisher = redis
     _publisher.on('error', (err: Error) => {
       console.warn('[indexerPoke] Redis publisher error:', err.message)
     })
