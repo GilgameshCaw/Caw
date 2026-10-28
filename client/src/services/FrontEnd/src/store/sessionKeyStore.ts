@@ -120,10 +120,15 @@ export const useSessionKeyStore = create<SessionKeyState>()(
       setSession: (entry) => {
         const wallet = (entry.ownerAddress || get().activeWallet || '').toLowerCase()
         if (!wallet) return
+        // getSession()/getActiveSession() hand out encrypted entries with the
+        // decrypted key filled in from memory. Callers spread those straight
+        // back in here (spend sync, SessionLimitExceeded), so never persist
+        // anything but the placeholder for an encrypted entry.
+        const privateKey = entry.encrypted ? ('0xencrypted' as `0x${string}`) : entry.privateKey
         set(state => ({
           sessions: {
             ...state.sessions,
-            [wallet]: { spent: '0', ...entry, ownerAddress: wallet },
+            [wallet]: { spent: '0', ...entry, privateKey, ownerAddress: wallet },
           },
         }))
       },
@@ -303,9 +308,21 @@ export const useSessionKeyStore = create<SessionKeyState>()(
           state = { ...state, dontPromptOwners: {} }
         }
 
+        // v5 → v6: earlier versions could write an unlocked key back into an
+        // encrypted entry (see setSession). setSession no longer does, but a
+        // key already on disk would stay until the entry is replaced, so drop
+        // it here and keep only the placeholder next to the ciphertext.
+        if (state?.sessions) {
+          const scrubbed: Record<string, SessionKeyEntry> = {}
+          for (const [wallet, entry] of Object.entries(state.sessions as Record<string, SessionKeyEntry>)) {
+            scrubbed[wallet] = entry.encrypted ? { ...entry, privateKey: '0xencrypted' as `0x${string}` } : entry
+          }
+          state = { ...state, sessions: scrubbed }
+        }
+
         return state
       },
-      version: 5,
+      version: 6,
     }
   )
 )
