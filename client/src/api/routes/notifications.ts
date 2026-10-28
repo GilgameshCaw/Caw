@@ -639,10 +639,16 @@ router.post('/hide-by-original-tx', requireAuth({ field: 'userId', verifyOwnersh
 /**
  * POST /api/notifications/test
  * Create test notifications (for development)
+ *
+ * No auth: it creates a notification for any userId from any actorId. So
+ * it is open only when NODE_ENV is explicitly 'development' (the same
+ * opt-in as the dev-only CORS '*' in server.ts). `npm start` and
+ * `npm run api` don't set NODE_ENV, so a node started that way must not
+ * fall into the open branch.
  */
 router.post('/test', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(403).json({ error: 'Test endpoint not available in production' })
+  if (process.env.NODE_ENV !== 'development') {
+    return res.status(403).json({ error: 'Test endpoint is only available when NODE_ENV=development' })
   }
 
   try {
