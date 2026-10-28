@@ -23,6 +23,7 @@ import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
+import { tipShortfallRejections } from '../../utils/tipShortfallRejections'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
 
 // ABI for the new packed-calldata CawActions functions
@@ -2802,6 +2803,11 @@ console.log("succeededKeys", succeededKeys)
             where: { id: entry.id },
             data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
           })
+        } else if (processedByOther) {
+          // A peer landed this same action. Settle it like the other
+          // resolveCawonceUsed callers: validated_by_peer, with the session
+          // spend bumped once. A plain status write here skipped the bump.
+          await markTxQueueValidatedByPeer(entry.id, entry.payload, entry.signedTx)
         } else {
           // 'done' path (or non-terminal states like waiting_for_deposit).
           // No notification needed — the helper is only for terminal failures.
@@ -3555,10 +3561,13 @@ console.log("succeededKeys", succeededKeys)
           console.log(`[Validator]   Action ${i} (${getActionType(action.actionType)}): amounts = [${action.amounts?.join(', ') || 'none'}]`)
         })
         console.log(`[Validator] ==============================================`)
-        // Mark all entries as failed due to insufficient tip
+        // Fail the entries that passed simulation on the tip. Entries the
+        // simulation rejected keep their own reason (see
+        // tipShortfallRejections), and underpriced ones aren't in
+        // validatedEntries, so their status stays.
         const failReason = `Insufficient tip: ${totalTipCaw} CAW (${Number(tipInWei) / 1e18} ETH) < gas cost ${Number(effectiveGasCost) / 1e18} ETH`
-        await updateQueueStatuses(entries, [],
-          entries.map(() => failReason))
+        await updateQueueStatuses(validatedEntries, [],
+          tipShortfallRejections(rejectionMessages, validatedEntries.length, failReason))
         return
       }
 
