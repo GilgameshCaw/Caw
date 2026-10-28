@@ -25,6 +25,7 @@
 import 'dotenv/config'
 import { createInterface } from 'readline'
 import { generateReply, clampReply, embedQuery } from './claude'
+import { compressText, fitsOnChain, MAX_TEXT_BYTES } from './textLimit'
 import { RagIndex } from './rag/search'
 import type { CawAIConfig } from './config'
 
@@ -71,7 +72,7 @@ async function replyTo(cfg: CawAIConfig, rag: RagIndex, author: string, text: st
     retrievedContext: context,
   })
 
-  const finalText = clampReply(gen.text, cfg.maxReplyChars, cfg.aiMarker)
+  const finalText = clampReply(gen.text, cfg.maxReplyChars, cfg.aiMarker, fitsOnChain)
 
   // Show what RAG surfaced so you can judge whether retrieval is helping.
   console.log('')
@@ -85,7 +86,7 @@ async function replyTo(cfg: CawAIConfig, rag: RagIndex, author: string, text: st
   console.log('')
   console.log('  ┌─ @cawai would reply ──────────────────────────────')
   for (const line of finalText.split('\n')) console.log(`  │ ${line}`)
-  console.log(`  └─ (${finalText.length}/${cfg.maxReplyChars} chars)`)
+  console.log(`  └─ (${finalText.length}/${cfg.maxReplyChars} chars, ${compressText(finalText).length}/${MAX_TEXT_BYTES} bytes compressed)`)
   console.log('')
 }
 

@@ -21,9 +21,10 @@
 
 import { Service, HeartbeatContext } from '../../Service'
 import { loadConfig, CawAIConfig } from './config'
-import { fetchNewMentions, markReplied, Cursor, loadCursor, saveCursor } from './mentionWatcher'
+import { fetchNewMentions, markReplied, Cursor, loadCursor, saveCursor, endSession } from './mentionWatcher'
 import { generateReply, clampReply, embedQuery } from './claude'
 import { postReply } from './reply'
+import { fitsOnChain } from './textLimit'
 import { BudgetTracker } from './budget'
 import { RagIndex } from './rag/search'
 
@@ -119,7 +120,7 @@ async function runOnce(
       continue
     }
 
-    const finalText = clampReply(gen.text, cfg.maxReplyChars, cfg.aiMarker)
+    const finalText = clampReply(gen.text, cfg.maxReplyChars, cfg.aiMarker, fitsOnChain)
 
     const result = await postReply(cfg, {
       parentCawId: m.cawId,
@@ -207,10 +208,14 @@ export async function lambdaHandler(): Promise<{ ok: true }> {
 
   // Load cursor from S3 at Lambda cold-start; /tmp is ephemeral.
   const cursor = await loadCursorFromS3(cfg)
-  const newCursor = await runOnce(cfg, rag, budget, cursor)
+  try {
+    const newCursor = await runOnce(cfg, rag, budget, cursor)
 
-  // Persist updated cursor back to S3 before exiting.
-  await saveCursorToS3(cfg, newCursor)
+    // Persist updated cursor back to S3 before exiting.
+    await saveCursorToS3(cfg, newCursor)
+  } finally {
+    await endSession(cfg)
+  }
 
   return { ok: true }
 }

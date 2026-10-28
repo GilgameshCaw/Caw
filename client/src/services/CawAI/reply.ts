@@ -6,8 +6,10 @@
 // wallet.signTypedData. Simple, no session management overhead.
 //
 // SECURITY BOUNDARY: this module is the ONLY place the deployer key
-// is used. The LLM never sees it; mentionWatcher / persona / claude
-// never see it. The key is loaded once from cfg at call time.
+// is used (signing replies, and the sign-in message in signInSession).
+// The LLM never sees it; mentionWatcher / persona / claude never see
+// it — mentionWatcher only gets the session token. The key is loaded
+// once from cfg at call time.
 //
 // Reply structure:
 //   - actionType = 0 (CAW post)
@@ -16,8 +18,8 @@
 //   - amounts = [validatorTip] trailing entry per the non-session-key path
 
 import { ethers } from 'ethers'
-import SmlTxt from 'smltxt'
 import type { CawAIConfig } from './config'
+import { compressText as compressBytes, MAX_TEXT_BYTES } from './textLimit'
 
 // EIP-712 domain (built from env at call time, not module-load time)
 function buildDomain(cfg: CawAIConfig) {
@@ -43,17 +45,8 @@ const TYPES = {
   ],
 }
 
-// Lazy smltxt singleton — table is ~380 KB; parse once.
-let _sml: SmlTxt | undefined
-function getSml(): SmlTxt {
-  if (!_sml) _sml = SmlTxt.fromPkg()
-  return _sml
-}
-
 function compressText(text: string): string {
-  if (!text) return '0x'
-  const bytes = getSml().compress(text)
-  return '0x' + Buffer.from(bytes).toString('hex')
+  return '0x' + Buffer.from(compressBytes(text)).toString('hex')
 }
 
 // Fetch the current validator tip from the mirror's tip-config endpoint.
@@ -95,6 +88,40 @@ function randomCawonce(): number {
   return Math.floor(Math.random() * 0xffff_ffff) + 1
 }
 
+// Sign in to the mirror as the wallet that owns the bot profile and
+// return the session token. GET /api/notifications sits behind
+// requireAuth({ verifyOwnership: true }), so an unauthenticated fetch
+// gets 401. The message is the one the FE signs (useVerifyWallet.ts):
+// the API checks Host against the request's Host header and ChainId
+// against its L2_CHAIN_ID, the same chain as cfg.chainId.
+export async function signInSession(cfg: CawAIConfig): Promise<string> {
+  const wallet = new ethers.Wallet(cfg.deployerPrivateKey)
+  const message =
+    `Verify wallet ownership for CAW\n` +
+    `Host: ${new URL(cfg.apiUrl).host.toLowerCase()}\n` +
+    `ChainId: ${cfg.chainId}\n` +
+    `Timestamp: ${Math.floor(Date.now() / 1000)}`
+  const signature = await wallet.signMessage(message)
+
+  const resp = await fetch(`${cfg.apiUrl}/api/auth/verify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message, signature }),
+  })
+  // 202 means the mirror hasn't indexed the wallet's profiles yet; there
+  // is no session in that answer, so treat it like any other failure.
+  if (resp.status !== 200) {
+    const body = await resp.text().catch(() => '')
+    throw new Error(`POST /api/auth/verify ${resp.status}: ${body}`)
+  }
+  const json = await resp.json() as { sessionToken?: string; authorizedTokenIds?: number[] }
+  if (!json.sessionToken) throw new Error('POST /api/auth/verify returned no sessionToken')
+  if (!json.authorizedTokenIds?.includes(cfg.profileTokenId)) {
+    throw new Error(`deployer wallet does not own profile ${cfg.profileTokenId} on this mirror`)
+  }
+  return json.sessionToken
+}
+
 export type ReplyInput = {
   parentCawId: number
   text: string                  // already clamped by claude.clampReply
@@ -124,6 +151,17 @@ export async function postReply(
       `clampReply must run before postReply.`
     )
   }
+  // The chain's limit is on the compressed bytes (see textLimit.ts).
+  // Refuse here rather than sign an action the validator's tx would
+  // revert with TextTooLong.
+  const compressedText = compressText(input.text)
+  const textBytes = (compressedText.length - 2) / 2
+  if (textBytes > MAX_TEXT_BYTES) {
+    throw new Error(
+      `postReply: text too long (${textBytes} > ${MAX_TEXT_BYTES} bytes compressed). ` +
+      `clampReply must run before postReply.`
+    )
+  }
 
   const wallet = new ethers.Wallet(cfg.deployerPrivateKey)
   const domain = buildDomain(cfg)
@@ -134,7 +172,6 @@ export async function postReply(
   ])
 
   const cawonce = randomCawonce()
-  const compressedText = compressText(input.text)
 
   const message = {
     actionType:      0,                     // CAW post

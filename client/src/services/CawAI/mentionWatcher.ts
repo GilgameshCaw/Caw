@@ -23,6 +23,7 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import type { CawAIConfig } from './config'
+import { signInSession } from './reply'
 
 export type PendingMention = {
   notificationId: number
@@ -73,6 +74,38 @@ async function saveReplied(ids: Set<number>): Promise<void> {
   await fs.writeFile(REPLIED_PATH, JSON.stringify(arr))
 }
 
+// Session for GET /api/notifications, which requires one for the bot's
+// profile. Signed in on first use, and again once when a token we had
+// been reusing gets 401 (expired, or dropped by the mirror). Not right
+// after a fresh sign-in: the same message signed again within a second
+// is byte-identical, and /api/auth/verify accepts a signature only once.
+let sessionToken: string | null = null
+
+async function fetchWithSession(cfg: CawAIConfig, url: string): Promise<Response> {
+  const fresh = !sessionToken
+  if (!sessionToken) sessionToken = await signInSession(cfg)
+  let resp = await fetch(url, { headers: { 'x-session-token': sessionToken } })
+  if (resp.status === 401 && !fresh) {
+    sessionToken = await signInSession(cfg)
+    resp = await fetch(url, { headers: { 'x-session-token': sessionToken } })
+  }
+  return resp
+}
+
+// Log the session out on the mirror. lambdaHandler calls this at the end
+// of each pass: every cold start signs in again, and each sign-in leaves
+// a session that lives a year in the mirror's Redis unless deleted.
+// Best-effort; a failure only leaves that session to expire.
+export async function endSession(cfg: CawAIConfig): Promise<void> {
+  if (!sessionToken) return
+  const token = sessionToken
+  sessionToken = null
+  await fetch(`${cfg.apiUrl}/api/auth/logout`, {
+    method: 'POST',
+    headers: { 'x-session-token': token },
+  }).catch(() => {})
+}
+
 export async function fetchNewMentions(
   cfg: CawAIConfig,
   cursor: Cursor,
@@ -82,7 +115,7 @@ export async function fetchNewMentions(
   // cursor.lastSeenNotificationId, then reverse so we process oldest
   // first. Per-notification shape: { id, type, actor, caw, createdAt }
   const url = `${cfg.apiUrl}/api/notifications?userId=${cfg.profileTokenId}&type=MENTION&limit=50`
-  const resp = await fetch(url)
+  const resp = await fetchWithSession(cfg, url)
   if (!resp.ok) throw new Error(`notifications fetch ${resp.status}`)
   const body = await resp.json() as {
     notifications: Array<{

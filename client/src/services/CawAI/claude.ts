@@ -129,7 +129,38 @@ function safeCodePointBoundary(s: string, cut: number): number {
   return cut
 }
 
-export function clampReply(text: string, maxChars: number, marker: string): string {
+// `fits` is the caller's real limit (the bot passes textLimit.fitsOnChain:
+// the chain counts compressed bytes, and a Japanese reply runs out of bytes
+// long before it runs out of characters). If the character clamp doesn't
+// fit, binary-search the character budget for a long clamp that does. Any
+// reply kept from the search has passed `fits`; the starting fallback is the
+// ellipsis-only reply, which fails only if the marker alone is over the
+// limit (postReply then refuses it).
+export function clampReply(
+  text: string,
+  maxChars: number,
+  marker: string,
+  fits: (reply: string) => boolean = () => true,
+): string {
+  const full = clampToChars(text, maxChars, marker)
+  if (fits(full)) return full
+  let lo = marker.length + 1
+  let hi = maxChars - 1
+  let best = clampToChars(text, lo, marker)
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const candidate = clampToChars(text, mid, marker)
+    if (fits(candidate)) {
+      best = candidate
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return best
+}
+
+function clampToChars(text: string, maxChars: number, marker: string): string {
   const room = maxChars - marker.length
   let body = text.trim()
   if (body.length > room) {

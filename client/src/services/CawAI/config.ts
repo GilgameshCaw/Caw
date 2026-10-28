@@ -48,7 +48,8 @@ const Schema = z.object({
   ragIndexPath: z.string().default('./rag-index.jsonl'),
 
   // Max chars per reply. Hard-clamped after generation, never trusted
-  // to the model. < 420 keeps replies fitting in a single CAW post.
+  // to the model. The chain's own limit is 420 bytes after smltxt
+  // compression; clampReply enforces that too (textLimit.ts).
   maxReplyChars: z.coerce.number().int().min(50).max(420).default(420),
 
   // Optional marker appended to every reply. Default is empty: the bot
