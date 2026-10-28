@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { countManager } from '../../services/CountManager'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 
@@ -73,13 +74,35 @@ router.post('/',
         create: { blockerId, blockedId }
       })
 
-      // Also remove any follow relationships in both directions
-      await prisma.follow.deleteMany({
-        where: {
-          OR: [
-            { followerId: blockerId, followingId: blockedId },
-            { followerId: blockedId, followingId: blockerId }
-          ]
+      // Also remove any follow relationships in both directions, with the
+      // same count handling as the other paths that remove a Follow row:
+      //   FOLLOW + SUCCESS -> onFollowRemoved (as handleUnfollowAction does)
+      //   FOLLOW + PENDING -> PENDING -> FAILED (as the cancel route, the
+      //                       failed-tx cleanup and DataCleaner do)
+      //   UNFOLLOW + PENDING already took its counts off at submit time.
+      // deleteMany + the action/status guard: if the indexer changed the row
+      // in between, it is left alone and nothing is decremented.
+      await prisma.$transaction(async (tx) => {
+        const follows = await tx.follow.findMany({
+          where: {
+            OR: [
+              { followerId: blockerId, followingId: blockedId },
+              { followerId: blockedId, followingId: blockerId }
+            ]
+          },
+          select: { id: true, followerId: true, followingId: true, action: true, status: true }
+        })
+        for (const f of follows) {
+          const deleted = await tx.follow.deleteMany({
+            where: { id: f.id, action: f.action, status: f.status }
+          })
+          if (deleted.count === 0 || f.action !== 'FOLLOW') continue
+          const pair = { followerId: f.followerId, followingId: f.followingId }
+          if (f.status === 'SUCCESS') {
+            await countManager.onFollowRemoved(tx, pair)
+          } else if (f.status === 'PENDING') {
+            await countManager.onStatusChanged(tx, 'follow', f.id, 'PENDING', 'FAILED', pair)
+          }
         }
       })
 
