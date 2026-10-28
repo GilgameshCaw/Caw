@@ -17,6 +17,7 @@
  * blobs remain. The caller (useSessionKey) triggers the re-write via encryptPrivateKey.
  */
 
+import { privateKeyToAccount } from 'viem/accounts'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
 const ENCRYPTION_MESSAGE = 'CAW Quick Sign Encryption Key'
@@ -133,64 +134,66 @@ const decryptedKeys = new Map<string, string>()
 
 /**
  * Optional lookup registered by the store layer (avoids circular imports).
- * Returns the stored v2-JSON ciphertext for a given wallet address, or undefined.
+ * Returns the session-key address of the stored encrypted session for a given
+ * wallet address, or undefined.
  *
  * Call `initBroadcastVerification` once at boot (e.g., in the Zustand store
  * initialiser or a top-level hook) so that key-response messages are
  * cryptographically verified before being accepted into memory.
  */
-let _getStoredCiphertext: ((walletAddress: string) => string | undefined) | null = null
+let _getSessionAddress: ((walletAddress: string) => string | undefined) | null = null
 
 /**
- * Register a ciphertext-lookup callback used to verify incoming key-response
- * messages on the BroadcastChannel.
+ * Register a session-address lookup callback used to verify incoming
+ * key-response messages on the BroadcastChannel.
  *
  * Without this, any same-origin tab (including a compromised dependency or
  * service worker) can inject a fake key for any walletAddress.
  *
- * The callback must return the encryptedKey blob stored in sessionKeyStore
- * for the given wallet address.
+ * The callback must return the session `address` of the encrypted entry
+ * stored in sessionKeyStore for the given wallet address.
  */
 export function initBroadcastVerification(
-  getCiphertext: (walletAddress: string) => string | undefined
+  getSessionAddress: (walletAddress: string) => string | undefined
 ) {
-  _getStoredCiphertext = getCiphertext
+  _getSessionAddress = getSessionAddress
 }
 
 /**
- * Attempt to verify a received BroadcastChannel key against the on-disk
- * ciphertext. Returns true only if decryption succeeds.
+ * Verify a received BroadcastChannel key against the stored session.
+ * Returns true only if the key derives the stored session-key address.
+ *
+ * The channel carries the decrypted session private key (see the request-key
+ * handler and setDecryptedKey), not the wallet signature, so it cannot be
+ * checked by decrypting the stored ciphertext with it.
  *
  * IMPORTANT: This is ONLY called for messages arriving on the channel
  * (i.e., from other tabs). The local `setDecryptedKey` path (from our own
  * successful decrypt) never goes through this check.
  */
 async function verifyChannelKey(walletAddress: string, receivedKey: string): Promise<boolean> {
-  if (!_getStoredCiphertext) {
+  if (!_getSessionAddress) {
     // Lookup not registered yet — conservative: reject to avoid silently accepting
     // unverified keys. Caller should call initBroadcastVerification at boot.
     console.warn('[sessionKeyEncryption] BroadcastChannel verification not initialized; rejecting key-response for', walletAddress)
     return false
   }
 
-  const ciphertext = _getStoredCiphertext(walletAddress)
-  if (!ciphertext) {
-    // No stored ciphertext for this wallet — nothing to verify against; reject
-    console.warn('[sessionKeyEncryption] No stored ciphertext for wallet; rejecting channel key-response for', walletAddress)
+  const sessionAddress = _getSessionAddress(walletAddress)
+  if (!sessionAddress) {
+    // No stored encrypted session for this wallet — nothing to verify against; reject
+    console.warn('[sessionKeyEncryption] No stored encrypted session for wallet; rejecting channel key-response for', walletAddress)
     return false
   }
 
   try {
-    // Attempt to decrypt the stored blob with the received key as the "wallet signature".
-    // For v2 blobs this calls deriveKeyWithSalt(receivedKey, randomSalt) which will
-    // produce the correct AES key if and only if `receivedKey` is the exact same
-    // wallet signature used at encrypt-time.
-    await decryptPrivateKey(ciphertext, receivedKey)
-    return true
+    const derived = privateKeyToAccount(receivedKey as `0x${string}`).address
+    if (derived.toLowerCase() === sessionAddress.toLowerCase()) return true
   } catch {
-    console.warn('[sessionKeyEncryption] Channel key-response failed verification for', walletAddress)
-    return false
+    // not a valid secp256k1 private key
   }
+  console.warn('[sessionKeyEncryption] Channel key-response failed verification for', walletAddress)
+  return false
 }
 
 function getChannel(): BroadcastChannel {

@@ -310,11 +310,11 @@ export const useSessionKeyStore = create<SessionKeyState>()(
   )
 )
 
-// H-3 fix: register the ciphertext-lookup callback so that incoming
+// H-3 fix: register the session-address lookup callback so that incoming
 // BroadcastChannel key-response messages are verified against the stored
-// ciphertext before being written into the in-memory key map.
+// session before being written into the in-memory key map.
 // This runs once at module load time (after the store is created).
 initBroadcastVerification((walletAddress: string) => {
-  const sessions = useSessionKeyStore.getState().sessions
-  return sessions[walletAddress.toLowerCase()]?.encryptedKey
+  const session = useSessionKeyStore.getState().sessions[walletAddress.toLowerCase()]
+  return session?.encryptedKey ? session.address : undefined
 })
