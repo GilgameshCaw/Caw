@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import { elasticsearchService } from '../../services/ElasticsearchService'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAdmin } from '../middleware/auth'
+import { isSearchableQuery } from '../../tools/searchableQuery'
 
 const router = Router()
 
@@ -183,7 +184,7 @@ router.get('/', async (req, res) => {
   try {
     const { q, type = 'all', limit = 20, offset = 0 } = req.query
 
-    if (!q || typeof q !== 'string' || q.trim().length < 2) {
+    if (!q || typeof q !== 'string' || !isSearchableQuery(q)) {
       return res.status(400).json({ error: 'Query must be at least 2 characters' })
     }
 
