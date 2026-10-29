@@ -9,6 +9,21 @@ interface TipConfigResponse {
 const STALE_TIME_MS = 5 * 60 * 1000 // 5 minutes
 
 /**
+ * One entry per apiUrl, first-seen order. An operator can have several active
+ * registrations that share a URL; they are one validator endpoint, and
+ * minTipsMap is keyed by URL, so `total` has to count URLs too or
+ * countAcceptingValidators() reports too many validators as accepting.
+ */
+export function uniqueByApiUrl<T extends { apiUrl: string }>(instances: T[]): T[] {
+  const seen = new Set<string>()
+  return instances.filter(i => {
+    if (seen.has(i.apiUrl)) return false
+    seen.add(i.apiUrl)
+    return true
+  })
+}
+
+/**
  * Fans out to each active discovered instance's /api/validator-analytics/tip-config
  * and returns a Map<apiUrl, minTipPerActionWei_as_bigint>.
  *
@@ -27,7 +42,7 @@ export function useValidatorMinTips(): {
   isLoading: boolean
 } {
   const getActiveInstances = useInstanceStore(s => s.getActiveInstances)
-  const instances = useMemo(() => getActiveInstances(), [getActiveInstances])
+  const instances = useMemo(() => uniqueByApiUrl(getActiveInstances()), [getActiveInstances])
 
   const results = useQueries({
     queries: instances.map(inst => ({
