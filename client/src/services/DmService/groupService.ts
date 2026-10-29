@@ -34,6 +34,21 @@ const memberInclude = {
   },
 } as const
 
+/**
+ * Serialise the membership additions of one conversation. The member cap is
+ * checked by counting the active members and then inserting, and at READ
+ * COMMITTED two overlapping additions both count the same members and both
+ * insert. This takes a transaction-scoped advisory lock keyed on the
+ * conversation, held until the transaction ends: the next addition waits,
+ * and its count then sees the members the first one committed. An advisory
+ * lock rather than a row lock on Conversation, so sending a message (which
+ * updates that row) never waits for it. Call it before the first read of the
+ * member list.
+ */
+async function lockMembership(tx: Prisma.TransactionClient, conversationId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${conversationId}, 0))`
+}
+
 async function assertNoBlocksAcrossSet(memberIds: number[]) {
   if (memberIds.length < 2) return
   const blocks = await prisma.block.findMany({
@@ -234,7 +249,7 @@ export class GroupService {
 
   /**
    * Owner adds members. Respects opt-out. Member-cap enforced inside
-   * the transaction so concurrent adds can't exceed 10.
+   * the transaction, under lockMembership, so concurrent adds can't exceed 10.
    */
   async addMembers(params: { conversationId: string; actorUserId: number; targetUserIds: number[] }) {
     const { conversationId, actorUserId } = params
@@ -257,6 +272,7 @@ export class GroupService {
 
     return prisma.$transaction(async tx => {
       await requireOwner(tx, conversationId, actorUserId)
+      await lockMembership(tx, conversationId)
 
       // Existing participants table — distinguish "active", "previously
       // left/removed" (leftAt set, can rejoin), and "never seen".
@@ -597,6 +613,7 @@ export class GroupService {
         throw new GroupServiceError(400, 'NO_DM_IDENTITY', 'You must enable DMs before joining a group')
       }
 
+      await lockMembership(tx, conversationId)
       const active = await tx.conversationParticipant.findMany({
         where: { conversationId, leftAt: null },
         select: { userId: true },
