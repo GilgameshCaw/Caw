@@ -13,6 +13,18 @@ type Invite = {
   revokedAt?: string | null
 }
 
+// The invite fields are edited as text and only coerced to a number when the
+// invite is minted or the field loses focus. Coercing on every keystroke turns
+// the empty field into 1, so the old value can never be cleared and a new one
+// can't be typed over it.
+const INVITE_MAX_USES_MAX = 100 // server accepts 1..100 (groupService.mintInvite)
+
+function toNumber(text: string, min: number, max = Infinity, integer = false): number {
+  const raw = Number(text)
+  const n = integer ? Math.trunc(raw) : raw
+  return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min))
+}
+
 interface Props {
   isOpen: boolean
   onClose: () => void
@@ -44,8 +56,8 @@ export default function GroupMembersPanel(props: Props) {
   const [addQuery, setAddQuery] = useState('')
   const [addResults, setAddResults] = useState<Array<{ tokenId: number; username: string; displayName?: string; avatarUrl?: string; defaultAvatarId?: number | null; hasDmIdentity?: boolean }>>([])
   const [invites, setInvites] = useState<Invite[]>([])
-  const [inviteExpiryHours, setInviteExpiryHours] = useState(24)
-  const [inviteMaxUses, setInviteMaxUses] = useState(5)
+  const [inviteExpiryHours, setInviteExpiryHours] = useState('24')
+  const [inviteMaxUses, setInviteMaxUses] = useState('5')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -114,8 +126,11 @@ export default function GroupMembersPanel(props: Props) {
   const handleMint = async () => {
     setBusy(true); setError(null)
     try {
-      const expiresAt = new Date(Date.now() + inviteExpiryHours * 3600 * 1000).toISOString()
-      const inv = await onMintInvite(conversationId, { expiresAt, maxUses: inviteMaxUses })
+      const hours = toNumber(inviteExpiryHours, 1)
+      const maxUses = toNumber(inviteMaxUses, 1, INVITE_MAX_USES_MAX, true)
+      setInviteExpiryHours(String(hours)); setInviteMaxUses(String(maxUses))
+      const expiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString()
+      const inv = await onMintInvite(conversationId, { expiresAt, maxUses })
       setInvites(prev => [inv, ...prev])
     } catch (e: any) { setError(e?.message || 'Mint failed') }
     finally { setBusy(false) }
@@ -228,8 +243,10 @@ export default function GroupMembersPanel(props: Props) {
                 Hours
                 <input
                   type="number"
+                  min={1}
                   value={inviteExpiryHours}
-                  onChange={e => setInviteExpiryHours(Math.max(1, Number(e.target.value) || 1))}
+                  onChange={e => setInviteExpiryHours(e.target.value)}
+                  onBlur={() => setInviteExpiryHours(String(toNumber(inviteExpiryHours, 1)))}
                   className={`w-16 rounded-md border px-2 py-1 text-xs ${inputBase}`}
                 />
               </label>
@@ -237,8 +254,11 @@ export default function GroupMembersPanel(props: Props) {
                 Max uses
                 <input
                   type="number"
+                  min={1}
+                  max={INVITE_MAX_USES_MAX}
                   value={inviteMaxUses}
-                  onChange={e => setInviteMaxUses(Math.max(1, Number(e.target.value) || 1))}
+                  onChange={e => setInviteMaxUses(e.target.value)}
+                  onBlur={() => setInviteMaxUses(String(toNumber(inviteMaxUses, 1, INVITE_MAX_USES_MAX, true)))}
                   className={`w-16 rounded-md border px-2 py-1 text-xs ${inputBase}`}
                 />
               </label>
