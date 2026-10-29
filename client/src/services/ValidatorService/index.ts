@@ -13,9 +13,12 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { withWalletLock } from '../../utils/walletQueue'
+import { waitForReceipt, TxWaitTimeoutError } from '../../utils/txWait'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { decompressActionText } from '../../utils/decompressActionText'
+import { groupERC1271Rows, estimateERC1271GroupBytes, canStartERC1271Group } from '../../utils/erc1271Groups'
+import { settleFailedERC1271Row, isRetryableERC1271SubmitError } from '../../utils/erc1271Settle'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
 import { getIndexerStats } from '../../utils/indexerHealth'
 import type { AbstractProvider } from 'ethers'
@@ -1422,8 +1425,9 @@ export const validatorService: Service = {
       const awaitingRows = await prisma.txQueue.findMany({
         where: { status: 'awaiting_indexer' },
         // signedTx is needed for markTxQueueValidatedByPeer → incrementSessionSpent
-        // (recovers signer to identify the session key to charge).
-        select: { id: true, payload: true, senderId: true, updatedAt: true, signedTx: true },
+        // (recovers signer to identify the session key to charge). ERC-1271
+        // rows (settleFailedERC1271Row) get no bump, as on their success path (L-2).
+        select: { id: true, payload: true, senderId: true, updatedAt: true, signedTx: true, signerKind: true },
       })
       if (awaitingRows.length > 0) {
         console.log(`[Validator] Rechecking ${awaitingRows.length} awaiting_indexer row(s)`)
@@ -1433,7 +1437,7 @@ export const validatorService: Service = {
           const resolution = await resolveCawonceUsed(data, row.updatedAt, httpProvider)
           if (resolution === 'done') {
             console.log(`[Validator] TxQueue ${row.id}: Action row now indexed and matches — marking done`)
-            await markTxQueueValidatedByPeer(row.id, row.payload, row.signedTx)
+            await markTxQueueValidatedByPeer(row.id, row.payload, row.signerKind === 'erc1271' ? null : row.signedTx)
             // Also mark the optimistic Caw row SUCCESS for caw/recaw actions, mirroring updateQueueStatuses.
             if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
               await prisma.caw.update({
@@ -1520,7 +1524,8 @@ export const validatorService: Service = {
           (ex?.text ?? '') === dataTextPlain
         if (sameAction) {
           console.log(`[Validator] TxQueue ${candidate.id}: action already on chain (peer mirror submitted) — marking done without simulation`)
-          await markTxQueueValidatedByPeer(candidate.id, (candidate as any).payload, (candidate as any).signedTx)
+          // No session-spend bump for ERC-1271 rows (L-2).
+          await markTxQueueValidatedByPeer(candidate.id, (candidate as any).payload, (candidate as any).signerKind === 'erc1271' ? null : (candidate as any).signedTx)
           // Mirror the SUCCESS state to optimistic Caw rows so the FE
           // stops showing pending.
           if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
@@ -1565,7 +1570,7 @@ export const validatorService: Service = {
       // started in this batch, we drop the WHOLE in-progress group and
       // try again next poll. If a single batch group genuinely doesn't
       // fit by itself, we mark every row in it failed with a clear
-      // "Batch too large to submit" reason — the API now caps at 256
+      // "Batch too large to submit" reason — the API now caps at 64
       // actions per batch (see /api/actions /batch), so this should be
       // unreachable in practice unless text payloads are huge.
       const MAX_BATCH_CALLDATA_BYTES = 120_000
@@ -1731,6 +1736,10 @@ export const validatorService: Service = {
      *   - sigs: one WebAuthn blob per sender-group (raw signedTx hex)
      *   - rs: keccak256(sigs[g]) for each group g (enforced on-chain)
      *   - actions: decoded action objects (for gas/quote estimation)
+     *
+     * packActions writes ONE uint16 count for the whole tx, while the
+     * contract expects one `[uint16 groupSize]` header per sig group — so
+     * only call this with a single group (groupERC1271Rows), never a mix.
      */
     function buildERC1271ActionData(
       erc1271Candidates: Array<{ payload: any; signedTx: string; id: number; senderId: number }>
@@ -1797,6 +1806,9 @@ export const validatorService: Service = {
       validatorId: number,
       erc1271Data: { packedActions: string; sigs: string[]; rs: string[]; actions: any[] },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint },
+      // Called once the tx is broadcast, so the caller can tell an error
+      // before the send from one after it (isRetryableERC1271SubmitError).
+      onSent: () => void = () => {},
     ): Promise<{ processed: Array<{ senderId: number; cawonce: number }>; receipt: any }> {
       if (!CAW_ACTIONS_ERC1271_ADDRESS) {
         throw new Error('[submitERC1271Actions] CAW_ACTIONS_ERC1271_ADDRESS not configured — cannot submit ERC-1271 batch')
@@ -1869,9 +1881,10 @@ export const validatorService: Service = {
           })
         })
         releaseSlot()
+        onSent()
         console.log(`[submitERC1271Actions] MILESTONE: submit path done — sent ${erc1271Data.actions.length} action(s), tx=${tx.hash}`)
 
-        const receipt = await tx.wait()
+        const receipt = await waitForReceipt(tx, TX_WAIT_TIMEOUT_MS)
 
         const evt = receipt?.logs
           ?.map((log: any) => { try { return packedIface.parseLog(log) } catch { return null } })
@@ -2233,6 +2246,24 @@ export const validatorService: Service = {
     // 2026-05-13.
     let _submitChain: Promise<unknown> = Promise.resolve()
 
+    // Upper bound on each submit's receipt wait (submitProcessActions and
+    // submitERC1271Actions). 60 s is 30 Base blocks. Without the bound one
+    // missing receipt held the poll until the watchdog restarted the
+    // service. The ERC-1271 sub-path starts a group only while this wait
+    // plus ERC1271_GROUP_MARGIN_MS still ends before the poll watchdog
+    // would fire (canStartERC1271Group). A timed-out ERC-1271 group is
+    // settled by settleFailedERC1271Row.
+    const TX_WAIT_TIMEOUT_MS = 60_000
+    // Room for the rest of an ERC-1271 group besides the receipt wait: the
+    // quote, the gas estimate and send, and settling its rows
+    // (isCawonceUsed, and resolveCawonceUsed's calldata backstop for a row
+    // that has waited past the indexer budget). Not a hard bound: an RPC
+    // call that hangs still ends at the watchdog.
+    const ERC1271_GROUP_MARGIN_MS = 30_000
+    // When safePollLoop last sent the poll heartbeat. The watchdog counts
+    // from here, not from the start of the current poll.
+    let pollHeartbeatAt = Date.now()
+
     async function submitProcessActions(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
@@ -2353,7 +2384,7 @@ export const validatorService: Service = {
         releaseSlot()
         console.log(`[submitProcessActions] Sent ${multiData.actions.length} action(s), tx=${tx.hash}`)
 
-        const receipt = await tx.wait()
+        const receipt = await waitForReceipt(tx, TX_WAIT_TIMEOUT_MS)
 
         // ActionsProcessed / ActionsProcessedZk are now calldata commitments
         // (event carries batchHash + counts; the packedActions blob lives in
@@ -2396,6 +2427,16 @@ export const validatorService: Service = {
         console.log(`[submitProcessActions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))${skipNote}`)
         return { processed, receipt }
       } catch (err: any) {
+        // The tx was sent and may still land. Don't let the retry ladder below
+        // send the batch again: pass it up, where the callers' transient checks
+        // match "timeout" and put the rows back to pending. The next poll's
+        // simulation then sees "Cawonce already used" for a tx that landed,
+        // and resolveCawonceUsed settles those rows.
+        if (err instanceof TxWaitTimeoutError) {
+          console.warn(`[submitProcessActions] ${err.message} — not re-sending; rows go back to pending`)
+          throw err
+        }
+
         // Handle "oversized data" — tx calldata exceeds the 128KB protocol limit.
         // Split the batch in half and try again. Uses recursion with a shrinking
         // multiData so at worst we end up submitting one action at a time.
@@ -3987,75 +4028,136 @@ console.log("succeededKeys", succeededKeys)
 
         if (validatedERC1271.length === 0) {
           console.log('[Validator] No valid ERC-1271 entries after cost/tip validation')
-          // fall through; erc1271Bound will be empty, submitting nothing
+          // fall through; erc1271Groups will be empty, submitting nothing
         }
 
-        // Size-bound the ERC-1271 batch (same 120KB cap, but each row's blob
-        // may be much larger than 65 bytes — entrySize already accounts for this).
+        // One signature group per tx (see groupERC1271Rows): the contract
+        // reads a uint16 header per group, buildERC1271ActionData writes one
+        // per tx, and the two agree only when the tx carries a single group.
+        // A group is never split. Each group is a sequential send + wait, and
+        // the poll watchdog restarts the service if the poll loop goes
+        // declaredPollTimeoutMs without a heartbeat, so groups go back to
+        // 'pending' for the next poll when they are past
+        // MAX_ERC1271_GROUPS_PER_POLL, or when one more group would not end
+        // before the watchdog fires (canStartERC1271Group, checked before
+        // every group, the first one included).
         const MAX_ERC1271_CALLDATA_BYTES = 120_000
-        const boundedERC1271 = validatedERC1271.slice() // copy; we may truncate
-        let erc1271Size = 500 // base ABI encode overhead
-        const erc1271Bound: typeof erc1271Candidates = []
-        for (const entry of boundedERC1271) {
-          const sigHex = entry.signedTx ?? ''
-          const blobBytes = sigHex.startsWith('0x') ? (sigHex.length - 2) / 2 : sigHex.length / 2
-          const data = (entry.payload as any)?.data
-          const textHex = typeof data?.text === 'string' ? data.text : ''
-          const textLen = textHex.startsWith('0x') ? (textHex.length - 2) / 2 : textHex.length / 2
-          const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
-          const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
-          const sz = 25 + blobBytes + textLen + recipientsLen + amountsLen
-          if (erc1271Bound.length > 0 && erc1271Size + sz > MAX_ERC1271_CALLDATA_BYTES) {
-            console.log(`[Validator] ERC-1271 batch size limit reached at ${erc1271Bound.length} entries (~${erc1271Size} bytes). Deferring rest to next poll.`)
+        const MAX_ERC1271_GROUPS_PER_POLL = 8
+        const erc1271Groups = groupERC1271Rows(validatedERC1271)
+        const deferERC1271Groups = async (groups: typeof erc1271Groups, why: string) => {
+          const deferred = groups.flat()
+          if (deferred.length === 0) return
+          console.log(`[Validator] ${why}. Deferring ${deferred.length} ERC-1271 entries to next poll.`)
+          await prisma.txQueue.updateMany({
+            where: { id: { in: deferred.map(e => e.id) }, status: 'processing' },
+            data: { status: 'pending' },
+          })
+        }
+        await deferERC1271Groups(
+          erc1271Groups.slice(MAX_ERC1271_GROUPS_PER_POLL),
+          `ERC-1271 group limit reached at ${MAX_ERC1271_GROUPS_PER_POLL} group(s)`,
+        )
+        const erc1271ToSend = erc1271Groups.slice(0, MAX_ERC1271_GROUPS_PER_POLL)
+
+        for (let gi = 0; gi < erc1271ToSend.length; gi++) {
+          const roomForGroup = canStartERC1271Group({
+            now: Date.now(),
+            lastHeartbeatAt: pollHeartbeatAt,
+            watchdogTimeoutMs: declaredPollTimeoutMs,
+            receiptWaitMs: TX_WAIT_TIMEOUT_MS,
+            marginMs: ERC1271_GROUP_MARGIN_MS,
+          })
+          if (!roomForGroup) {
+            await deferERC1271Groups(
+              erc1271ToSend.slice(gi),
+              `No time left before the poll watchdog (${Math.round(declaredPollTimeoutMs / 1000)}s since the last heartbeat) for another ERC-1271 group after ${gi} group(s)`,
+            )
             break
           }
-          erc1271Bound.push(entry)
-          erc1271Size += sz
-        }
-
-        const erc1271Data = buildERC1271ActionData(erc1271Bound)
-        const erc1271Quote = await recalculateQuoteForActions({
-          actions: erc1271Data.actions,
-          v: [], r: [], s: [],
-          packedActions: erc1271Data.packedActions,
-          packedSigs: '0x',
-        })
-
-        let erc1271Finalized: Array<{ senderId: number; cawonce: number }> = []
-        let erc1271SubmitError: string | null = null
-        try {
-          const erc1271Result = await submitERC1271Actions(validatorId, erc1271Data, erc1271Quote)
-          erc1271Finalized = erc1271Result.processed
-        } catch (erc1271Err: any) {
-          erc1271SubmitError = erc1271Err.message || 'ERC-1271 submission failed'
-          console.error('[Validator] ERC-1271 submission failed:', erc1271SubmitError)
-          // L-1 known gap: unlike the ECDSA path there is NO bisect/recovery
-          // here. A single invalid action fails the whole sub-batch. If this
-          // becomes a reliability concern, add bisect similar to the ECDSA path
-          // (splitAndResubmit pattern). Tracked as a follow-up.
-        }
-
-        const erc1271FinalizedKeys = new Set(erc1271Finalized.map(f => `${f.senderId}-${f.cawonce}`))
-        await Promise.all(erc1271Bound.map(async (entry) => {
-          const data = (entry.payload as any).data
-          const key = `${data.senderId}-${data.cawonce}`
-          if (erc1271FinalizedKeys.has(key)) {
-            await prisma.txQueue.update({
-              where: { id: entry.id },
-              data: { status: 'done', reason: null },
-            })
-            // L-2: ERC-1271 rows are owner-equivalent (no session key in play).
-            // incrementSessionSpent tracks session-key spend caps and must NOT
-            // fire for these rows — the on-chain spend cap is authoritative.
-            // Only call it for session-key (non-erc1271) rows.
-            if ((entry as any).signerKind !== 'erc1271') {
-              await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
-            }
+          const erc1271Bound = erc1271ToSend[gi]
+          let erc1271Finalized: Array<{ senderId: number; cawonce: number }> = []
+          let erc1271SubmitError: string | null = null
+          let erc1271Submitted = false
+          let erc1271Retryable = false
+          const erc1271Size = estimateERC1271GroupBytes(erc1271Bound)
+          if (erc1271Size > MAX_ERC1271_CALLDATA_BYTES) {
+            erc1271SubmitError = `Batch too large to submit (~${erc1271Size} bytes)`
+            console.error(`[Validator] ERC-1271 group of ${erc1271Bound.length} entries is ~${erc1271Size} bytes, over the ${MAX_ERC1271_CALLDATA_BYTES} cap`)
           } else {
-            const reason = erc1271SubmitError || 'ERC-1271 action not confirmed on chain'
-            await markTxQueueFailed(entry.id, reason, data.senderId, data)
+            const erc1271Data = buildERC1271ActionData(erc1271Bound)
+            const erc1271Quote = await recalculateQuoteForActions({
+              actions: erc1271Data.actions,
+              v: [], r: [], s: [],
+              packedActions: erc1271Data.packedActions,
+              packedSigs: '0x',
+            })
+
+            let erc1271Sent = false
+            try {
+              erc1271Submitted = true
+              const erc1271Result = await submitERC1271Actions(
+                validatorId, erc1271Data, erc1271Quote, () => { erc1271Sent = true },
+              )
+              erc1271Finalized = erc1271Result.processed
+            } catch (erc1271Err: any) {
+              erc1271SubmitError = erc1271Err.message || 'ERC-1271 submission failed'
+              erc1271Retryable = isRetryableERC1271SubmitError(erc1271Err, erc1271Sent, isTransientRpcError)
+              console.error('[Validator] ERC-1271 submission failed:', erc1271SubmitError)
+              // L-1 known gap: unlike the ECDSA path there is NO bisect here.
+              // A single invalid action fails its whole group (one tx). Rows
+              // whose action is on chain anyway are settled below
+              // (settleFailedERC1271Row) instead of being marked failed.
+            }
           }
-        }))
+
+          const erc1271FinalizedKeys = new Set(erc1271Finalized.map(f => `${f.senderId}-${f.cawonce}`))
+          await Promise.all(erc1271Bound.map(async (entry) => {
+            const data = (entry.payload as any).data
+            const key = `${data.senderId}-${data.cawonce}`
+            if (erc1271FinalizedKeys.has(key)) {
+              await prisma.txQueue.update({
+                where: { id: entry.id },
+                data: { status: 'done', reason: null },
+              })
+              // L-2: ERC-1271 rows are owner-equivalent (no session key in play).
+              // incrementSessionSpent tracks session-key spend caps and must NOT
+              // fire for these rows — the on-chain spend cap is authoritative.
+              // Only call it for session-key (non-erc1271) rows.
+              if ((entry as any).signerKind !== 'erc1271') {
+                await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
+              }
+            } else if (erc1271Submitted && erc1271SubmitError) {
+              const verdict = await settleFailedERC1271Row({
+                submitError: erc1271SubmitError,
+                retryable: erc1271Retryable,
+                isCawonceUsed: () => cawActions.isCawonceUsed(data.senderId, data.cawonce),
+                resolveCawonceUsed: () => resolveCawonceUsed(data, entry.updatedAt, httpProvider),
+              })
+              if (verdict.kind === 'landed') {
+                // signedTx null: no session-spend bump for ERC-1271 rows (L-2).
+                await markTxQueueValidatedByPeer(entry.id, entry.payload, null)
+                console.log(`[Validator] ERC-1271 TxQueue ${entry.id}: submit failed but the action is on chain — validated_by_peer`)
+              } else if (verdict.kind === 'awaiting_indexer') {
+                await prisma.txQueue.update({
+                  where: { id: entry.id },
+                  data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+                })
+                console.log(`[Validator] ERC-1271 TxQueue ${entry.id}: cawonce ${data.cawonce} used but Action row not yet indexed — deferring`)
+              } else if (verdict.kind === 'pending') {
+                await prisma.txQueue.updateMany({
+                  where: { id: entry.id, status: 'processing' },
+                  data: { status: 'pending' },
+                })
+                console.log(`[Validator] ERC-1271 TxQueue ${entry.id}: receipt timed out and cawonce ${data.cawonce} is not used — back to pending`)
+              } else {
+                await markTxQueueFailed(entry.id, verdict.reason, data.senderId, data)
+              }
+            } else {
+              const reason = erc1271SubmitError || 'ERC-1271 action not confirmed on chain'
+              await markTxQueueFailed(entry.id, reason, data.senderId, data)
+            }
+          }))
+        }
       } else if (erc1271Candidates.length > 0 && !CAW_ACTIONS_ERC1271_ADDRESS) {
         console.warn('[Validator] ERC-1271 candidates present but CAW_ACTIONS_ERC1271_ADDRESS not configured — deferring to next poll')
       }
@@ -5845,6 +5947,7 @@ console.log("succeededKeys", succeededKeys)
           ctx.declareLoop('poll', wantPollTimeoutMs)
         }
         ctx.heartbeat('poll')
+        pollHeartbeatAt = Date.now()
       } catch (err) {
         console.error(err)
       } finally {
