@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { findStaleListingCandidates } from '../util/staleListings'
 import Redis from 'ioredis'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
@@ -302,6 +303,25 @@ router.post('/listings/:id/sold', requireAuth({ anySession: true }), async (req,
     res.json({ ok: true, deferred: true })
   } catch (err: any) {
     console.error('[marketplace] mark sold error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /api/marketplace/listings/stale/:address
+ * Listings the address may need to clear because the token moved away from the
+ * seller while the listing was open: listings of tokens the address owns, and
+ * listings the address is the highest bidder of, in both cases by another
+ * seller. Candidates only: the frontend asks the chain which are still active
+ * and really stale, then calls reclaimListing / reclaimBid.
+ */
+router.get('/listings/stale/:address', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100)
+    const listings = await findStaleListingCandidates(prisma, req.params.address, limit)
+    res.json({ listings })
+  } catch (err: any) {
+    console.error('[marketplace] stale listings error:', err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

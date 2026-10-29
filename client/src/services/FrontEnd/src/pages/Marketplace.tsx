@@ -13,6 +13,7 @@ import { useSearchParams, useLocation } from 'react-router-dom'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
+import StaleListingsBanner from '~/components/marketplace/StaleListingsBanner'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
@@ -163,6 +164,9 @@ const Marketplace: React.FC = () => {
         {/* Full-bleed divider within the page gutter (matches feed dividers). */}
         <div className={`-mx-6 px-6 border-t pt-6 ${themeBorder(isDark)}`}>
           <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>{t('marketplace.title')}</h2>
+
+          {/* Listings left open on chain after a username moved (frees the username / a bid) */}
+          <StaleListingsBanner />
 
           {/* Unclaimed sale proceeds — V2 pull-payout model (H-15) */}
           <SalesProceedsBanner />
