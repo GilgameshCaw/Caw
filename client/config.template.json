@@ -56,14 +56,16 @@
     "service": "NftTransferWatcher",
     "config": {
       "l1RpcUrl": "${L1_RPC_URL}",
-      "chainId":  11155111
+      "chainId":  11155111,
+      "redisUrl": "redis://127.0.0.1:6379"
     }
   },
   {
     "service": "DepositWatcher",
     "config": {
       "l1RpcUrl": "${L1_RPC_URL}",
-      "chainId":  11155111
+      "chainId":  11155111,
+      "redisUrl": "redis://127.0.0.1:6379"
     }
   },
   {

@@ -424,11 +424,17 @@ export function buildServiceList(nodeType, config) {
         ethMainnetRpcUrl: '${ETH_MAINNET_RPC_URL}'
       }
     })
+    // NftTransferWatcher and DepositWatcher keep their block checkpoint in
+    // Redis, so they need this install's Redis (and logical DB) like
+    // ActionProcessor does. Without redisUrl they fall back to
+    // redis://127.0.0.1:6379 (db 0), which a second install on the same host
+    // shares with the first (same chain + contract = same checkpoint key).
     services.push({
       service: 'NftTransferWatcher',
       config: {
         l1RpcUrl: '${L1_RPC_URL}',
         chainId: net.l1ChainId,
+        redisUrl: config.redisUrl || 'redis://127.0.0.1:6379',
       }
     })
     services.push({
@@ -436,6 +442,7 @@ export function buildServiceList(nodeType, config) {
       config: {
         l1RpcUrl: '${L1_RPC_URL}',
         chainId: net.l1ChainId,
+        redisUrl: config.redisUrl || 'redis://127.0.0.1:6379',
       }
     })
     services.push({
