@@ -5,6 +5,7 @@ import { ethers } from 'ethers'
 import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
+import { recordBid } from './recordBid'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { createNotificationWithGroup } from '../NotificationService'
 
@@ -364,36 +365,18 @@ export const marketplaceIndexerService: Service = {
             if (listing) {
               const previousBidder = listing.highestBidder
 
-              // Mark previous highest bid as outbid
-              await prisma.marketplaceBid.updateMany({
-                where: { listingId: listing.id, status: 'ACTIVE' },
-                data: { status: 'OUTBID' },
-              })
-
               // Idempotency: MarketplaceIndexer holds the checkpoint and
               // re-scans the WHOLE 2000-block range whenever ANY handler
               // in this poll fails (see PayoutWithdrawn below) — including
-              // failures unrelated to bids. .create() would insert a
-              // second row for the same on-chain bid on every retry.
-              // @@unique([listingId, bidder, txHash]) makes this an
-              // upsert: a retry hits the `update` branch (a no-op) instead
-              // of duplicating the row. `wasNew` gates the OUTBID
+              // failures unrelated to bids. recordBid upserts on
+              // (listingId, bidder, txHash) and only demotes the ACTIVE
+              // bids when the row is new. `wasNew` gates the OUTBID
               // notification below so a retry doesn't re-notify.
-              const before = await prisma.marketplaceBid.findUnique({
-                where: { listingId_bidder_txHash: { listingId: listing.id, bidder, txHash: ev.transactionHash } },
-                select: { id: true },
-              })
-              const wasNew = !before
-              await prisma.marketplaceBid.upsert({
-                where: { listingId_bidder_txHash: { listingId: listing.id, bidder, txHash: ev.transactionHash } },
-                update: {},
-                create: {
-                  listingId: listing.id,
-                  bidder,
-                  amount,
-                  txHash: ev.transactionHash,
-                  status: 'ACTIVE',
-                },
+              const wasNew = await recordBid(prisma, {
+                listingRowId: listing.id,
+                bidder,
+                amount,
+                txHash: ev.transactionHash,
               })
 
               await prisma.marketplaceListing.update({
