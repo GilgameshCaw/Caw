@@ -53,6 +53,18 @@ async function assertNoBlocksAcrossSet(memberIds: number[]) {
   }
 }
 
+type InviteState = { revokedAt: Date | null; expiresAt: Date; useCount: number; maxUses: number }
+
+function assertInviteUsable(invite: InviteState) {
+  if (invite.revokedAt) throw new GroupServiceError(410, 'INVITE_REVOKED', 'Invite has been revoked')
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    throw new GroupServiceError(410, 'INVITE_EXPIRED', 'Invite has expired')
+  }
+  if (invite.useCount >= invite.maxUses) {
+    throw new GroupServiceError(410, 'INVITE_EXHAUSTED', 'Invite has been used up')
+  }
+}
+
 async function assertIdentitiesExist(userIds: number[]) {
   if (userIds.length === 0) return
   // publicKey: { not: '' } excludes ensureDmIdentity's placeholder rows
@@ -540,13 +552,7 @@ export class GroupService {
       },
     })
     if (!invite) throw new GroupServiceError(404, 'INVITE_NOT_FOUND', 'Invite not found')
-    if (invite.revokedAt) throw new GroupServiceError(410, 'INVITE_REVOKED', 'Invite has been revoked')
-    if (invite.expiresAt.getTime() <= Date.now()) {
-      throw new GroupServiceError(410, 'INVITE_EXPIRED', 'Invite has expired')
-    }
-    if (invite.useCount >= invite.maxUses) {
-      throw new GroupServiceError(410, 'INVITE_EXHAUSTED', 'Invite has been used up')
-    }
+    assertInviteUsable(invite)
     return {
       conversationId: invite.conversationId,
       conversation: invite.conversation,
@@ -568,11 +574,23 @@ export class GroupService {
     return prisma.$transaction(async tx => {
       const invite = await tx.groupInvite.findUnique({ where: { token } })
       if (!invite) throw new GroupServiceError(404, 'INVITE_NOT_FOUND', 'Invite not found')
-      if (invite.revokedAt) throw new GroupServiceError(410, 'INVITE_REVOKED', 'Invite has been revoked')
-      if (invite.expiresAt.getTime() <= Date.now()) {
-        throw new GroupServiceError(410, 'INVITE_EXPIRED', 'Invite has expired')
-      }
-      if (invite.useCount >= invite.maxUses) {
+      assertInviteUsable(invite)
+
+      // Claim a use first. The check above is a plain read, so several
+      // people pressing the same link at once would all pass it. The
+      // conditional update takes the invite row's lock: the others wait for
+      // this transaction to finish, then re-evaluate the condition against
+      // the committed count. If anything below throws, the claim is rolled
+      // back with the transaction, so a refused redeem uses nothing up.
+      const claimed = await tx.groupInvite.updateMany({
+        where: { id: invite.id, revokedAt: null, expiresAt: { gt: new Date() }, useCount: { lt: invite.maxUses } },
+        data: { useCount: { increment: 1 } },
+      })
+      if (claimed.count === 0) {
+        // Used up, revoked or expired since the read above: say which.
+        const latest = await tx.groupInvite.findUnique({ where: { id: invite.id } })
+        if (!latest) throw new GroupServiceError(404, 'INVITE_NOT_FOUND', 'Invite not found')
+        assertInviteUsable(latest)
         throw new GroupServiceError(410, 'INVITE_EXHAUSTED', 'Invite has been used up')
       }
 
@@ -624,11 +642,6 @@ export class GroupService {
           data: { conversationId, userId: actorUserId, role: 'MEMBER', status: 'ACCEPTED' },
         })
       }
-
-      await tx.groupInvite.update({
-        where: { id: invite.id },
-        data: { useCount: { increment: 1 } },
-      })
 
       await writeSystemMessage(tx, conversationId, actorUserId, 'system:added', {
         targetUserIds: [actorUserId],
