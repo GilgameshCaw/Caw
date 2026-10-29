@@ -1,6 +1,7 @@
 import { Client } from '@elastic/elasticsearch'
 import { prisma } from '../prismaClient'
 import { extractHashtagBodies, MENTION_REGEX, isValidTagBody } from '../tools/hashtagRegex'
+import { buildSearchQuery } from '../tools/searchQuery'
 
 // Page sizes for syncAllData()'s cursor-paginated PostgreSQL -> Elasticsearch
 // backfill. Kept small enough that one page's worth of Prisma rows (plus
@@ -461,30 +462,10 @@ class ElasticsearchService {
                      type === 'users' ? [this.usersIndex] :
                      [this.cawsIndex]
 
-      // For user search, combine fuzzy full-token matching with prefix matching
-      // so short queries like "gilg" can find "gilgatwo" (fuzziness alone caps
-      // at edit-distance 2 for longer terms, which isn't enough for prefix hits).
-      const queryDsl: any = type === 'users'
-        ? {
-            bool: {
-              should: [
-                { multi_match: { query, fields: ['username^2', 'displayName', 'bio'], type: 'best_fields', fuzziness: 'AUTO' } },
-                { match_phrase_prefix: { username: { query, boost: 3 } } },
-                { match_phrase_prefix: { displayName: { query } } },
-              ],
-              minimum_should_match: 1
-            }
-          }
-        : {
-            multi_match: {
-              query,
-              fields: type === 'hashtags'
-                ? ['hashtags']
-                : ['content^2', 'username', 'displayName', 'hashtags', 'mentions'],
-              type: 'best_fields',
-              fuzziness: 'AUTO'
-            }
-          }
+      // See tools/searchQuery.ts: fuzzy + prefix matching for users, and an
+      // exact-phrase match when the query has Japanese / Chinese characters,
+      // which the standard analyzer indexes one character at a time.
+      const queryDsl: any = buildSearchQuery(query, type)
 
       const searchBody: any = {
         from: offset,
