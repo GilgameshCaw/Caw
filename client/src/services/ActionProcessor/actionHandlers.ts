@@ -779,6 +779,9 @@ export async function handleFollowAction(
   } else if (existingFollow.action !== 'FOLLOW' || existingFollow.status !== 'SUCCESS') {
     // Update existing relationship back to FOLLOW or mark pending as success
     const wasPending = existingFollow.status === 'PENDING'
+    // A FAILED follow is one txQueueFailure.ts gave up on: it took the
+    // counts off and no notification went out. The chain says it landed.
+    const wasFailed = existingFollow.action === 'FOLLOW' && existingFollow.status === 'FAILED'
 
     await tx.follow.update({
       where: {
@@ -802,12 +805,19 @@ export async function handleFollowAction(
       await countManager.onStatusChanged(tx, 'follow', existingFollow.id, 'PENDING', 'SUCCESS', {
         followerId, followingId,
       })
+    } else if (wasFailed) {
+      // Failed follow confirmed on chain — put back the counts the failure
+      // rollback took off (same as handleRecawAction's FAILED→SUCCESS branch)
+      await countManager.onStatusChanged(tx, 'follow', existingFollow.id, 'FAILED', 'SUCCESS', {
+        followerId, followingId,
+      })
+      await countManager.onFollowCreated(tx, { followerId, followingId })
     }
 
     console.log(`User ${followerId} re-followed user ${followingId}`)
 
-    // Create follow notification if this was a pending follow being confirmed
-    if (wasPending) {
+    // Create follow notification if this was a pending or failed follow being confirmed
+    if (wasPending || wasFailed) {
       try {
         await NotificationService.createFollowNotification(followingId, followerId, tx)
       } catch (err) {
