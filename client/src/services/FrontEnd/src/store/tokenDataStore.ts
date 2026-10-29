@@ -197,6 +197,9 @@ export const useActiveTokenOwnerAddress = (): string | undefined =>
     return last
   });
 
+// TokenData fields stored as BigInt; setItem writes them as digit strings.
+const BIGINT_KEYS = new Set(['withdrawable', 'ownerBalance', 'stakedAmount'])
+
 export const useTokenDataStore = create<TokenDataStore>()(
   persist(
     (set, get) => ({
@@ -465,9 +468,11 @@ export const useTokenDataStore = create<TokenDataStore>()(
         getItem: (name) => {
           const str = localStorage.getItem(name)
           if (!str) return null
-          // parse with reviver to turn digit‑strings back into BigInts
-          return JSON.parse(str, (_key, value) =>
-            typeof value === 'string' && /^\d+$/.test(value)
+          // parse with reviver to turn the TokenData BigInt fields back into
+          // BigInts. Match on the key: a username may be digits only ("1234",
+          // "007") and must come back as the string it was.
+          return JSON.parse(str, (key, value) =>
+            typeof value === 'string' && BIGINT_KEYS.has(key) && /^\d+$/.test(value)
               ? BigInt(value)
               : value
           )
