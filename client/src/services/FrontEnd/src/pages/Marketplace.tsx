@@ -14,6 +14,7 @@ import { Link, useNavigate } from '~/utils/localizedRouter'
 import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
+import ExpiredOffersBanner from '~/components/marketplace/ExpiredOffersBanner'
 import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { readContract } from '@wagmi/core'
@@ -169,6 +170,9 @@ const Marketplace: React.FC = () => {
 
           {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
           <RefundsBanner />
+
+          {/* Expired offers that still hold the connected wallet's escrowed funds */}
+          <ExpiredOffersBanner />
 
           {/* Tabs */}
           {/* Full-bleed divider under tabs (keep tab content padding intact). */}

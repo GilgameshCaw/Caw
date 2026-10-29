@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import Redis from 'ioredis'
+import { findReclaimableOffers } from '../util/reclaimableOffers'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
 import { createNotificationWithGroup } from '../../services/NotificationService'
@@ -447,6 +448,27 @@ router.get('/offers/address/:address', async (req, res) => {
     res.json({ offers, total })
   } catch (err: any) {
     console.error('[marketplace] address offers error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /api/marketplace/offers/reclaimable/:address
+ * Offers made by the address whose expiry has passed (status EXPIRED).
+ *
+ * On chain an expired offer is still active, with its funds escrowed, until
+ * cancelOffer is called (anyone can call it after expiry; the refund goes to
+ * the offerer). The lists above only return ACTIVE offers, so without this the
+ * offerer has no way to see an offer that has expired. Candidates only, like
+ * /refunds/:address: the frontend confirms on chain before showing one.
+ */
+router.get('/offers/reclaimable/:address', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const offset = parseInt(req.query.offset as string) || 0
+    res.json(await findReclaimableOffers(prisma, req.params.address, limit, offset))
+  } catch (err: any) {
+    console.error('[marketplace] reclaimable offers error:', err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })
