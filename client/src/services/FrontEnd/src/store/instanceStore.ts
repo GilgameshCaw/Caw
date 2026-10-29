@@ -443,6 +443,8 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
   /**
    * Returns ordered list of API hosts for failover.
    * VITE_API_HOST (if set) is always first. On-chain instances follow.
+   * Each URL appears once: one operator can have several active
+   * registrations that share an apiUrl, and callers fan out per entry.
    */
   getApiHosts: () => {
     const active = get().instances.filter(i => i.active)
@@ -451,9 +453,9 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // If VITE_API_HOST is set, ensure it's first (deduplicated)
     if (API_HOST) {
       const filtered = hosts.filter(h => h !== API_HOST)
-      return [API_HOST, ...filtered]
+      return Array.from(new Set([API_HOST, ...filtered]))
     }
 
-    return hosts
+    return Array.from(new Set(hosts))
   },
 }))
