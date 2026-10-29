@@ -10,21 +10,21 @@ export function formatLargeNumber(num: number): string {
     return num.toString()
   }
 
-  if (num < 1000000) {
-    const formatted = (num / 1000).toFixed(1)
-    // Remove trailing .0
-    return formatted.endsWith('.0') ? formatted.slice(0, -2) + 'K' : formatted + 'K'
+  const tiers = [
+    { suffix: 'K', size: 1e3 },
+    { suffix: 'M', size: 1e6 },
+    { suffix: 'B', size: 1e9 },
+  ]
+  let tier = num >= 1e9 ? 2 : num >= 1e6 ? 1 : 0
+  let formatted = (num / tiers[tier].size).toFixed(1)
+  // Rounding can reach 1000 in the tier below (999,999 -> "1000.0"): show it in
+  // the next tier ("1M") instead of "1000K".
+  if (parseFloat(formatted) >= 1000 && tier < tiers.length - 1) {
+    tier++
+    formatted = (num / tiers[tier].size).toFixed(1)
   }
-
-  if (num < 1000000000) {
-    const formatted = (num / 1000000).toFixed(1)
-    // Remove trailing .0
-    return formatted.endsWith('.0') ? formatted.slice(0, -2) + 'M' : formatted + 'M'
-  }
-
-  // For billions and above
-  const formatted = (num / 1000000000).toFixed(1)
-  return formatted.endsWith('.0') ? formatted.slice(0, -2) + 'B' : formatted + 'B'
+  // Remove trailing .0
+  return (formatted.endsWith('.0') ? formatted.slice(0, -2) : formatted) + tiers[tier].suffix
 }
 
 /**
@@ -106,20 +106,21 @@ export function formatUsd(amount: number): string {
   // digits at the end. Math.log10 isn't reliable on very small numbers due
   // to float precision, so we hand-walk the decimal string.
   //
-  // Example: 0.00076 → toString → "0.00076" → first non-zero at index 4
+  // Example: 0.00076 → first non-zero at index 3 (three zeros before the 7)
   //          → render with 5 fraction digits → "0.00076"
-  // Example: 0.0001234 → first non-zero at index 4 → render 5 digits
+  // Example: 0.0001234 → three zeros before the 1 → render 5 digits
   //          → "0.00012" (two non-zero digits: '1','2')
-  const str = abs.toString()
-  // Strip "0." prefix and walk to first non-zero.
-  const decimals = str.split('.')[1] ?? ''
-  let firstNonZero = 0
-  while (firstNonZero < decimals.length && decimals[firstNonZero] === '0') {
-    firstNonZero++
-  }
-  // Need (firstNonZero + 1) zero-or-leading + 2 nonzero = firstNonZero + 2 fraction digits.
+  //
+  // The exponent comes from toExponential(), not from toString(): toString()
+  // switches to exponent notation below 1e-6 ("3.8e-8") and then has no
+  // decimal digits to walk, which used to render every such amount as "0.00".
+  const exponent = Number(abs.toExponential().split('e')[1]) // 0.00076 → -4
+  const firstNonZero = -exponent - 1 // zeros after the decimal point, before the first non-zero digit
+  // Need firstNonZero zeros + 2 nonzero = firstNonZero + 2 fraction digits.
   // toFixed handles rounding correctly.
   const fractionDigits = Math.min(firstNonZero + 2, 20)
   const formatted = abs.toFixed(fractionDigits)
+  // Too small to show any digit within 20 places: plain zero, never "-0.00".
+  if (!/[1-9]/.test(formatted)) return '0.00'
   return (negative ? '-' : '') + formatted
 }
