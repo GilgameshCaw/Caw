@@ -409,8 +409,14 @@ const allocChain = new Map<number, Promise<unknown>>()
 export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
   return await runUnderLock(tokenId, async () => {
     const out: number[] = []
-    for (let i = 0; i < count; i++) {
-      out.push(await doAllocate(tokenId))
+    while (out.length < count) {
+      const next = await doAllocate(tokenId)
+      // doAllocate steps over slots already used on chain, so a used slot
+      // inside the range leaves a gap, and a batch signature over a gapped
+      // range reverts (CawActions NonContiguousCawonces). Start the range
+      // again from here; the slots before it were never signed.
+      if (out.length > 0 && next !== out[out.length - 1] + 1) out.length = 0
+      out.push(next)
     }
     return out
   })
