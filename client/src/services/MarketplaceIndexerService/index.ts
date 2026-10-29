@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { ethers } from 'ethers'
 import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerifiedJsonRpcProvider, type ResilientProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
+import { closeOffer } from './offerStatus'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { createNotificationWithGroup } from '../NotificationService'
@@ -633,10 +634,7 @@ export const marketplaceIndexerService: Service = {
             const price = args[4].toString()
             const paymentToken = String(args[5])
 
-            await prisma.marketplaceOffer.updateMany({
-              where: { offerId: onChainOfferId, status: 'ACTIVE' },
-              data: { status: 'ACCEPTED' },
-            })
+            await closeOffer(prisma, onChainOfferId, 'ACCEPTED')
 
             // Ownership just transferred to the buyer. Any prior active listing
             // for this token is now stale (the seller no longer owns it, and
@@ -739,10 +737,7 @@ export const marketplaceIndexerService: Service = {
           for (const event of offersCancelled) {
             const ev = event as ethers.EventLog
             const onChainOfferId = Number(ev.args[0])
-            await prisma.marketplaceOffer.updateMany({
-              where: { offerId: onChainOfferId, status: 'ACTIVE' },
-              data: { status: 'CANCELLED' },
-            })
+            await closeOffer(prisma, onChainOfferId, 'CANCELLED')
           }
 
           // Mark expired offers
