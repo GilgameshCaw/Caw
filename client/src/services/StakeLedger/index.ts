@@ -405,6 +405,11 @@ export async function recordAction(
     const numRecipients = recipients.length
     const isWithdraw = rawTypeName === 'WITHDRAW'
     const startIndex = isWithdraw ? 1 : 0
+    // CawActions._distributeAmountsMem reads a trailing validator tip only
+    // when amounts has exactly one more entry than recipients. With equal
+    // lengths every amount belongs to a recipient (for WITHDRAW, amounts[0] is
+    // the withdrawn amount, already debited in step 1) and there is no tip.
+    const hasExplicitTip = numAmounts === numRecipients + 1
 
     // Per-recipient addToBalance — these are the tip-recipient credits
     // for OTHER:tip, or extra-recipient payouts on other action types.
@@ -426,9 +431,12 @@ export async function recordAction(
       )
       amountTotal += amountWei
     }
-    // Validator tip is the LAST element of `amounts`. Always counted in
-    // amountTotal so the spender pays it, even on withdrawals.
-    const validatorTipWei = BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
+    // Validator tip is the LAST element of `amounts`, only when
+    // hasExplicitTip. Counted in amountTotal so the spender pays it, even on
+    // withdrawals.
+    const validatorTipWei = hasExplicitTip
+      ? BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
+      : 0n
     amountTotal += validatorTipWei
 
     // Sender pays amountTotal with 0 communal. Split into two rows:
@@ -474,7 +482,7 @@ export async function recordAction(
           // Tip target: prefer the receiverId from the action header
           // (used by tip:userId:cawonce text protocol) and fall back to
           // the first recipient in amounts[].
-          receiverId || (numRecipients > 0 ? Number(recipients[0]) : null),
+          receiverId || (numRecipients > startIndex ? Number(recipients[startIndex]) : null),
         )
       }
       if (validatorTipWei > 0n) {

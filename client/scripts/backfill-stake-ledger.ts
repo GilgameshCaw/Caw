@@ -164,6 +164,9 @@ function deltasForAction(rawAction: RawAction, validatorId: number): ActionTouch
     const numRecipients = recipients.length
     const isWithdraw = rawTypeName === 'WITHDRAW'
     const startIndex = isWithdraw ? 1 : 0
+    // Same rule as CawActions._distributeAmountsMem: a trailing validator tip
+    // exists only when amounts has one more entry than recipients.
+    const hasExplicitTip = numAmounts === numRecipients + 1
 
     let recipientPortion = 0n
     for (let i = startIndex; i < numRecipients; i++) {
@@ -177,7 +180,9 @@ function deltasForAction(rawAction: RawAction, validatorId: number): ActionTouch
       })
       recipientPortion += amountWei
     }
-    const validatorTipWei = BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
+    const validatorTipWei = hasExplicitTip
+      ? BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
+      : 0n
 
     // Sender's outgoing legs split into tip-portion vs validator-fee
     // so the outgoing-spend chart can stack them as distinct segments.
@@ -186,7 +191,7 @@ function deltasForAction(rawAction: RawAction, validatorId: number): ActionTouch
         tokenId: senderId,
         delta: -recipientPortion,
         reason: 'ACTION_SPEND_TIP',
-        counterpartyTokenId: receiverId || (numRecipients > 0 ? Number(recipients[0]) : null),
+        counterpartyTokenId: receiverId || (numRecipients > startIndex ? Number(recipients[startIndex]) : null),
       })
     }
     if (validatorTipWei > 0n) {
