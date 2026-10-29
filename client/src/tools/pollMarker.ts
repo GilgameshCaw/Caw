@@ -48,6 +48,9 @@ export const POLL_IMAGE_HASH_LEN = 8
 // hex only; anything else is rejected (and treated as "no image" for
 // that slot). Mirror nodes that see an unknown hash render text-only.
 const POLL_IMAGE_HASH_REGEX = /^[a-f0-9]{8}$/
+// Stands in for "no image" in the sidecar's hash list (see the format
+// notes on POLL_IMAGES_REGEX below).
+const POLL_EMPTY_IMAGE_SLOT = '-'
 
 // Optional duration sidecar, e.g. "::pd:7d::". Encodes how long the
 // poll accepts votes after the caw's block timestamp. Validator and
@@ -133,8 +136,11 @@ const POLL_REGEX = /::poll:([^\n]+?)::/g
 //              dev/internal-only case so we don't burn 5 bytes
 //              ("https") on the common path.
 //   - hash   = 8-char hex filename stem from the upload route. Positional
-//              with options. Empty slot (between two colons) = no image
-//              for that option.
+//              with options. An option without an image carries a single
+//              "-" placeholder. A bare empty slot would put "::" inside
+//              the sidecar, and the parser ends the sidecar at the first
+//              "::" (dropping later hashes, ::pd:: and ::pm::). Anything
+//              that is not 8 hex chars reads as "no image".
 //
 // Regex admits the union of all valid characters: hostname chars
 // (alnum/dot/hyphen) + `p` + digits for port + bare `s` + 8-hex hashes
@@ -348,7 +354,7 @@ export function buildPollMarker(
     if (!POLL_HOST_REGEX.test(cleanHost)) return null
     const padded = trimmed.map((_, i) => {
       const h = (imageHashes![i] || '').trim()
-      return POLL_IMAGE_HASH_REGEX.test(h) ? h : ''
+      return POLL_IMAGE_HASH_REGEX.test(h) ? h : POLL_EMPTY_IMAGE_SLOT
     })
     // Build the optional port + scheme segments. Default-port https
     // emits nothing extra; only non-default ports / http get the bytes.
