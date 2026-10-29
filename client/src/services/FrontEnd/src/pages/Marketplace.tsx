@@ -15,6 +15,7 @@ import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import SalesProceedsBanner from '~/components/marketplace/SalesProceedsBanner'
+import ExpiredListingsBanner from '~/components/marketplace/ExpiredListingsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
@@ -166,6 +167,9 @@ const Marketplace: React.FC = () => {
 
           {/* Unclaimed sale proceeds — V2 pull-payout model (H-15) */}
           <SalesProceedsBanner />
+
+          {/* Ended auctions with no bids that still lock the connected wallet's username */}
+          <ExpiredListingsBanner />
 
           {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
           <RefundsBanner />

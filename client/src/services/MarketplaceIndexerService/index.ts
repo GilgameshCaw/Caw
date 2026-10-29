@@ -6,6 +6,7 @@ import { getL1HttpRpcUrl, getL1HttpRpcUrls, makeResilientHttpProvider, makeVerif
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
+import { markListingCancelled } from './listingStatus'
 import { createNotificationWithGroup } from '../NotificationService'
 
 const Config = z.object({
@@ -489,10 +490,7 @@ export const marketplaceIndexerService: Service = {
           for (const event of cancelled) {
             const ev = event as ethers.EventLog
             const onChainListingId = Number(ev.args[0])
-            await prisma.marketplaceListing.updateMany({
-              where: { listingId: onChainListingId, status: 'ACTIVE' },
-              data: { status: 'CANCELLED' },
-            })
+            await markListingCancelled(prisma, onChainListingId)
           }
 
           // Process AuctionSettled events
