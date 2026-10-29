@@ -101,6 +101,11 @@ export function useSessionKeySession(): SessionKeyEntry | null {
   return sessionForWallet({ sessions, activeWallet })
 }
 
+// Set while the store is re-read after another tab wrote it (see the storage
+// listener below). Hydration from localStorage is synchronous, so merge runs
+// inside that call.
+let mergingOtherTab = false
+
 export const useSessionKeyStore = create<SessionKeyState>()(
   persist(
     (set, get) => ({
@@ -267,6 +272,18 @@ export const useSessionKeyStore = create<SessionKeyState>()(
     }),
     {
       name: 'caw-session-keys',
+      merge: (persisted: any, current) => {
+        if (!mergingOtherTab) return { ...current, ...persisted }
+        // Another tab wrote (or cleared) the store. Take its sessions and
+        // preferences, keep this tab's activeWallet (set per tab by
+        // useSessionKeyWalletGuard), and drop an unlocked key whose session
+        // the other tab removed or replaced.
+        const next = { ...current, ...(persisted ?? { sessions: {} }), activeWallet: current.activeWallet }
+        for (const [wallet, entry] of Object.entries(current.sessions)) {
+          if (next.sessions[wallet]?.address !== entry.address) clearDecryptedKey(wallet)
+        }
+        return next
+      },
       migrate: (persisted: any, version: number) => {
         let state = persisted
 
@@ -318,3 +335,32 @@ initBroadcastVerification((walletAddress: string) => {
   const sessions = useSessionKeyStore.getState().sessions
   return sessions[walletAddress.toLowerCase()]?.encryptedKey
 })
+
+// Another tab's write doesn't reach this tab's state, and this tab's next set
+// persists its whole state, so a session the other tab deleted or replaced
+// would come back. Re-read the store when another tab changes it.
+// localStorage.clear() fires with a null key.
+const storedVersion = (raw: string | null): number => {
+  try {
+    const version = raw ? JSON.parse(raw)?.version : undefined
+    return typeof version === 'number' ? version : -1
+  } catch {
+    return -1
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.storageArea !== localStorage || (e.key !== null && e.key !== 'caw-session-keys')) return
+    // A tab on a newer bundle wrote a newer version. persist would migrate it
+    // with this tab's migrate and write it back as this tab's version, and the
+    // newer tab would migrate that and write again, back and forth.
+    if (storedVersion(localStorage.getItem('caw-session-keys')) > (useSessionKeyStore.persist.getOptions().version ?? 0)) return
+    mergingOtherTab = true
+    try {
+      void useSessionKeyStore.persist.rehydrate()
+    } finally {
+      mergingOtherTab = false
+    }
+  })
+}
