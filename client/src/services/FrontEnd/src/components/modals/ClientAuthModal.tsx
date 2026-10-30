@@ -7,7 +7,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
-import { CLIENT_ID } from '~/api/actions'
+import { CLIENT_ID, readOnChainStakeForHint } from '~/api/actions'
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
@@ -15,6 +15,53 @@ import { formatEther, erc20Abi, encodeFunctionData, type Address } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import NetworkFeesPanel from '~/components/NetworkFeesPanel'
 import { apiFetch } from '~/api/client'
+
+/**
+ * Record the authenticate tx as a pending-deposit hint so the retried action
+ * (and any posted while LZ relays the auth) carries pendingDepositTxHash.
+ * The validator then parks it in waiting_for_deposit, and DataCleaner
+ * promotes it once L2 shows the auth. Without the hint the action is
+ * simulated straight away and fails with UserNotAuth whenever another
+ * sender's action in the same batch succeeds.
+ *
+ * DataCleaner also waits for a non-zero L2 balance, so skip the hint when
+ * the balance is 0 (only a zero-cost action gets here then; it would sit
+ * until the 48h timeout). Leave an existing hint alone while the submit
+ * paths would still forward it; replace one they would drop.
+ */
+async function rememberAuthTx(tokenId: number, txHash: string) {
+  try {
+    const key = `caw:pendingDeposit:${tokenId}`
+    if (hasLiveHint(key)) return
+    if ((await readOnChainStakeForHint(tokenId)) === 0n) return
+    if (hasLiveHint(key)) return
+    localStorage.setItem(key, JSON.stringify({ txHash, at: Date.now() }))
+  } catch { /* best effort — the action is still retried without it */ }
+}
+
+// Same test the submit paths in api/actions.ts apply before forwarding
+// pendingDepositTxHash: a 32-byte tx hash, less than 30 min old.
+function hasLiveHint(key: string): boolean {
+  try {
+    const hint = JSON.parse(localStorage.getItem(key) ?? 'null')
+    return typeof hint?.txHash === 'string'
+      && /^0x[0-9a-fA-F]{64}$/.test(hint.txHash)
+      && Date.now() - (hint.at ?? 0) < 30 * 60 * 1000
+  } catch { return false }
+}
+
+// Retry the original action 3 s after the auth tx (gives LZ a moment), once
+// the hint is written — but no more than HINT_WAIT_CAP_MS past that, so a
+// slow L2 read falls back to retrying without the hint, as before.
+const HINT_WAIT_CAP_MS = 2000
+function retryAfterHint(hinted: Promise<void>, cb: () => void) {
+  let fired = false
+  const fire = () => { if (!fired) { fired = true; cb() } }
+  setTimeout(() => {
+    hinted.finally(fire)
+    setTimeout(fire, HINT_WAIT_CAP_MS)
+  }, 3000)
+}
 
 const ClientAuthModal: React.FC = () => {
   const { isOpen, tokenId, close } = useClientAuthStore()
@@ -68,7 +115,7 @@ const ClientAuthModal: React.FC = () => {
       setError(null)
 
       try {
-        await writeContractAsync({
+        const hash = await writeContractAsync({
           address: CAW_NAMES_ADDRESS,
           abi: cawProfileAbi,
           functionName: 'authenticate',
@@ -76,13 +123,14 @@ const ClientAuthModal: React.FC = () => {
           value: totalFee,
           chainId: chains.l1.chainId,
         })
+        const hinted = rememberAuthTx(tokenId, hash)
 
         // Give LayerZero a moment to relay before firing onSuccess (which
         // will retry the original action) — succeed() reads onSuccess off
         // the store and clears state, so capture it for the delayed call.
         const cb = useClientAuthStore.getState().onSuccess
         useClientAuthStore.setState({ isOpen: false, tokenId: undefined, onSuccess: undefined, onCancel: undefined })
-        if (cb) setTimeout(cb, 3000)
+        if (cb) retryAfterHint(hinted, cb)
       } catch (err: any) {
         if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
           setError(t('client_auth.error.tx_rejected'))
@@ -131,11 +179,12 @@ const ClientAuthModal: React.FC = () => {
       } else {
         calls.push({ to: quote.relayer as Address, value: feeEth, data: '0x' })
       }
-      await smartEoaExecute(calls)
+      const hash = await smartEoaExecute(calls)
+      const hinted = rememberAuthTx(tokenId, hash)
 
       const cb = useClientAuthStore.getState().onSuccess
       useClientAuthStore.setState({ isOpen: false, tokenId: undefined, onSuccess: undefined, onCancel: undefined })
-      if (cb) setTimeout(cb, 3000)
+      if (cb) retryAfterHint(hinted, cb)
     } catch (err: any) {
       const raw = (err?.message || '').replace(/^API\s+\d+:\s*/i, '')
       if (/NotAllowed|abort|cancel|denied|rejected/i.test(raw)) setError(t('client_auth.error.tx_rejected'))
