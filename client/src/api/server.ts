@@ -151,6 +151,10 @@ export function createApp() {
   // buffered into memory ahead of the route's 2,000-char check. 16kb comfortably
   // holds a 2,000-char text plus the small JSON envelope.
   app.use('/api/translate', express.json({ limit: '16kb' }))
+  // Same for the AI proxy (8kb, see routes/ai-proxy.ts). Its router-level
+  // parser can't do this: by the time the router runs, the 50mb parser below
+  // has already read the body, and a second parser skips a read body.
+  app.use('/api/ai-proxy', express.json({ limit: '8kb' }))
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
   // Security headers for every response (HTML + JSON + everything).

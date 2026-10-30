@@ -9,6 +9,11 @@ import { originGate } from '../middleware/originGate'
 // caller could amplify ~50 MB of body parsing per request (gated by the
 // 30/min rate limit, but still a memory + bandwidth multiplier worth
 // closing). Security audit finding pre-merge.
+//
+// In the app, server.ts mounts the same 8 KB parser for /api/ai-proxy ahead
+// of its global 50 MB one, and that mount is what enforces the cap: a body
+// parser skips a body another parser has already read. This one only applies
+// where the router is mounted without the global parser.
 const tightBody = expressJson({ limit: '8kb' })
 
 /**
