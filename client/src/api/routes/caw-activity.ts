@@ -47,12 +47,22 @@ interface CacheEntry {
 const TTL_MS = 30_000
 const CACHE_MAX = 1024 // bound memory; LRU-ish via oldest-key eviction
 const responseCache = new Map<string, CacheEntry>()
-const evictExpired = () => {
+export const evictExpired = (cache: Map<string, { expiresAt: number; inFlight?: Promise<any> }>) => {
   const now = Date.now()
-  for (const [k, v] of responseCache) {
-    if (v.expiresAt < now && !v.inFlight) responseCache.delete(k)
+  for (const [k, v] of cache) {
+    if (v.expiresAt < now && !v.inFlight) cache.delete(k)
   }
 }
+
+// The FE sends from/to as new Date().toISOString(), so keyed as-is every
+// request gets its own entry and nothing is ever served from the cache.
+// Widen the window to TTL-sized steps — from down, to up — and query that
+// window: requests inside the same step share one entry, and no event in
+// the range the caller asked for is dropped.
+export const cacheWindow = (from: Date, to: Date): { fromIso: string; toIso: string } => ({
+  fromIso: new Date(Math.floor(from.getTime() / TTL_MS) * TTL_MS).toISOString(),
+  toIso: new Date(Math.ceil(to.getTime() / TTL_MS) * TTL_MS).toISOString(),
+})
 const cacheKeyOf = (
   tokenId: number,
   interval: Interval,
@@ -102,8 +112,7 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
     if (isNaN(from.getTime()) || isNaN(to.getTime())) {
       res.status(400).json({ error: 'invalid from/to' }); return
     }
-    const fromIso = from.toISOString()
-    const toIso = to.toISOString()
+    const { fromIso, toIso } = cacheWindow(from, to)
 
     // Cache hit / coalesce. A 30s TTL is invisible at chart bucket
     // resolution and folds bursty reloads into a single DB roundtrip.
@@ -125,7 +134,7 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
         responseCache.delete(cacheKey)
       }
     }
-    if (responseCache.size >= CACHE_MAX) evictExpired()
+    if (responseCache.size >= CACHE_MAX) evictExpired(responseCache)
 
     // Mark in-flight so concurrent identical requests share the work.
     const inFlight = new Promise<any>((resolve, reject) => {
@@ -551,8 +560,7 @@ router.get('/caw-activity-all', allStatsLimiter, async (req, res): Promise<void>
     if (isNaN(from.getTime()) || isNaN(to.getTime())) {
       res.status(400).json({ error: 'invalid from/to' }); return
     }
-    const fromIso = from.toISOString()
-    const toIso = to.toISOString()
+    const { fromIso, toIso } = cacheWindow(from, to)
 
     cacheKey = systemCacheKeyOf(interval, tz, fromIso, toIso)
     const cached = systemResponseCache.get(cacheKey)
@@ -571,6 +579,9 @@ router.get('/caw-activity-all', allStatsLimiter, async (req, res): Promise<void>
         systemResponseCache.delete(cacheKey)
       }
     }
+    // Same bound as the per-user cache. Without it an entry is only ever
+    // dropped when its exact key comes back, so the map grows until restart.
+    if (systemResponseCache.size >= CACHE_MAX) evictExpired(systemResponseCache)
     const inFlight = new Promise<any>((resolve, reject) => {
       resolveInFlight = resolve
       rejectInFlight = reject
