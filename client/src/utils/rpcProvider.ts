@@ -107,8 +107,11 @@ export function isRateLimited(): boolean {
 }
 
 export async function waitForRateLimit(): Promise<void> {
-  const remaining = rateLimitedUntil - Date.now()
-  if (remaining > 0) await new Promise(r => setTimeout(r, remaining))
+  while (true) {
+    const remaining = rateLimitedUntil - Date.now()
+    if (remaining <= 0) return
+    await new Promise(r => setTimeout(r, remaining))
+  }
 }
 
 export function isRateLimitError(err: any): boolean {
@@ -212,11 +215,12 @@ function wrapSend<T extends { send: (...args: any[]) => any; destroy?: () => any
       }
     }
 
-    // 1. Respect global rate-limit backoff
-    if (isRateLimited()) await waitForRateLimit()
-
-    // 2. Throttle: ensure MIN_CALL_GAP_MS between calls
-    await throttle()
+    // Recheck after reserving a slot: another request may extend the
+    // cooldown while this request is waiting in the throttle queue.
+    do {
+      await waitForRateLimit()
+      await throttle()
+    } while (isRateLimited())
 
     let inFlightPromise: Promise<any> | undefined
     if (method === 'eth_blockNumber') {
@@ -499,6 +503,41 @@ async function verifyChainId(provider: { getNetwork(): Promise<{ chainId: bigint
 }
 
 /**
+ * Deadline the actual FetchRequest clone ethers sends, not a detached sync pass.
+ * cancel() signals the transport; the deadline also rejects if a custom transport
+ * ignores cancellation. Late responses can never resume the timed-out caller.
+ * Opt-in for ChainSync only; other services retain their existing HTTP timeout.
+ */
+function withHttpRequestTimeout(provider: JsonRpcProvider, timeoutMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid RPC HTTP timeout')
+  const getConnection = provider._getConnection.bind(provider)
+  provider._getConnection = () => {
+    const request = getConnection()
+    request.timeout = timeoutMs
+    // Surface HTTP 429 to wrapSend instead of ethers immediately retrying it
+    // beneath the shared cooldown. ChainSync retries on its next normal tick.
+    request.retryFunc = async () => false
+    const send = request.send.bind(request)
+    request.send = async () => {
+      const pending = send()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(Object.assign(new Error('RPC HTTP request timed out'), { code: 'TIMEOUT' }))
+          try { request.cancel() } catch { /* transport may already have completed */ }
+        }, timeoutMs)
+      })
+      try {
+        return await Promise.race([pending, deadline])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return request
+  }
+}
+
+/**
  * Create a JsonRpcProvider with staticNetwork + throttle.
  * Pass chainId to skip the initial eth_chainId call.
  *
@@ -509,7 +548,7 @@ async function verifyChainId(provider: { getNetwork(): Promise<{ chainId: bigint
  * encodes the URL-ENCODED password — broken for any secret containing
  * a `/`. See extractEmbeddedAuth() for the full explanation.
  */
-export function makeJsonRpcProvider(url: string, chainId?: number, secret?: string): JsonRpcProvider {
+export function makeJsonRpcProvider(url: string, chainId?: number, secret?: string, requestTimeoutMs?: number): JsonRpcProvider {
   const fetchReq = buildAuthenticatedFetchRequest(url, secret)
   let provider: JsonRpcProvider
   if (chainId != null) {
@@ -518,6 +557,7 @@ export function makeJsonRpcProvider(url: string, chainId?: number, secret?: stri
   } else {
     provider = new JsonRpcProvider(fetchReq, undefined, { staticNetwork: true })
   }
+  if (requestTimeoutMs !== undefined) withHttpRequestTimeout(provider, requestTimeoutMs)
   return wrapSend(provider)
 }
 
@@ -626,8 +666,8 @@ export function makeWebSocketProvider(url: string, chainId?: number, secret?: st
  * Throws ChainIdMismatchError on confirmed mismatch; warns and falls through
  * on transient RPC failure (indexer startup must tolerate unavailability).
  */
-export async function makeVerifiedJsonRpcProvider(url: string, expectedChainId: number, secret?: string): Promise<JsonRpcProvider> {
-  const provider = makeJsonRpcProvider(url, expectedChainId, secret)
+export async function makeVerifiedJsonRpcProvider(url: string, expectedChainId: number, secret?: string, requestTimeoutMs?: number): Promise<JsonRpcProvider> {
+  const provider = makeJsonRpcProvider(url, expectedChainId, secret, requestTimeoutMs)
   await verifyChainId(provider, expectedChainId, url)
   return provider
 }
