@@ -141,6 +141,27 @@ export interface ShapedCaw {
   poll?: ShapedPoll
 }
 
+/**
+ * A HIDDEN caw embedded as a reply's, quote's or recaw's parent keeps its id,
+ * author and status, so the FE can render "removed" in its place, but not its
+ * body. GET /api/caws/:id answers 410 for the same row; embedding it whole
+ * would hand the body back out through every post that points at it.
+ */
+export function withoutHiddenBody<T extends { status?: string | null }>(raw: T): T {
+  if (raw.status !== 'HIDDEN') return raw
+  return {
+    ...raw,
+    content: '',
+    imageData: null,
+    hasImage: false,
+    videoData: null,
+    hasVideo: false,
+    poll: null,
+    hashtags: [],
+    sourceLanguage: null,
+  }
+}
+
 export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
   // Find recaws or quotes (exclude plain replies which are CAW with content but have a Reply record)
@@ -226,8 +247,8 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,
     hashtags: raw.hashtags?.map((h: any) => h.hashtag.name) || [],
-    originalCaw: raw.parent ? shapeCaw(raw.parent) : undefined,
-    parent: raw.parent ? shapeCaw(raw.parent) : null,
+    originalCaw: raw.parent ? shapeCaw(withoutHiddenBody(raw.parent)) : undefined,
+    parent: raw.parent ? shapeCaw(withoutHiddenBody(raw.parent)) : null,
     imageData: raw.imageData,
     hasImage: raw.hasImage,
     sourceLanguage: raw.sourceLanguage ?? null,

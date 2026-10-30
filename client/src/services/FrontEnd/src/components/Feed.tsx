@@ -308,6 +308,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
       }
+      // A plain recaw of a hidden parent renders nothing (see FeedItem). Drop
+      // it here so it doesn't claim the parent's id below and hide a quote.
+      if (item.content === '' && item.parent?.status === 'HIDDEN') return false
       if (isHomeFeed || isProfileFeed) {
         // Quotes ARE RECAW rows with content; bare recaws are RECAW
         // rows with empty content. Both reference an underlying

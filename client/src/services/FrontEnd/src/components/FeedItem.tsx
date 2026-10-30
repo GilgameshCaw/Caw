@@ -1186,6 +1186,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // page (CawPage), where Feed.tsx's filter doesn't run.
   if (isHiddenForViewer) return null
 
+  // A plain recaw renders its parent as the post itself. Once the parent is
+  // hidden (by its author or a moderator) there is nothing left to show.
+  if (isRecaw && useItem.status === 'HIDDEN') return null
+
   return (
     <>
       <div onClick={handleCardClick} className="block" data-caw-id={item.id}>
