@@ -1401,10 +1401,10 @@ async function sweepOrphanedMediaTask() {
     const before = await orphanedMediaPendingCount()
     if (before === 0) return
     const result = await sweepOrphanedMedia()
-    if (result.deleted > 0 || result.failed > 0) {
+    if (result.deleted > 0 || result.failed > 0 || result.kept > 0) {
       logger.log(
         `Orphan media sweep: deleted=${result.deleted} failed=${result.failed} ` +
-        `skipped=${result.skipped} (queue had ${before} pending)`
+        `skipped=${result.skipped} kept=${result.kept} (queue had ${before} pending)`
       )
     }
   } catch (e: any) {
