@@ -175,3 +175,25 @@ export async function refundReservation(kind: UploadQuotaKind, tokenId: number, 
     console.warn('[uploadQuota] refundReservation failed (non-fatal):', e)
   }
 }
+
+// Which token uploaded an image through POST /api/upload. /variant stores a
+// variant only for the token that uploaded its base image, since base
+// filenames are public. The FE uploads the variants right after the base, so
+// the record doesn't need to outlive that.
+const UPLOAD_OWNER_SECONDS = 60 * 60
+
+function ownerKey(filename: string): string {
+  return `upload_owner:${filename}`
+}
+
+export async function rememberUploadOwner(filenames: string[], tokenId: number): Promise<void> {
+  for (const filename of filenames) {
+    await redis.set(ownerKey(filename), String(tokenId), 'EX', UPLOAD_OWNER_SECONDS)
+  }
+}
+
+/** The token that uploaded {filename} in the last hour, or null. */
+export async function uploadOwnerOf(filename: string): Promise<number | null> {
+  const owner = await redis.get(ownerKey(filename))
+  return owner == null ? null : Number(owner)
+}

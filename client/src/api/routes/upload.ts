@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto'
 import multer from 'multer'
 import { requireAuth } from '../middleware/auth'
 import { mediaStorage } from '../util/mediaStorage'
-import { reserveUpload, refundReservation } from '../util/uploadQuota'
+import { reserveUpload, refundReservation, rememberUploadOwner, uploadOwnerOf } from '../util/uploadQuota'
 
 // sharp is a NATIVE module (libvips bindings). Its prebuilt binary requires an
 // x86-64-v2 CPU and a recent libvips; some VPS hosts expose an older v1 virtual
@@ -207,6 +207,19 @@ router.post('/', requireAuth({ anySession: true }), upload.array('media', 10), r
       throw storageErr
     }
 
+    // Let /variant accept variants of these images from this token only. The
+    // FE takes the base filename from the end of the URL, so record that.
+    try {
+      const imageNames = urls
+        .filter((_, i) => !files[i].mimetype.startsWith('video/'))
+        .map(url => url.slice(url.lastIndexOf('/') + 1))
+      await rememberUploadOwner(imageNames, Number(tokenId))
+    } catch (e) {
+      // The upload itself succeeded; its variants will be refused and
+      // renderers fall back to the base image.
+      console.warn('[upload] could not record image owner:', e)
+    }
+
     res.json({ success: true, urls, count: files.length })
   } catch (error) {
     console.error('Media upload error:', error)
@@ -227,13 +240,22 @@ const variantUpload = multer({
 // Same pre-auth guard as POST / above -- see the comment there.
 router.post('/variant', requireAuth({ anySession: true }), variantUpload.single('media'), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
-    const { baseFilename, width } = req.body
+    const { baseFilename, width, tokenId } = req.body
     const file = req.file as Express.Multer.File | undefined
 
     if (!file) return res.status(400).json({ error: 'No file uploaded' })
     if (!baseFilename || typeof baseFilename !== 'string') return res.status(400).json({ error: 'Missing baseFilename' })
     if (!/^\d+$/.test(width)) return res.status(400).json({ error: 'Invalid width' })
     if (!/^[a-z0-9]+\.(webp|jpg|jpeg|png|gif)$/i.test(baseFilename)) return res.status(400).json({ error: 'Invalid baseFilename' })
+
+    // Base filenames are public (they're the end of every image URL). Only the
+    // token that uploaded the base, recorded by POST / above, may store its
+    // variants; otherwise any session could put its own image under another
+    // user's _96 / _320 / _640 / _2048 name. Older images have no record and
+    // get no new variants.
+    if ((await uploadOwnerOf(baseFilename)) !== Number(tokenId)) {
+      return res.status(403).json({ error: 'Not your image' })
+    }
 
     const storage = mediaStorage()
     if (!(await storage.baseExists('images', baseFilename))) {
