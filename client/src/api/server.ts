@@ -146,6 +146,12 @@ export function createApp() {
     if (/^\/api\/validator-analytics\/tip-config\/?$/.test(req.path)) return next()
     return cors(corsOpts)(req, res, next)
   })
+  // Stripe webhook: signature verification needs the exact bytes Stripe sent,
+  // so express.raw() must read this path before ANY JSON parser below. Once a
+  // JSON parser has consumed the stream, a later express.raw() leaves req.body
+  // as the parsed object and constructEvent rejects every event.
+  app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }))
+
   // Tight body cap for the translation proxy, mounted BEFORE the global 50mb
   // parser so an oversized body is rejected at parse time rather than fully
   // buffered into memory ahead of the route's 2,000-char check. 16kb comfortably
@@ -474,10 +480,8 @@ export function createApp() {
   app.use('/api/sponsor', sponsorRouter)
   app.use('/api/wallet', walletBlobRouter)
 
-  // Stripe card-payment checkout + webhook. The webhook route MUST receive
-  // raw body (not json-parsed) for Stripe signature verification — mount
-  // express.raw() on the specific path BEFORE the router.
-  app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }))
+  // Stripe card-payment checkout + webhook. The webhook's express.raw() is
+  // mounted near the top, ahead of the JSON parsers.
   app.use('/api/stripe', stripeRouter)
   app.use('/api/moonpay', moonpayRouter)
 

@@ -14,10 +14,13 @@
  *      and records the purchase in StripePurchase.
  *
  * Gate: both endpoints return 503 when STRIPE_SECRET_KEY is not set.
+ * create-checkout also returns 503 when STRIPE_WEBHOOK_SECRET is not set, and
+ * until SponsorService.sponsorCardMint exists, so no card is charged for a mint
+ * the webhook can't perform.
  *
  * Raw body: the webhook handler must receive the raw (pre-parsed) request body
- * so Stripe can verify the signature. Mount order in server.ts handles this —
- * see the comment near the mounting call.
+ * so Stripe can verify the signature. server.ts mounts express.raw() for this
+ * path ahead of its JSON parsers.
  */
 
 import { Router, Request, Response } from 'express'
@@ -100,6 +103,21 @@ router.post('/create-checkout', async (req: Request, res: Response) => {
     return res.status(503).json({ error: 'Card checkout is not configured on this instance.' })
   }
 
+  // Without its signing secret the webhook answers 503 to every event, so a
+  // paid session would never mint.
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Card checkout is not configured on this instance.' })
+  }
+
+  // The webhook mints through SponsorService.sponsorCardMint, which doesn't
+  // exist yet (see the webhook below). Until it does, a paid session would end
+  // as a charged card and a StripePurchase row stuck in 'pending', so don't
+  // start one. This opens by itself once the method lands.
+  const sponsor = getSponsorService()
+  if (typeof (sponsor as any)?.sponsorCardMint !== 'function') {
+    return res.status(503).json({ error: 'Card checkout is not available on this instance yet.' })
+  }
+
   let body: z.infer<typeof createCheckoutSchema>
   try {
     body = createCheckoutSchema.parse(req.body)
@@ -166,8 +184,8 @@ router.post('/create-checkout', async (req: Request, res: Response) => {
 
 // ── POST /api/stripe/webhook ──────────────────────────────────────────────────
 // NOTE: this handler expects req.body to be a raw Buffer (not JSON-parsed).
-// The special mounting in server.ts ensures express.raw() runs BEFORE
-// express.json() for this path.
+// server.ts mounts express.raw() for this path BEFORE its express.json()
+// parsers.
 
 router.post('/webhook', async (req: Request, res: Response) => {
   const stripe = getStripeClient()
@@ -269,8 +287,8 @@ router.post('/webhook', async (req: Request, res: Response) => {
   // sponsorCardMint is not yet implemented on SponsorService (fiat-onramp
   // architecture is still in design per memory/project_fiat_onramp_architecture).
   // Routed through `any` so the webhook route compiles; runtime will throw if
-  // a Stripe payment actually fires before the method lands, which is fine —
-  // Stripe checkout is gated and off in production until the method exists.
+  // a Stripe payment actually fires before the method lands. create-checkout
+  // refuses to start a session until the method exists, so that shouldn't happen.
   const result = await (sponsor as any).sponsorCardMint({
     networkId,
     recipient: walletAddress,
