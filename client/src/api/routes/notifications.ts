@@ -105,6 +105,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             id: true,
             content: true,
             createdAt: true,
+            status: true,
             // Media bits so the notification row can render a thumbnail
             // and the renderer can scrub the embedded GIF URL out of the
             // content snippet. Same shape FeedItem uses.
@@ -216,11 +217,11 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       })
       const caws = await prisma.caw.findMany({
         where: { OR: orConditions },
-        select: { userId: true, cawonce: true, content: true, user: { select: { username: true } } }
+        select: { userId: true, cawonce: true, content: true, status: true, user: { select: { username: true } } }
       })
       for (const c of caws) {
         targetCaws.set(`${c.userId}:${c.cawonce}`, {
-          content: c.content,
+          content: c.status === 'HIDDEN' ? '' : c.content,
           username: c.user.username,
         })
       }
@@ -291,8 +292,15 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           }))
         : []
 
-      // Attach per-option vote counts to caw.poll when present.
+      // A hidden caw answers 410 on GET /api/caws/:id. Its notifications
+      // (a reply, quote or mention whose author hid it) stay, so drop the
+      // body here too and keep only what links to it.
       let cawOut: any = notification.caw
+      if (cawOut?.status === 'HIDDEN') {
+        cawOut = { ...cawOut, content: '', hasImage: false, hasVideo: false, imageData: null, videoData: null, poll: null }
+      }
+
+      // Attach per-option vote counts to caw.poll when present.
       if (cawOut?.poll) {
         const pollId = cawOut.poll.id
         const rawCounts = pollVoteCountsByPollId.get(pollId) ?? []
