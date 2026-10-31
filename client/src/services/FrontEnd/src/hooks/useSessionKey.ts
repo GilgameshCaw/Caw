@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import { hashMessage } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
+import { useSignMessage, useAccount } from 'wagmi'
 import { useReadContract } from 'wagmi'
 import { getPublicClient } from '@wagmi/core'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
@@ -147,10 +147,8 @@ const SESSION_DOMAIN = {
 
 export function useCreateSession() {
   const { signMessageAsync } = useSignMessage()
-  const { switchChainAsync } = useSwitchChain()
   const { isConnected, address: connectedAddress } = useAccount()
   const { openConnectModal } = useConnectModal()
-  const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
   const setActiveWallet = useSessionKeyStore(s => s.setActiveWallet)
   const activeToken = useActiveToken()
@@ -185,11 +183,11 @@ export function useCreateSession() {
         )
       }
 
-      // Ensure wallet is on Base Sepolia (where CawProfileLedger lives)
-      if (chainId !== baseSepolia.id) {
-        onProgress?.('Switching network...')
-        await switchChainAsync({ chainId: baseSepolia.id })
-      }
+      // No chain switch here: the session is authorized with personal_sign,
+      // which is chain-agnostic, and the L2 registration is submitted by the
+      // validator, so the wallet never sends a transaction for this flow. A
+      // programmatic switch is one more wallet round-trip, which is costly on
+      // mobile MetaMask.
     } else {
       // Passkey: throws a clear "use your backup file" error if no signer is
       // available on this device, instead of popping a wallet modal.
@@ -516,7 +514,7 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner, recovery])
+  }, [isConnected, connectedAddress, openConnectModal, signMessageAsync, setSession, setActiveWallet, activeToken, cawPrice, rootSigner, recovery])
 }
 
 /**
