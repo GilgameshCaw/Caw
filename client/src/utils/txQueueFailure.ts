@@ -4,6 +4,70 @@ import { decompressActionText } from './decompressActionText'
 import { createNotificationWithGroup } from '../services/NotificationService'
 import { sanitizeFailureReason } from './sanitizeFailureReason'
 
+// TxQueue statuses a row can still reach the chain from. 'underpriced' is
+// included because those rows are held for another validator to pick up.
+// 'waiting_for_session' is parked waiting for Quick Sign session registration
+// on L2 and promoted to pending once indexed.
+const IN_FLIGHT_TX_STATUSES = [
+  'pending',
+  'processing',
+  'awaiting_indexer',
+  'waiting_for_deposit',
+  'waiting_for_session',
+  'underpriced',
+]
+
+export function isProfileUpdateText(text: string | null | undefined): boolean {
+  return typeof text === 'string' && (text.startsWith('p:') || text.startsWith('profile-update:'))
+}
+
+export function isOtherAction(actionData: any): boolean {
+  const t = actionData?.actionType
+  if (t === 7 || t === 'other' || t === 'OTHER' || Number(t) === 7) return true
+  if (typeof t === 'string' && t.toLowerCase() === 'other') return true
+  return false
+}
+
+export function extractActionText(textField: unknown): string {
+  if (typeof textField !== 'string' || !textField) return ''
+  return decompressActionText(textField) || (!textField.startsWith('0x') ? textField : '')
+}
+
+export function isProfileUpdatePayload(data: any): boolean {
+  if (!isOtherAction(data)) return false
+  const text = extractActionText(data?.text)
+  return isProfileUpdateText(text)
+}
+
+/**
+ * Clear User.profileUpdatePending after a profile-update TxQueue row failed.
+ *
+ * /api/actions sets the flag at submit time and only a successful
+ * handleOtherAction clears it, so a failed update would otherwise leave the
+ * profile page on "updating" with the edit button disabled. The flag is per
+ * user, not per cawonce, so it is left alone while another profile update from
+ * the same sender can still land.
+ */
+export async function clearProfileUpdatePending(
+  prisma: PrismaClient,
+  senderId: number
+): Promise<void> {
+  const inFlight = await prisma.txQueue.findMany({
+    where: { senderId, status: { in: IN_FLIGHT_TX_STATUSES } },
+    select: { payload: true },
+  })
+  const anotherInFlight = inFlight.some((row) => {
+    const data = (row.payload as any)?.data
+    return isProfileUpdatePayload(data)
+  })
+  if (anotherInFlight) return
+
+  await prisma.user.updateMany({
+    where: { tokenId: senderId, profileUpdatePending: true },
+    data: { profileUpdatePending: false },
+  })
+}
+
 /**
  * THE single choke point for marking a TxQueue row as failed.
  *
@@ -213,16 +277,16 @@ async function cleanupOptimisticRows(
       }
     }
 
-    // OTHER actions (actionType 7): the signed `text` is smltxt-compressed
-    // hex bytes (the on-chain payload). The OTHER-subtype prefix lives in
+    // OTHER actions (actionType 7 or 'other'): the signed `text` is smltxt-compressed
+    // hex bytes (the on-chain payload), or plain text fallback. The OTHER-subtype prefix lives in
     // the *decompressed* plaintext, NOT in the compressed bytes. Earlier
     // versions of this code tested actionData.text.startsWith('tip:') /
     // 'vote:' / 'pi:' etc. against the compressed hex, which never matched
     // — every OTHER-subtype failure left a phantom optimistic row behind
     // (pending Tip / Vote / PinnedCaw forever). Audit fix 2026-05-09
     // (Round 6 cross-layer agent CL-1).
-    if (actionType === 7 && typeof actionData?.text === 'string') {
-      const text: string = decompressActionText(actionData.text)
+    if (isOtherAction(actionData) && typeof actionData?.text === 'string') {
+      const text: string = extractActionText(actionData.text)
 
       // TIP (tip: prefix): the pending Tip row should be removed.
       if (text.startsWith('tip:') && cawonce != null) {
@@ -240,6 +304,13 @@ async function cleanupOptimisticRows(
         await prisma.vote.deleteMany({
           where: { voterId: senderId, cawonce, pending: true }
         })
+      }
+
+      // PROFILE UPDATE (p: / profile-update: prefix): /api/actions set
+      // profileUpdatePending at submit time; only a successful handler clears
+      // it, so release it here.
+      if (isProfileUpdateText(text)) {
+        await clearProfileUpdatePending(prisma, senderId)
       }
 
       // PIN / UNPIN (pi: / xpi: prefix). Symmetric rollback:

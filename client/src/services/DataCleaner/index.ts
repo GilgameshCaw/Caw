@@ -2,7 +2,8 @@ import { prisma } from '../../prismaClient'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
-import { markTxQueueFailed } from '../../utils/txQueueFailure'
+import { markTxQueueFailed, isProfileUpdateText, clearProfileUpdatePending, isOtherAction, extractActionText } from '../../utils/txQueueFailure'
+import { decompressActionText } from '../../utils/decompressActionText'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cleanStaleOgCache } from '../../api/routes/og'
 import { cawProfileLedgerAbi } from '../../abi/generated'
@@ -574,7 +575,7 @@ const FAILED_TXQUEUE_MAX_PER_TICK = 500
  * - For CAW actions, mark the associated caw as FAILED
  * - For LIKE actions, remove the pending like
  */
-async function cleanupFailedTxQueue() {
+export async function cleanupFailedTxQueue() {
   logger.log('Cleaning up failed txqueue records...')
 
   try {
@@ -670,30 +671,28 @@ async function cleanupFailedTxQueue() {
               action: 'FOLLOW'
             }
           })
-        } else if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('tip:')) {
-          // Remove the pending tip
-          logger.log(` Removing failed pending tip for user ${data.senderId}`)
+        } else if (isOtherAction(data)) {
+          // The signed `text` is smltxt-compressed hex; the subtype prefix is in
+          // the decompressed plaintext. Plain text is kept as a fallback.
+          const text = extractActionText(data.text)
 
-          await prisma.tip.deleteMany({
-            where: {
-              senderId: data.senderId,
-              cawonce: data.cawonce,
-              pending: true
-            }
-          })
-        } else if (data.actionType === 'other' && data.text && (data.text.startsWith('profile-update:') || data.text.startsWith('p:'))) {
-          // Clear the pending profile update flag
-          logger.log(` Clearing pending profile update for user ${data.senderId}`)
+          if (text.startsWith('tip:')) {
+            // Remove the pending tip
+            logger.log(` Removing failed pending tip for user ${data.senderId}`)
 
-          await prisma.user.updateMany({
-            where: {
-              tokenId: data.senderId,
-              profileUpdatePending: true
-            },
-            data: {
-              profileUpdatePending: false
-            }
-          })
+            await prisma.tip.deleteMany({
+              where: {
+                senderId: data.senderId,
+                cawonce: data.cawonce,
+                pending: true
+              }
+            })
+          } else if (isProfileUpdateText(text)) {
+            // Clear the pending profile update flag
+            logger.log(` Clearing pending profile update for user ${data.senderId}`)
+
+            await clearProfileUpdatePending(prisma as any, data.senderId)
+          }
         }
 
         // Optional: Delete very old failed txqueue records (e.g., older than 7 days)
