@@ -159,9 +159,25 @@ export class DmWebSocketService {
         socket.leave(`conversation:${conversationId}`)
       })
 
-      socket.on('typing', (data: { conversationId: string; isTyping: boolean }) => {
+      socket.on('typing', async (data: { conversationId: string; isTyping: boolean }) => {
         // M-2: 5-token bucket, refill 1/sec
         if (!consumeToken(socket.id, 'typing', 5, 1)) return
+        // socket.to(room) broadcasts to a room whether or not the sender is in
+        // it, so without a membership check any signed-in user could push
+        // typing events into a conversation they are not part of. The check is
+        // on the participant row, not on the socket's rooms: the client leaves
+        // a conversation's room when it switches away, and its delayed "stopped
+        // typing" still has to go out.
+        if (typeof data?.conversationId !== 'string') return
+        try {
+          const participant = await prisma.conversationParticipant.findUnique({
+            where: { conversationId_userId: { conversationId: data.conversationId, userId: socket.userId! } },
+            select: { leftAt: true },
+          })
+          if (!participant || participant.leftAt) return
+        } catch {
+          return
+        }
         socket.to(`conversation:${data.conversationId}`).emit('user-typing', {
           userId: socket.userId,
           username: socket.username,
