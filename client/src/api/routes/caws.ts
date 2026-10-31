@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { deleteFailedCaws } from '../shared/failedCaw'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { safeDecrement } from '../../services/CountManager'
@@ -699,14 +700,9 @@ router.post('/:id/dismiss', requireAuth({
   if (isNaN(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
 
   try {
-    const deleted = await prisma.caw.deleteMany({
-      where: {
-        id: cawId,
-        status: 'FAILED'
-      }
-    })
+    const deleted = await deleteFailedCaws(prisma, { id: cawId })
 
-    if (deleted.count === 0) {
+    if (deleted === 0) {
       return res.status(404).json({ error: 'No failed caw found with that ID' })
     }
 
