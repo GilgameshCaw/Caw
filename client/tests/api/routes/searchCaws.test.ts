@@ -1,0 +1,155 @@
+/**
+ * GET /api/search (type=caws and type=all) must return posts shaped like the
+ * other post lists (/api/caws, /api/bookmarks): author display name and avatar,
+ * poll, viewer state (liked / bookmarked), and quote vs reply.
+ *
+ * Writes rows and goes through the real route, so it needs a throwaway
+ * database. It SKIPS unless DATABASE_URL points at a caw_test_* database.
+ * Example (from client/):
+ *
+ *   DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/caw_test_searchcaws \
+ *   npx mocha --import=tsx --exit tests/api/routes/searchCaws.test.ts
+ *
+ * The Elasticsearch path is exercised by stubbing the service (no ES is
+ * reachable in the test environment); the Prisma path runs for real.
+ */
+import { describe, it, before, after, afterEach } from 'mocha'
+import { expect } from 'chai'
+import express from 'express'
+import request from 'supertest'
+
+const HAS_TEST_DB = /\/caw_test_[A-Za-z0-9_]*(\?|$)/.test(process.env.DATABASE_URL ?? '')
+
+const BASE = 990300
+const viewer = { tokenId: BASE, username: 'sc_viewer' }
+const authorA = { tokenId: BASE + 1, username: 'sc_author_a', displayName: 'Author A', avatarUrl: 'https://example.test/a.png', defaultAvatarId: 7 }
+const authorB = { tokenId: BASE + 2, username: 'sc_author_b', displayName: 'Author B', avatarUrl: null, defaultAvatarId: 9 }
+const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
+
+;(HAS_TEST_DB ? describe : describe.skip)('GET /api/search shapes posts like the other post lists', function () {
+  this.timeout(30000)
+  let app: express.Express
+  let prisma: any
+  let es: any
+  let pollCawId: number
+  let replyCawId: number
+  let quoteCawId: number
+  let blockedCawId: number
+  const originals: Record<string, any> = {}
+
+  async function wipe() {
+    const cawIds = (await prisma.caw.findMany({ where: { userId: { in: TOKENS } }, select: { id: true } })).map((c: any) => c.id)
+    await prisma.reply.deleteMany({ where: { OR: [{ cawId: { in: cawIds } }, { replyCawId: { in: cawIds } }] } })
+    await prisma.like.deleteMany({ where: { cawId: { in: cawIds } } })
+    await prisma.bookmark.deleteMany({ where: { cawId: { in: cawIds } } })
+    await prisma.block.deleteMany({ where: { blockerId: { in: TOKENS } } })
+    await prisma.poll.deleteMany({ where: { cawId: { in: cawIds } } })
+    // quotes/replies point at their parent: delete children first
+    await prisma.caw.deleteMany({ where: { id: { in: cawIds }, originalCawId: { not: null } } })
+    await prisma.caw.deleteMany({ where: { id: { in: cawIds } } })
+    await prisma.user.deleteMany({ where: { tokenId: { in: TOKENS } } })
+  }
+
+  before(async () => {
+    // Must run before anything that starts Elasticsearch/Redis clients; lazy so the plain suite just skips.
+    await import('../../helpers/isolatedEnv')
+    ;({ prisma } = await import('../../../src/prismaClient'))
+    ;({ elasticsearchService: es } = await import('../../../src/services/ElasticsearchService'))
+    const searchRouter = (await import('../../../src/api/routes/search')).default
+    app = express()
+    app.use('/api/search', searchRouter)
+    originals.isAvailable = es.isAvailable
+    originals.search = es.search
+
+    await wipe()
+    for (const u of [viewer, authorA, authorB]) {
+      await prisma.user.create({ data: { id: u.tokenId, tokenId: u.tokenId, username: u.username, address: '0x' + String(u.tokenId).padStart(40, '0'), ...(('displayName' in u) ? { displayName: (u as any).displayName, avatarUrl: (u as any).avatarUrl, defaultAvatarId: (u as any).defaultAvatarId } : {}) } })
+    }
+    // A: a post with a poll and a video, liked and bookmarked by the viewer
+    const poll = await prisma.caw.create({ data: { userId: authorA.tokenId, content: 'scfind poll\n::poll:Yes:No::', action: 'CAW', cawonce: 1, hasVideo: true, videoData: 'vid-1' } })
+    pollCawId = poll.id
+    await prisma.poll.create({ data: { cawId: poll.id, options: ['Yes', 'No'], optionImages: [], totalVotes: 0 } })
+    await prisma.like.create({ data: { userId: viewer.tokenId, cawId: poll.id, action: 'LIKE', pending: false } })
+    await prisma.bookmark.create({ data: { userId: viewer.tokenId, cawId: poll.id } })
+    // B replies to A's post (CAW with a parent + a Reply row)
+    const reply = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind reply', action: 'CAW', cawonce: 1, originalCawId: poll.id } })
+    replyCawId = reply.id
+    await prisma.reply.create({ data: { userId: authorB.tokenId, cawId: poll.id, replyCawId: reply.id } })
+    // B quotes A's post (RECAW with text)
+    const quote = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind quote', action: 'RECAW', cawonce: 2, originalCawId: poll.id } })
+    quoteCawId = quote.id
+    // a post by B that the viewer will block
+    const blocked = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind from blocked author', action: 'CAW', cawonce: 3 } })
+    blockedCawId = blocked.id
+  })
+
+  afterEach(() => {
+    es.isAvailable = originals.isAvailable
+    es.search = originals.search
+  })
+
+  after(async () => {
+    if (prisma) { await wipe(); await prisma.$disconnect() }
+  })
+
+  const byId = (items: any[], id: number) => items.find((i: any) => i.id === String(id))
+
+  it('Prisma path (type=all): author name/avatar, poll, viewer state, quote vs reply, video', async () => {
+    es.isAvailable = () => false
+    const res = await request(app).get('/api/search?q=scfind&type=all').set('x-user-id', String(viewer.tokenId)).expect(200)
+    const items = res.body.caws
+    const p = byId(items, pollCawId)
+    expect(p, 'poll post').to.exist
+    expect(p.user).to.include({ displayName: 'Author A', avatarUrl: 'https://example.test/a.png', defaultAvatarId: 7, tokenId: authorA.tokenId })
+    expect(p.poll.options).to.deep.equal(['Yes', 'No'])
+    expect(p.hasLiked).to.equal(true)
+    expect(p.isBookmarked).to.equal(true)
+    expect(p.videoData).to.equal('vid-1')
+    expect(p.hasVideo).to.equal(true)
+
+    const q = byId(items, quoteCawId)
+    expect(q.isQuote, 'quote is a quote').to.equal(true)
+    expect(q.parent.user.displayName).to.equal('Author A')
+    expect(q.parent.poll.options).to.deep.equal(['Yes', 'No'])
+
+    const r = byId(items, replyCawId)
+    expect(r.isQuote, 'reply is not a quote').to.equal(false)
+    expect(r.parent.id).to.equal(String(pollCawId))
+  })
+
+  it('without x-user-id: poll and names are present, viewer state is empty', async () => {
+    es.isAvailable = () => false
+    const res = await request(app).get('/api/search?q=scfind&type=caws').expect(200)
+    const p = byId(res.body.items, pollCawId)
+    expect(p.user.displayName).to.equal('Author A')
+    expect(p.poll.options).to.deep.equal(['Yes', 'No'])
+    expect(p.hasLiked).to.equal(false)
+  })
+
+  it('Elasticsearch path (type=caws): same shape, ES relevance order kept', async () => {
+    es.isAvailable = () => true
+    es.search = async () => ({ hits: { hits: [{ _id: String(quoteCawId) }, { _id: String(pollCawId) }, { _id: String(replyCawId) }] } })
+    const res = await request(app).get('/api/search?q=scfind&type=caws').set('x-user-id', String(viewer.tokenId)).expect(200)
+    expect(res.body.items.map((i: any) => i.id)).to.deep.equal([String(quoteCawId), String(pollCawId), String(replyCawId)])
+    const p = byId(res.body.items, pollCawId)
+    expect(p.user.displayName).to.equal('Author A')
+    expect(p.poll.options).to.deep.equal(['Yes', 'No'])
+    expect(p.hasLiked).to.equal(true)
+    expect(byId(res.body.items, quoteCawId).isQuote).to.equal(true)
+    expect(byId(res.body.items, replyCawId).isQuote).to.equal(false)
+  })
+
+  it('blocked authors are still filtered out (type=caws)', async () => {
+    es.isAvailable = () => false
+    await prisma.block.create({ data: { blockerId: viewer.tokenId, blockedId: authorB.tokenId } })
+    try {
+      const res = await request(app).get('/api/search?q=scfind&type=caws').set('x-user-id', String(viewer.tokenId)).expect(200)
+      const ids = res.body.items.map((i: any) => i.id)
+      expect(ids).to.include(String(pollCawId))
+      expect(ids).to.not.include(String(blockedCawId))
+      expect(ids).to.not.include(String(quoteCawId))
+    } finally {
+      await prisma.block.deleteMany({ where: { blockerId: viewer.tokenId } })
+    }
+  })
+})
