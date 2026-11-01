@@ -2,14 +2,55 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { elasticsearchService } from '../../services/ElasticsearchService'
 import { getBlockedUserIds } from '../shared/blockUtils'
+import { shapeCaw, getCawIncludeConfig, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { getVerifiedViewerId } from '../shared/viewer'
 import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
 /**
+ * A HIDDEN caw embedded as a reply's or quote's parent keeps its id, author and
+ * status, but not its body, media or poll: GET /api/caws/:id answers 410 for the
+ * same row, and embedding it whole would hand the body back out through every
+ * result that points at it.
+ */
+function withoutHiddenParentBody(caw: any) {
+  const p = caw.parent
+  if (!p || p.status !== 'HIDDEN') return caw
+  return {
+    ...caw,
+    parent: {
+      ...p,
+      content: '',
+      imageData: null,
+      hasImage: false,
+      videoData: null,
+      hasVideo: false,
+      poll: null,
+      hashtags: [],
+      sourceLanguage: null,
+    },
+  }
+}
+
+async function shapeSearchedCaws(rawCaws: any[], currentUserId?: number) {
+  const items = rawCaws.map((caw: any) => {
+    const shaped = shapeCaw(withoutHiddenParentBody(caw))
+    return {
+      ...shaped,
+      videoData: caw.videoData,
+      hasVideo: caw.hasVideo,
+    }
+  })
+  await enrichWithPollVotes(items, currentUserId)
+  await enrichWithXBadges(items)
+  return items
+}
+
+/**
  * Search caws using Prisma (PostgreSQL fallback)
  */
-async function searchCawsWithPrisma(query: string, limit: number, offset: number) {
+async function searchCawsWithPrisma(query: string, limit: number, offset: number, currentUserId?: number) {
   const caws = await prisma.caw.findMany({
     where: {
       content: { contains: query, mode: 'insensitive' },
@@ -18,57 +59,15 @@ async function searchCawsWithPrisma(query: string, limit: number, offset: number
     take: limit + 1,
     skip: offset,
     orderBy: { createdAt: 'desc' },
-    include: {
-      user: { select: { tokenId: true, username: true, image: true } },
-      parent: {
-        select: {
-          id: true,
-          content: true,
-          user: { select: { tokenId: true, username: true, image: true } }
-        }
-      }
-    }
+    include: getCawIncludeConfig({ currentUserId })
   })
 
   const hasMore = caws.length > limit
-  const items = hasMore ? caws.slice(0, limit) : caws
+  const rawItems = hasMore ? caws.slice(0, limit) : caws
+  const items = await shapeSearchedCaws(rawItems, currentUserId)
 
   return {
-    items: items.map((caw: any) => ({
-      id: caw.id.toString(),
-      content: caw.content,
-      timestamp: caw.createdAt.toISOString(),
-      user: {
-        id: caw.user.tokenId,
-        tokenId: caw.user.tokenId,
-        username: caw.user.username,
-        image: caw.user.image
-      },
-      parent: caw.parent ? {
-        id: caw.parent.id.toString(),
-        content: caw.parent.content,
-        user: {
-          id: caw.parent.user.tokenId,
-          tokenId: caw.parent.user.tokenId,
-          username: caw.parent.user.username,
-          image: caw.parent.user.image
-        }
-      } : null,
-      likeCount: caw.likeCount || 0,
-      viewCount: caw.viewCount || 0,
-      hasLiked: false,
-      hasRecawed: false,
-      commentCount: caw.commentCount || 0,
-      recawCount: caw.recawCount || 0,
-      cawonce: caw.cawonce,
-      imageData: caw.imageData,
-      imageUrl: null,
-      hasImage: caw.hasImage,
-      videoData: caw.videoData,
-      hasVideo: caw.hasVideo,
-      sourceLanguage: caw.sourceLanguage ?? null,
-      pending: false
-    })),
+    items,
     hasMore
   }
 }
@@ -76,7 +75,7 @@ async function searchCawsWithPrisma(query: string, limit: number, offset: number
 /**
  * Search caws using Elasticsearch
  */
-async function searchCawsWithES(query: string, limit: number, offset: number) {
+async function searchCawsWithES(query: string, limit: number, offset: number, currentUserId?: number) {
   const response = await elasticsearchService.search(query, 'caws', limit + 1, offset)
   if (!response?.hits?.hits) return null
 
@@ -90,58 +89,16 @@ async function searchCawsWithES(query: string, limit: number, offset: number) {
 
   const caws = await prisma.caw.findMany({
     where: { id: { in: cawIds }, status: 'SUCCESS' },
-    include: {
-      user: { select: { tokenId: true, username: true, image: true } },
-      parent: {
-        select: {
-          id: true,
-          content: true,
-          user: { select: { tokenId: true, username: true, image: true } }
-        }
-      }
-    }
+    include: getCawIncludeConfig({ currentUserId })
   })
 
   // Maintain ES relevance order
   const cawMap = new Map(caws.map(c => [c.id, c]))
   const orderedCaws = cawIds.map((id: number) => cawMap.get(id)).filter(Boolean)
+  const shapedItems = await shapeSearchedCaws(orderedCaws, currentUserId)
 
   return {
-    items: orderedCaws.map((caw: any) => ({
-      id: caw.id.toString(),
-      content: caw.content,
-      timestamp: caw.createdAt.toISOString(),
-      user: {
-        id: caw.user.tokenId,
-        tokenId: caw.user.tokenId,
-        username: caw.user.username,
-        image: caw.user.image
-      },
-      parent: caw.parent ? {
-        id: caw.parent.id.toString(),
-        content: caw.parent.content,
-        user: {
-          id: caw.parent.user.tokenId,
-          tokenId: caw.parent.user.tokenId,
-          username: caw.parent.user.username,
-          image: caw.parent.user.image
-        }
-      } : null,
-      likeCount: caw.likeCount || 0,
-      viewCount: caw.viewCount || 0,
-      hasLiked: false,
-      hasRecawed: false,
-      commentCount: caw.commentCount || 0,
-      recawCount: caw.recawCount || 0,
-      cawonce: caw.cawonce,
-      imageData: caw.imageData,
-      imageUrl: null,
-      hasImage: caw.hasImage,
-      videoData: caw.videoData,
-      hasVideo: caw.hasVideo,
-      sourceLanguage: caw.sourceLanguage ?? null,
-      pending: false
-    })),
+    items: shapedItems,
     hasMore
   }
 }
@@ -191,6 +148,10 @@ router.get('/', async (req, res) => {
     const searchLimit = Math.min(Number(limit), 50)
     const searchOffset = Number(offset)
     const useES = elasticsearchService.isAvailable()
+    // Blocked-user filtering keeps using the header as before. Viewer-specific
+    // state (liked, bookmarked, poll vote) is only attached for a verified session.
+    const currentUserId = Number(req.header('x-user-id')) || undefined
+    const viewerId = await getVerifiedViewerId(req)
 
     const results: any = {
       caws: [],
@@ -205,23 +166,22 @@ router.get('/', async (req, res) => {
 
       let cawResults
       if (useES) {
-        cawResults = await searchCawsWithES(query, cawLimit, cawOffset)
+        cawResults = await searchCawsWithES(query, cawLimit, cawOffset, viewerId)
       }
       // Only fall back to Prisma when ES is truly unavailable. Previously we
       // also fell back on 0 hits, but that re-scanned the Caw table on every
       // "no results" query — O(N) cost for a query that should be O(1). At 1M
       // caws a miss ran through the entire table with ILIKE.
       if (!cawResults) {
-        cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset)
+        cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset, viewerId)
       }
 
       results.caws = cawResults.items
 
       if (type === 'caws') {
         let filteredItems = cawResults.items
-        const cawCurrentUserId = Number(req.header('x-user-id')) || undefined
-        if (cawCurrentUserId) {
-          const blockedIds = await getBlockedUserIds(cawCurrentUserId)
+        if (currentUserId) {
+          const blockedIds = await getBlockedUserIds(currentUserId)
           if (blockedIds.length > 0) {
             const blockedSet = new Set(blockedIds)
             filteredItems = cawResults.items.filter((c: any) => !blockedSet.has(c.user?.id))
@@ -317,7 +277,6 @@ router.get('/', async (req, res) => {
     }
 
     // Filter out blocked users from results
-    const currentUserId = Number(req.header('x-user-id')) || undefined
     if (currentUserId) {
       const blockedIds = await getBlockedUserIds(currentUserId)
       if (blockedIds.length > 0) {
