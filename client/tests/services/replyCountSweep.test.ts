@@ -7,6 +7,11 @@
 // deleting a stale one, so any other pending reply under the same parent fell
 // out of the count and was not added back when it confirmed.
 //
+// The sweeps now take the deleted row's +1 back off the parent (a relative
+// change) instead of recounting. A recount also double-counts a reply whose row
+// is committed but whose +1 has not run yet; see "a reply whose row is committed
+// before its +1".
+//
 // Integration-style against a real database: the failure goes through the real
 // markTxQueueFailed, the optimistic rows are written with the real CountManager,
 // and the sweeps are DataCleaner's own. Needs DATABASE_URL pointing at a
@@ -23,6 +28,7 @@ let markTxQueueFailed: typeof import('../../src/utils/txQueueFailure').markTxQue
 let countManager: typeof import('../../src/services/CountManager').countManager
 let cleanupPendingReplies: typeof import('../../src/services/DataCleaner').cleanupPendingReplies
 let cleanupPendingCaws: typeof import('../../src/services/DataCleaner').cleanupPendingCaws
+let deleteReplyRowAndCount: typeof import('../../src/services/DataCleaner').deleteReplyRowAndCount
 
 const prisma = new PrismaClient()
 
@@ -102,7 +108,7 @@ describe('commentCount after a stale failed reply is swept', function () {
     }
     ;({ markTxQueueFailed } = await import('../../src/utils/txQueueFailure'))
     ;({ countManager } = await import('../../src/services/CountManager'))
-    ;({ cleanupPendingReplies, cleanupPendingCaws } = await import('../../src/services/DataCleaner'))
+    ;({ cleanupPendingReplies, cleanupPendingCaws, deleteReplyRowAndCount } = await import('../../src/services/DataCleaner'))
     for (const id of USERS) {
       await prisma.user.upsert({
         where: { tokenId: id },
@@ -192,6 +198,97 @@ describe('commentCount after a stale failed reply is swept', function () {
       expect(await commentCount(parent.id)).to.equal(1)
       await confirm(other)
       expect(await commentCount(parent.id)).to.equal(1)
+    })
+  })
+
+  // The single-action path in /api/actions commits the pending Reply row and only
+  // then runs onReplyCreated (+1) as a separate statement. A sweep that lands in
+  // between must not count that reply: its +1 is still to come.
+  describe('a reply whose row is committed before its +1', () => {
+    // The Caw and the pending Reply row, without the +1 (that is the gap).
+    async function submitRowOnly(parentId: number, userId = OTHER) {
+      const cawonce = nextCawonce()
+      const reply = await prisma.caw.create({
+        data: { userId, cawonce, content: 'row first', status: 'PENDING', action: 'CAW', originalCawId: parentId } as any,
+      })
+      await prisma.reply.create({ data: { userId, cawId: parentId, replyCawId: reply.id, pending: true } })
+      return reply
+    }
+    const plusOne = (parentId: number, replyCawId: number) =>
+      countManager.onReplyCreated(prisma as any, { cawId: parentId, replyCawId, pending: true })
+
+    it('stale FAILED reply swept in the gap: the count is right once the +1 runs', async () => {
+      const parent = await makeParent()
+      const stale = await submitReply(parent.id)
+      await validatorFails(stale)
+      await age(stale, 10)
+      const gap = await submitRowOnly(parent.id)
+
+      await cleanupPendingReplies()
+      await plusOne(parent.id, gap.id)
+      expect(await replyRows(parent.id)).to.equal(1)
+      expect(await commentCount(parent.id)).to.equal(1)
+    })
+
+    it('reply stuck in PENDING over 30 minutes swept in the gap', async () => {
+      const parent = await makeParent()
+      const stuck = await submitReply(parent.id)
+      await age(stuck, 40)
+      const gap = await submitRowOnly(parent.id)
+
+      await cleanupPendingReplies()
+      await plusOne(parent.id, gap.id)
+      expect(await replyRows(parent.id)).to.equal(1)
+      expect(await commentCount(parent.id)).to.equal(1)
+    })
+
+    it('caw stuck in PENDING over 30 minutes swept in the gap', async () => {
+      const parent = await makeParent()
+      const stuck = await submitReply(parent.id)
+      await prisma.caw.update({ where: { id: stuck.reply.id }, data: { createdAt: minutesAgo(40) } })
+      const gap = await submitRowOnly(parent.id)
+
+      await cleanupPendingCaws()
+      await plusOne(parent.id, gap.id)
+      expect(await replyRows(parent.id)).to.equal(1)
+      expect(await commentCount(parent.id)).to.equal(1)
+    })
+
+    it('the +1 first, then the sweep: still right', async () => {
+      const parent = await makeParent()
+      const stale = await submitReply(parent.id)
+      await validatorFails(stale)
+      await age(stale, 10)
+      const gap = await submitRowOnly(parent.id)
+      await plusOne(parent.id, gap.id)
+
+      await cleanupPendingReplies()
+      expect(await replyRows(parent.id)).to.equal(1)
+      expect(await commentCount(parent.id)).to.equal(1)
+    })
+  })
+
+  describe('deleteReplyRowAndCount', () => {
+    it('takes 1 off once per row: a second call for the same row changes nothing', async () => {
+      const parent = await makeParent()
+      const a = await submitReply(parent.id, REPLIER, 'a')
+      await submitReply(parent.id, OTHER, 'b')
+      const row = (await prisma.reply.findFirst({ where: { replyCawId: a.reply.id } }))!
+      expect(await commentCount(parent.id)).to.equal(2)
+
+      expect(await deleteReplyRowAndCount(row.id, parent.id)).to.equal(true)
+      expect(await deleteReplyRowAndCount(row.id, parent.id)).to.equal(false)
+      expect(await commentCount(parent.id)).to.equal(1)
+      expect(await replyRows(parent.id)).to.equal(1)
+    })
+
+    it('never goes below zero', async () => {
+      const parent = await makeParent()
+      const a = await submitReply(parent.id)
+      await prisma.caw.update({ where: { id: parent.id }, data: { commentCount: 0 } })
+      const row = (await prisma.reply.findFirst({ where: { replyCawId: a.reply.id } }))!
+      await deleteReplyRowAndCount(row.id, parent.id)
+      expect(await commentCount(parent.id)).to.equal(0)
     })
   })
 })

@@ -10,6 +10,7 @@ import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
 import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
 import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
+import { safeDecrement } from '../CountManager'
 import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
@@ -307,6 +308,26 @@ async function cleanupPendingTips() {
  * - If the reply caw is SUCCESS, mark reply as not pending
  * - If the reply caw is FAILED or missing after 30 minutes, delete the reply
  */
+/**
+ * Delete a Reply row and take its +1 back off the parent's commentCount, in one
+ * transaction. Returns false (and changes nothing) if the row was already gone.
+ *
+ * A reply counts from the moment its pending Reply row is created
+ * (CountManager.onReplyCreated) and confirming it adds nothing, so removing the
+ * row is -1. This is deliberately not a recount: SET commentCount = count(rows)
+ * races with a reply whose row is committed but whose +1 has not run yet (the
+ * single-action path in /api/actions writes the two as separate statements), and
+ * counts that reply twice. A relative change does not depend on the other rows.
+ */
+export async function deleteReplyRowAndCount(replyId: number, parentCawId: number): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const { count } = await tx.reply.deleteMany({ where: { id: replyId } })
+    if (count === 0) return false
+    await safeDecrement(tx, 'Caw', 'commentCount', 'id', parentCawId)
+    return true
+  })
+}
+
 export async function cleanupPendingReplies() {
   logger.log('Cleaning up stale pending replies...')
 
@@ -342,24 +363,8 @@ export async function cleanupPendingReplies() {
           // The reply caw failed, delete the reply record
           logger.log(` Removing failed reply ${pendingReply.id} (replyCaw ${pendingReply.replyCawId} is FAILED)`)
 
-          await prisma.reply.delete({
-            where: { id: pendingReply.id }
-          })
-
-          // Recalculate comment count on the parent caw
-          // Every Reply row counts, pending ones too: onReplyCreated adds the
-          // +1 when the pending row is created and confirming adds nothing
-          // (same rule as scripts/reconcile-caw-counts.ts).
-          const actualReplyCount = await prisma.reply.count({
-            where: { cawId: pendingReply.cawId }
-          })
-
-          await prisma.caw.update({
-            where: { id: pendingReply.cawId },
-            data: { commentCount: actualReplyCount }
-          })
-
-          logger.log(` Updated caw ${pendingReply.cawId} comment count to ${actualReplyCount}`)
+          const removed = await deleteReplyRowAndCount(pendingReply.id, pendingReply.cawId)
+          logger.log(` Removed reply ${pendingReply.id}; caw ${pendingReply.cawId} commentCount ${removed ? '-1' : 'unchanged (row already gone)'}`)
         } else if (pendingReply.createdAt < thirtyMinutesAgo) {
           // Before failing: same TxQueue hold-state guard as cleanupPendingCaws.
           // A reply submitted via Quick Sign during the L1→L2 session-mirror
@@ -392,23 +397,8 @@ export async function cleanupPendingReplies() {
             data: { status: 'FAILED' }
           })
 
-          await prisma.reply.delete({
-            where: { id: pendingReply.id }
-          })
-
-          // Every Reply row counts, pending ones too: onReplyCreated adds the
-          // +1 when the pending row is created and confirming adds nothing
-          // (same rule as scripts/reconcile-caw-counts.ts).
-          const actualReplyCount = await prisma.reply.count({
-            where: { cawId: pendingReply.cawId }
-          })
-
-          await prisma.caw.update({
-            where: { id: pendingReply.cawId },
-            data: { commentCount: actualReplyCount }
-          })
-
-          logger.log(` Updated caw ${pendingReply.cawId} comment count to ${actualReplyCount}`)
+          const removed = await deleteReplyRowAndCount(pendingReply.id, pendingReply.cawId)
+          logger.log(` Removed reply ${pendingReply.id}; caw ${pendingReply.cawId} commentCount ${removed ? '-1' : 'unchanged (row already gone)'}`)
         } else {
           logger.log(` Reply still pending (${Math.floor((Date.now() - pendingReply.createdAt.getTime()) / 60000)} minutes): reply ${pendingReply.id} on caw ${pendingReply.cawId}`)
         }
@@ -540,17 +530,8 @@ export async function cleanupPendingCaws() {
               where: { replyCawId: pendingCaw.id }
             })
             if (replyRecord) {
-              await prisma.reply.delete({ where: { id: replyRecord.id } })
-
-              // Pending Reply rows count too (see cleanupPendingReplies).
-              const actualReplyCount = await prisma.reply.count({
-                where: { cawId: replyRecord.cawId }
-              })
-              await prisma.caw.update({
-                where: { id: replyRecord.cawId },
-                data: { commentCount: actualReplyCount }
-              })
-              logger.log(` Cleaned up reply record for failed caw, updated parent comment count`)
+              const removed = await deleteReplyRowAndCount(replyRecord.id, replyRecord.cawId)
+              logger.log(` Cleaned up reply record for failed caw; parent commentCount ${removed ? '-1' : 'unchanged (row already gone)'}`)
             }
           } else {
             logger.log(` Caw still pending (${Math.floor((Date.now() - pendingCaw.createdAt.getTime()) / 60000)} minutes): caw ${pendingCaw.id} user ${pendingCaw.userId}`)
