@@ -4,6 +4,7 @@ import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
+import { getVerifiedViewerId } from '../shared/viewer'
 import { safeDecrement } from '../../services/CountManager'
 
 const router = Router()
@@ -33,9 +34,17 @@ router.get('/', async (req, res) => {
     const cursor = (cursorParam && cursorParam !== 'undefined' && cursorParam !== 'null')
       ? { id: Number(cursorParam) }
       : undefined
-    const userIdHeader = req.header('x-user-id')
-    const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
-    const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+    // currentUserId drives viewer-specific state and must be verified; the raw header
+    // only feeds the block filter, which is unchanged.
+    const headerUserId = Number(req.header('x-user-id')) || undefined
+    const currentUserId = await getVerifiedViewerId(req)
+    const blockedIds = headerUserId ? await getBlockedUserIds(headerUserId) : []
+
+    // "Following" needs a verified viewer. Without one it would fall through to
+    // the public feed and show everyone's posts under the Following tab.
+    if (filter === 'following' && !currentUserId) {
+      return res.json({ items: [], nextCursor: undefined })
+    }
 
     // 1️⃣ if ?user=foo, look up that user
     let targetUserId: number|undefined
@@ -320,9 +329,11 @@ router.post('/by-ids', async (req, res) => {
     // Limit to prevent abuse
     const limitedIds = ids.slice(0, 100)
 
-    const userIdHeader = req.header('x-user-id')
-    const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
-    const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+    // currentUserId drives viewer-specific state and must be verified; the raw header
+    // only feeds the block filter, which is unchanged.
+    const headerUserId = Number(req.header('x-user-id')) || undefined
+    const currentUserId = await getVerifiedViewerId(req)
+    const blockedIds = headerUserId ? await getBlockedUserIds(headerUserId) : []
 
     const byIdsWhere: any = {
       id: { in: limitedIds },
@@ -366,8 +377,8 @@ router.get('/:id', async (req, res) => {
   const cawId = Number(req.params.id)
   if (!Number.isInteger(cawId) || cawId <= 0) return res.status(404).end()
   // 1) fetch the caw itself
-  const userIdHeader = req.header('x-user-id')
-  const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+  const headerUserId = Number(req.header('x-user-id')) || undefined
+  const currentUserId = await getVerifiedViewerId(req)
 
   const raw = await prisma.caw.findUnique({
     where: { id: cawId },
@@ -418,7 +429,7 @@ router.get('/:id', async (req, res) => {
 
   // 2) fetch comments (caws where originalCawId = cawId) with same visibility filter
   //    Exclude plain recaws (RECAW without text) — only show replies and quotes
-  const commentBlockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+  const commentBlockedIds = headerUserId ? await getBlockedUserIds(headerUserId) : []
   const commentWhere: any = {
     originalCawId: cawId,
     NOT: { action: 'RECAW', content: '' },
