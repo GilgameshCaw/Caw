@@ -13,7 +13,6 @@
  *   DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/caw_test_feedviewer \
  *   npx mocha --import=tsx --exit tests/api/routes/feedViewer.test.ts
  */
-import '../../helpers/isolatedEnv'
 import { describe, it, before, after } from 'mocha'
 import { expect } from 'chai'
 import express from 'express'
@@ -50,6 +49,8 @@ const addrOf = (tokenId: number) => '0x' + String(tokenId).padStart(40, '0')
   }
 
   before(async () => {
+    // lazily, so a plain mocha run without a test database skips instead of throwing at load
+    await import('../../helpers/isolatedEnv')
     ;({ prisma } = await import('../../../src/prismaClient'))
     const cawsRouter = (await import('../../../src/api/routes/caws')).default
     app = express()
@@ -131,17 +132,23 @@ const addrOf = (tokenId: number) => '0x' + String(tokenId).padStart(40, '0')
   })
 
   describe('GET /api/caws?filter=following', () => {
-    it('is empty, not the public feed, without a verified viewer', async () => {
-      const none = await request(app).get('/api/caws?filter=following&limit=50').expect(200)
+    const url = '/api/caws?filter=following&limit=50'
+    it('is empty, not the public feed, when there is no viewer id at all', async () => {
+      const none = await request(app).get(url).expect(200)
       expect(none.body.items).to.deep.equal([])
-      const header = await asAuthor(request(app).get('/api/caws?filter=following&limit=50')).expect(200)
-      expect(header.body.items).to.deep.equal([])
-      const claimed = await asAuthor(request(app).get('/api/caws?filter=following&limit=50')).set('x-session-token', otherToken).expect(200)
-      expect(claimed.body.items).to.deep.equal([])
     })
-    it('still works for the verified session (own posts are included)', async () => {
-      const res = await asAuthor(request(app).get('/api/caws?filter=following&limit=50')).set('x-session-token', authorToken).expect(200)
+    it('lets the header pick the authors (the follow graph is public) but adds no FAILED post', async () => {
+      const header = await asAuthor(request(app).get(url)).expect(200)
+      expect(feedIds(header.body)).to.include(String(pollId))
+      expect(feedIds(header.body)).to.not.include(String(failedId))
+      const claimed = await asAuthor(request(app).get(url)).set('x-session-token', otherToken).expect(200)
+      expect(feedIds(claimed.body)).to.include(String(pollId))
+      expect(feedIds(claimed.body)).to.not.include(String(failedId))
+    })
+    it('adds the viewer\'s own FAILED post for the verified session', async () => {
+      const res = await asAuthor(request(app).get(url)).set('x-session-token', authorToken).expect(200)
       expect(feedIds(res.body)).to.include(String(pollId))
+      expect(feedIds(res.body)).to.include(String(failedId))
     })
   })
 

@@ -37,12 +37,17 @@ router.get('/', async (req, res) => {
     // currentUserId drives viewer-specific state and must be verified; the raw header
     // only feeds the block filter, which is unchanged.
     const headerUserId = Number(req.header('x-user-id')) || undefined
-    const currentUserId = await getVerifiedViewerId(req)
-    const blockedIds = headerUserId ? await getBlockedUserIds(headerUserId) : []
+    const [currentUserId, blockedIds] = await Promise.all([
+      getVerifiedViewerId(req),
+      headerUserId ? getBlockedUserIds(headerUserId) : Promise.resolve([] as number[]),
+    ])
 
-    // "Following" needs a verified viewer. Without one it would fall through to
-    // the public feed and show everyone's posts under the Following tab.
-    if (filter === 'following' && !currentUserId) {
+    // "Following" needs a viewer id. Without one it would fall through to the
+    // public feed and show everyone's posts under the Following tab. The follow
+    // graph is public, so the header alone may select the authors; the viewer's
+    // own PENDING / FAILED posts still need the verified session (statusConditions).
+    const followViewerId = currentUserId ?? headerUserId
+    if (filter === 'following' && !followViewerId) {
       return res.json({ items: [], nextCursor: undefined })
     }
 
@@ -74,7 +79,7 @@ router.get('/', async (req, res) => {
       : { status: 'SUCCESS' }
 
     // Apply filter-specific conditions along with status visibility
-    if (filter === 'following' && currentUserId) {
+    if (filter === 'following' && followViewerId) {
       // Express "posts by users I follow (or by me)" as a relation filter so
       // Postgres joins the Follow table internally. Previously we loaded the
       // full follow list into JS and passed it as an `IN (...)` clause — at 10k
@@ -87,11 +92,11 @@ router.get('/', async (req, res) => {
       // is currentUserId" — exactly "currentUser follows this author."
       const authorCondition = {
         OR: [
-          { userId: currentUserId }, // always include own posts
+          { userId: followViewerId }, // always include own posts
           {
             user: {
               follows: {
-                some: { followerId: currentUserId, action: 'FOLLOW' as const, status: 'SUCCESS' as const }
+                some: { followerId: followViewerId, action: 'FOLLOW' as const, status: 'SUCCESS' as const }
               }
             }
           }
@@ -332,8 +337,10 @@ router.post('/by-ids', async (req, res) => {
     // currentUserId drives viewer-specific state and must be verified; the raw header
     // only feeds the block filter, which is unchanged.
     const headerUserId = Number(req.header('x-user-id')) || undefined
-    const currentUserId = await getVerifiedViewerId(req)
-    const blockedIds = headerUserId ? await getBlockedUserIds(headerUserId) : []
+    const [currentUserId, blockedIds] = await Promise.all([
+      getVerifiedViewerId(req),
+      headerUserId ? getBlockedUserIds(headerUserId) : Promise.resolve([] as number[]),
+    ])
 
     const byIdsWhere: any = {
       id: { in: limitedIds },
