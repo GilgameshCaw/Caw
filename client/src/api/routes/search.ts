@@ -8,9 +8,34 @@ import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
+/**
+ * A HIDDEN caw embedded as a reply's or quote's parent keeps its id, author and
+ * status, but not its body, media or poll: GET /api/caws/:id answers 410 for the
+ * same row, and embedding it whole would hand the body back out through every
+ * result that points at it.
+ */
+function withoutHiddenParentBody(caw: any) {
+  const p = caw.parent
+  if (!p || p.status !== 'HIDDEN') return caw
+  return {
+    ...caw,
+    parent: {
+      ...p,
+      content: '',
+      imageData: null,
+      hasImage: false,
+      videoData: null,
+      hasVideo: false,
+      poll: null,
+      hashtags: [],
+      sourceLanguage: null,
+    },
+  }
+}
+
 async function shapeSearchedCaws(rawCaws: any[], currentUserId?: number) {
   const items = rawCaws.map((caw: any) => {
-    const shaped = shapeCaw(caw)
+    const shaped = shapeCaw(withoutHiddenParentBody(caw))
     return {
       ...shaped,
       videoData: caw.videoData,

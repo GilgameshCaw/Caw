@@ -42,6 +42,8 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
   let replyCawId: number
   let quoteCawId: number
   let blockedCawId: number
+  let hiddenReplyCawId: number
+  let hiddenQuoteCawId: number
   const originals: Record<string, any> = {}
 
   async function wipe() {
@@ -92,6 +94,14 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
     // a post by B that the viewer will block
     const blocked = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind from blocked author', action: 'CAW', cawonce: 3 } })
     blockedCawId = blocked.id
+    // a HIDDEN post with text, an image and a poll, replied to and quoted by B
+    const hidden = await prisma.caw.create({ data: { userId: authorA.tokenId, content: 'hidden parent body', action: 'CAW', cawonce: 4, status: 'HIDDEN', hasImage: true, imageData: 'img-hidden-secret' } })
+    await prisma.poll.create({ data: { cawId: hidden.id, options: ['Hidden yes', 'Hidden no'], optionImages: [], totalVotes: 0 } })
+    const hReply = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind hidden reply', action: 'CAW', cawonce: 4, originalCawId: hidden.id } })
+    hiddenReplyCawId = hReply.id
+    await prisma.reply.create({ data: { userId: authorB.tokenId, cawId: hidden.id, replyCawId: hReply.id } })
+    const hQuote = await prisma.caw.create({ data: { userId: authorB.tokenId, content: 'scfind hidden quote', action: 'RECAW', cawonce: 5, originalCawId: hidden.id } })
+    hiddenQuoteCawId = hQuote.id
   })
 
   afterEach(() => {
@@ -155,6 +165,48 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
     expect(p.hasLiked).to.equal(true)
     expect(byId(res.body.items, quoteCawId).isQuote).to.equal(true)
     expect(byId(res.body.items, replyCawId).isQuote).to.equal(false)
+  })
+
+  const expectMaskedHiddenParent = (c: any) => {
+    expect(c, 'result').to.exist
+    for (const parent of [c.parent, c.originalCaw]) {
+      expect(parent, 'embedded parent').to.exist
+      expect(parent.status).to.equal('HIDDEN')
+      expect(parent.user.displayName, 'author kept').to.equal('Author A')
+      expect(parent.content, 'content').to.equal('')
+      expect(parent.imageData ?? null, 'imageData').to.equal(null)
+      expect(parent.hasImage ?? false, 'hasImage').to.equal(false)
+      expect(parent.poll ?? null, 'poll').to.equal(null)
+    }
+  }
+
+  it('Prisma path: a HIDDEN parent of a reply or quote keeps id/author/status but not body, image or poll', async () => {
+    es.isAvailable = () => false
+    const res = await request(app).get('/api/search?q=scfind&type=caws')
+      .set('x-user-id', String(viewer.tokenId)).set('x-session-token', sessionToken).expect(200)
+    expectMaskedHiddenParent(byId(res.body.items, hiddenReplyCawId))
+    expectMaskedHiddenParent(byId(res.body.items, hiddenQuoteCawId))
+    expect(JSON.stringify(res.body)).to.not.include('hidden parent body')
+    expect(JSON.stringify(res.body)).to.not.include('img-hidden-secret')
+    expect(JSON.stringify(res.body)).to.not.include('Hidden yes')
+  })
+
+  it('Elasticsearch path: a HIDDEN parent is masked the same way', async () => {
+    es.isAvailable = () => true
+    es.search = async () => ({ hits: { hits: [{ _id: String(hiddenReplyCawId) }, { _id: String(hiddenQuoteCawId) }] } })
+    const res = await request(app).get('/api/search?q=scfind&type=caws')
+      .set('x-user-id', String(viewer.tokenId)).set('x-session-token', sessionToken).expect(200)
+    expectMaskedHiddenParent(byId(res.body.items, hiddenReplyCawId))
+    expectMaskedHiddenParent(byId(res.body.items, hiddenQuoteCawId))
+    expect(JSON.stringify(res.body)).to.not.include('img-hidden-secret')
+  })
+
+  it('a visible parent is unchanged (content, image and poll still present)', async () => {
+    es.isAvailable = () => false
+    const res = await request(app).get('/api/search?q=scfind&type=caws').expect(200)
+    const q = byId(res.body.items, quoteCawId)
+    expect(q.parent.content).to.include('scfind poll')
+    expect(q.parent.poll.options).to.deep.equal(['Yes', 'No'])
   })
 
   const expectNoViewerState = (p: any) => {
