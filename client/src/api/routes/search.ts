@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import { elasticsearchService } from '../../services/ElasticsearchService'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { shapeCaw, getCawIncludeConfig, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { getVerifiedViewerId } from '../shared/viewer'
 import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
@@ -122,7 +123,10 @@ router.get('/', async (req, res) => {
     const searchLimit = Math.min(Number(limit), 50)
     const searchOffset = Number(offset)
     const useES = elasticsearchService.isAvailable()
+    // Blocked-user filtering keeps using the header as before. Viewer-specific
+    // state (liked, bookmarked, poll vote) is only attached for a verified session.
     const currentUserId = Number(req.header('x-user-id')) || undefined
+    const viewerId = await getVerifiedViewerId(req)
 
     const results: any = {
       caws: [],
@@ -137,14 +141,14 @@ router.get('/', async (req, res) => {
 
       let cawResults
       if (useES) {
-        cawResults = await searchCawsWithES(query, cawLimit, cawOffset, currentUserId)
+        cawResults = await searchCawsWithES(query, cawLimit, cawOffset, viewerId)
       }
       // Only fall back to Prisma when ES is truly unavailable. Previously we
       // also fell back on 0 hits, but that re-scanned the Caw table on every
       // "no results" query — O(N) cost for a query that should be O(1). At 1M
       // caws a miss ran through the entire table with ILIKE.
       if (!cawResults) {
-        cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset, currentUserId)
+        cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset, viewerId)
       }
 
       results.caws = cawResults.items

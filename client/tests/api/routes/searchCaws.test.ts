@@ -3,6 +3,10 @@
  * other post lists (/api/caws, /api/bookmarks): author display name and avatar,
  * poll, viewer state (liked / bookmarked), and quote vs reply.
  *
+ * Viewer-specific state (liked / bookmarked / poll vote) is only attached for a
+ * verified session; x-user-id on its own is not trusted. The session is a real
+ * one in the test Redis (db 15, see isolatedEnv).
+ *
  * Writes rows and goes through the real route, so it needs a throwaway
  * database. It SKIPS unless DATABASE_URL points at a caw_test_* database.
  * Example (from client/):
@@ -31,6 +35,9 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
   let app: express.Express
   let prisma: any
   let es: any
+  let store: any
+  let sessionToken = ''
+  const addrOf = (tokenId: number) => '0x' + String(tokenId).padStart(40, '0')
   let pollCawId: number
   let replyCawId: number
   let quoteCawId: number
@@ -65,10 +72,14 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
     for (const u of [viewer, authorA, authorB]) {
       await prisma.user.create({ data: { id: u.tokenId, tokenId: u.tokenId, username: u.username, address: '0x' + String(u.tokenId).padStart(40, '0'), ...(('displayName' in u) ? { displayName: (u as any).displayName, avatarUrl: (u as any).avatarUrl, defaultAvatarId: (u as any).defaultAvatarId } : {}) } })
     }
-    // A: a post with a poll and a video, liked and bookmarked by the viewer
+    store = await import('../../../src/api/sessionStore')
+    ;({ token: sessionToken } = await store.createSession())
+    await store.addAuthorization(sessionToken, addrOf(viewer.tokenId), [viewer.tokenId])
+    // A: a post with a poll and a video, liked, bookmarked and voted on by the viewer
     const poll = await prisma.caw.create({ data: { userId: authorA.tokenId, content: 'scfind poll\n::poll:Yes:No::', action: 'CAW', cawonce: 1, hasVideo: true, videoData: 'vid-1' } })
     pollCawId = poll.id
-    await prisma.poll.create({ data: { cawId: poll.id, options: ['Yes', 'No'], optionImages: [], totalVotes: 0 } })
+    const pollRow = await prisma.poll.create({ data: { cawId: poll.id, options: ['Yes', 'No'], optionImages: [], totalVotes: 1 } })
+    await prisma.vote.create({ data: { pollId: pollRow.id, voterId: viewer.tokenId, optionIndex: 0, cawonce: 1 } })
     await prisma.like.create({ data: { userId: viewer.tokenId, cawId: poll.id, action: 'LIKE', pending: false } })
     await prisma.bookmark.create({ data: { userId: viewer.tokenId, cawId: poll.id } })
     // B replies to A's post (CAW with a parent + a Reply row)
@@ -89,6 +100,10 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
   })
 
   after(async () => {
+    if (store) {
+      await store.pruneTokenIdFromAllSessions(viewer.tokenId)
+      await store.deleteSession(sessionToken)
+    }
     if (prisma) { await wipe(); await prisma.$disconnect() }
   })
 
@@ -96,7 +111,8 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
 
   it('Prisma path (type=all): author name/avatar, poll, viewer state, quote vs reply, video', async () => {
     es.isAvailable = () => false
-    const res = await request(app).get('/api/search?q=scfind&type=all').set('x-user-id', String(viewer.tokenId)).expect(200)
+    const res = await request(app).get('/api/search?q=scfind&type=all')
+      .set('x-user-id', String(viewer.tokenId)).set('x-session-token', sessionToken).expect(200)
     const items = res.body.caws
     const p = byId(items, pollCawId)
     expect(p, 'poll post').to.exist
@@ -104,6 +120,7 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
     expect(p.poll.options).to.deep.equal(['Yes', 'No'])
     expect(p.hasLiked).to.equal(true)
     expect(p.isBookmarked).to.equal(true)
+    expect(p.poll.userVote).to.deep.include({ optionIndex: 0 })
     expect(p.videoData).to.equal('vid-1')
     expect(p.hasVideo).to.equal(true)
 
@@ -129,7 +146,8 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
   it('Elasticsearch path (type=caws): same shape, ES relevance order kept', async () => {
     es.isAvailable = () => true
     es.search = async () => ({ hits: { hits: [{ _id: String(quoteCawId) }, { _id: String(pollCawId) }, { _id: String(replyCawId) }] } })
-    const res = await request(app).get('/api/search?q=scfind&type=caws').set('x-user-id', String(viewer.tokenId)).expect(200)
+    const res = await request(app).get('/api/search?q=scfind&type=caws')
+      .set('x-user-id', String(viewer.tokenId)).set('x-session-token', sessionToken).expect(200)
     expect(res.body.items.map((i: any) => i.id)).to.deep.equal([String(quoteCawId), String(pollCawId), String(replyCawId)])
     const p = byId(res.body.items, pollCawId)
     expect(p.user.displayName).to.equal('Author A')
@@ -139,7 +157,36 @@ const TOKENS = [viewer.tokenId, authorA.tokenId, authorB.tokenId]
     expect(byId(res.body.items, replyCawId).isQuote).to.equal(false)
   })
 
-  it('blocked authors are still filtered out (type=caws)', async () => {
+  const expectNoViewerState = (p: any) => {
+    expect(p.hasLiked, 'hasLiked').to.equal(false)
+    expect(p.isBookmarked ?? false, 'isBookmarked').to.equal(false)
+    expect(p.poll.userVote ?? null, 'poll.userVote').to.equal(null)
+    // everything that is not viewer-specific is still there
+    expect(p.user.displayName).to.equal('Author A')
+    expect(p.poll.options).to.deep.equal(['Yes', 'No'])
+  }
+
+  it('x-user-id alone (no session) does not expose that user\'s liked / bookmarked / voted state', async () => {
+    es.isAvailable = () => false
+    const res = await request(app).get('/api/search?q=scfind&type=caws').set('x-user-id', String(viewer.tokenId)).expect(200)
+    expectNoViewerState(byId(res.body.items, pollCawId))
+  })
+
+  it('another user\'s session does not unlock the claimed user\'s state', async () => {
+    es.isAvailable = () => false
+    const { token } = await store.createSession()
+    await store.addAuthorization(token, addrOf(authorB.tokenId), [authorB.tokenId])
+    try {
+      const res = await request(app).get('/api/search?q=scfind&type=caws')
+        .set('x-user-id', String(viewer.tokenId)).set('x-session-token', token).expect(200)
+      expectNoViewerState(byId(res.body.items, pollCawId))
+    } finally {
+      await store.pruneTokenIdFromAllSessions(authorB.tokenId)
+      await store.deleteSession(token)
+    }
+  })
+
+  it('blocked authors are still filtered out (type=caws; still keyed on the header, unchanged)', async () => {
     es.isAvailable = () => false
     await prisma.block.create({ data: { blockerId: viewer.tokenId, blockedId: authorB.tokenId } })
     try {
