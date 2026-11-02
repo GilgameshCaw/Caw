@@ -20,8 +20,8 @@ const router = Router()
 // Google routes searchers to the right locale variant.
 //
 // Sitemap protocol: max 50k URLs, max 50MB uncompressed per file. Every item
-// becomes ALL_LOCALES.length <url> entries (about 2.8 KB each), so a single
-// file would reach 50 MB at roughly 850 items. /sitemap.xml is therefore a
+// becomes ALL_LOCALES.length <url> entries (about 2.8 KB each, more with a long
+// origin or slug), so a single file would reach 50 MB at roughly 850 items. /sitemap.xml is therefore a
 // sitemap index that points at child files:
 //
 //   /sitemap-static.xml        evergreen pages

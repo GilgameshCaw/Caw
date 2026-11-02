@@ -65,15 +65,17 @@ describe('sitemap shard ranges', () => {
 
   it('a hidden or removed row changes only its own shard', () => {
     // Shard membership depends on the id alone, never on the other rows.
-    const idsBefore = [10, 520, 530, 1100]
-    const idsAfter = idsBefore.filter((id) => id !== 520)
+    const W = SHARD_WIDTH
+    const removed = W + 20
+    const idsBefore = [10, removed, removed + 10, 2 * W + 100]
+    const idsAfter = idsBefore.filter((id) => id !== removed)
     const members = (ids: number[], n: number) => {
       const r = shardRange(n)
       return ids.filter((id) => id >= r.gte && id < r.lt)
     }
     expect(members(idsAfter, 0)).to.deep.equal(members(idsBefore, 0))
     expect(members(idsAfter, 2)).to.deep.equal(members(idsBefore, 2))
-    expect(members(idsAfter, 1)).to.deep.equal([530])
+    expect(members(idsAfter, 1)).to.deep.equal([removed + 10])
   })
 
   it('parseShardNumber accepts only plain decimal digits without leading zeros', () => {
@@ -86,28 +88,40 @@ describe('sitemap shard ranges', () => {
 })
 
 describe('sitemap size limits', () => {
-  it('a full shard stays under both protocol limits', () => {
-    // Worst case: every id in the range is a listed caw, each with a long
-    // multi-word slug (cawPath caps the slug length).
-    const longContent = 'lorem ipsum dolor sitamet consectetur adipiscing elit sed do eiusmod tempor '.repeat(5)
+  // Worst case: every id in the range is a listed caw, each with the longest
+  // slug cawPath produces and the longest username the frontend allows (24).
+  // The size of an item grows with the origin length (it is repeated in every
+  // hreflang alternate), so the check runs for several origins.
+  const longContent = 'lorem ipsum dolor sitamet consectetur adipiscing elit sed do eiusmod tempor '.repeat(5)
+  const fullShard = (origin: string): string => {
     const entries = []
     for (let i = 0; i < SHARD_WIDTH; i++) {
       entries.push({
-        bare: cawPath({ id: 9_999_999 - i, username: 'a_very_long_username_x', content: longContent }),
+        bare: cawPath({ id: 9_999_999 - i, username: 'u'.repeat(24), content: longContent }),
         lastmod: new Date('2026-11-02T00:00:00Z'),
         changefreq: 'monthly' as const,
         priority: 0.5,
       })
     }
-    const xml = renderUrlset(entries, 'https://a-fairly-long-host-name.example.com')
+    return renderUrlset(entries, origin)
+  }
+  const origin = (n: number) => 'https://' + 'h'.repeat(n - 8)
+
+  it('a full shard stays under the URL limit', () => {
+    const xml = fullShard(origin(43))
     const urls = (xml.match(/<url>/g) || []).length
     expect(urls).to.equal(SHARD_WIDTH * ALL_LOCALES.length)
     expect(urls).to.be.lessThan(MAX_URLS_PER_FILE)
-    expect(Buffer.byteLength(xml, 'utf8')).to.be.lessThan(MAX_BYTES_PER_FILE)
   })
 
-  it('SHARD_WIDTH × locales leaves headroom under the URL limit', () => {
-    expect(SHARD_WIDTH * ALL_LOCALES.length).to.be.lessThan(MAX_URLS_PER_FILE)
+  it('a full shard stays under the byte limit with a 20% margin for a 100-character origin', () => {
+    const bytes = Buffer.byteLength(fullShard(origin(100)), 'utf8')
+    expect(bytes).to.be.lessThan(MAX_BYTES_PER_FILE * 0.8)
+  })
+
+  it('a full shard stays under the byte limit for a 200-character origin', () => {
+    const bytes = Buffer.byteLength(fullShard(origin(200)), 'utf8')
+    expect(bytes).to.be.lessThan(MAX_BYTES_PER_FILE)
   })
 })
 
