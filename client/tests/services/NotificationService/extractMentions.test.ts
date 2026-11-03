@@ -35,4 +35,17 @@ describe('NotificationService.extractMentions', () => {
     expect(extract('https://medium.com/@maria/x thanks @bob')).to.deep.equal(['bob'])
     expect(extract('see (https://medium.com/@maria/x), @bob.')).to.deep.equal(['bob'])
   })
+
+  it('reads a post the way the feed does when a mention or tag is glued to a link', () => {
+    // the feed draws @https as a mention, then the rest as plain text
+    expect(extract('@https://x.com/a#b')).to.deep.equal(['https'])
+    // the feed draws $x1https as a tag, then @bob as a mention
+    expect(extract('$x1https://medium.com/@bob/a.b')).to.deep.equal(['bob'])
+    // a short link is one piece
+    expect(extract('https://caw.social/s/abc12 and @bob')).to.deep.equal(['bob'])
+  })
+
+  it('does not take a fullwidth ＠ for a mention (as before)', () => {
+    expect(extract('＠bob')).to.deep.equal([])
+  })
 })

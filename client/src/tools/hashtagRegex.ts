@@ -35,12 +35,36 @@ export const MENTION_REGEX = new RegExp(`${MENTION_SIGIL_CLASS}(${TAG_CHAR_CLASS
 const URL_REGEX_SOURCE = 'https?:\\/\\/[^\\s<>"\'{}|\\\\^`\\[\\]]+[^\\s<>"\'{}|\\\\^`\\[\\].,!?;:)\\]]';
 
 /**
- * `content` with every URL replaced by a space, for readers that look only for
- * `@name` mentions: the `@handle` in https://www.youtube.com/@name or
- * https://medium.com/@name is part of a link, not a mention, as on screen.
+ * Short links the feed renders as one piece (`/s/abc`, `https://host/s/abc`);
+ * the feed tries this alternative before a tag or a URL.
  */
-export function stripUrls(content: string): string {
-  return content.replace(new RegExp(URL_REGEX_SOURCE, 'gu'), ' ');
+const SHORT_URL_REGEX_SOURCE = '(?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?';
+
+/**
+ * Short links, mentions, URLs and tags in one left-to-right pass, the way the
+ * feed splits a post: whichever starts first wins. Group 1 is a mention.
+ * `@https://x.com/a#b` is the mention `@https`; the `@bob` in
+ * `$x1https://medium.com/@bob/a.b` is a mention (the tag `$x1https` comes
+ * first); the `@name` inside https://www.youtube.com/@name is part of a link.
+ */
+const MENTION_OR_URL_REGEX = new RegExp(
+  `${SHORT_URL_REGEX_SOURCE}|(${MENTION_SIGIL_CLASS}${TAG_CHAR_CLASS}+)|${URL_REGEX_SOURCE}|${HASHTAG_SIGIL_CLASS}${TAG_CHAR_CLASS}+`,
+  'gu',
+);
+
+/**
+ * The names that `@name` mentions in `content` refer to, in order of
+ * appearance, as the feed draws them. A name is the ASCII word characters
+ * after an ASCII `@` (so `@zinsanjpさん` is `zinsanjp`); not deduplicated.
+ */
+export function extractMentionNames(content: string): string[] {
+  const out: string[] = [];
+  for (const m of content.matchAll(MENTION_OR_URL_REGEX)) {
+    if (m[1] === undefined) continue;
+    const name = /^@(\w+)/.exec(m[1]);
+    if (name) out.push(name[1]);
+  }
+  return out;
 }
 
 /**
