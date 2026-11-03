@@ -21,14 +21,16 @@ export const MAX_BYTES_PER_FILE = 52_428_800
 /** Width of the id range covered by one child sitemap. A range of W ids holds
  * at most W items, and each item becomes ALL_LOCALES.length <url> entries,
  * every one carrying ALL_LOCALES.length + 1 hreflang alternates that repeat
- * the origin. A typical item is about 62 KB, but the worst case (longest
- * slug and username) is about 82 KB + 0.53 KB per character of the origin, so
- * the byte limit, not the URL limit, decides the width:
- *   W = 500 reaches 51.7 MB with a 43-character origin (limit 52.4 MB);
- *   W = 250 stays under the limit up to an origin of about 240 characters.
+ * the origin. A typical item is about 62 KB, but the worst case (10-digit id,
+ * 50-character slug, 24-character username, with lastmod/changefreq/priority)
+ * is about 211 KB for a 240-character origin, so the byte limit, not the URL
+ * limit, decides the width:
+ *   W = 250 reaches 52.8 MB with a 240-character origin (limit 52.4 MB);
+ *   W = 200 reaches 44.4 MB with the longest possible origin (261 characters:
+ *   a 253-character host plus "https://").
  * Ids have gaps (rows that are not SUCCESS, or were removed), so most ranges
  * hold far fewer items than W. */
-export const SHARD_WIDTH = 250
+export const SHARD_WIDTH = 200
 
 export function escapeXml(s: string): string {
   return s

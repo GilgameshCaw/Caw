@@ -88,16 +88,18 @@ describe('sitemap shard ranges', () => {
 })
 
 describe('sitemap size limits', () => {
-  // Worst case: every id in the range is a listed caw, each with the longest
-  // slug cawPath produces and the longest username the frontend allows (24).
-  // The size of an item grows with the origin length (it is repeated in every
-  // hreflang alternate), so the check runs for several origins.
-  const longContent = 'lorem ipsum dolor sitamet consectetur adipiscing elit sed do eiusmod tempor '.repeat(5)
+  // Worst case: every id in the range is a listed caw with a 10-digit id (the
+  // largest 32-bit ids), the longest slug cawPath produces (50 characters) and
+  // the longest username the frontend allows (24), with lastmod, changefreq
+  // and priority. The size of an item grows with the origin length (it is
+  // repeated in every hreflang alternate), so the check runs for several
+  // origins.
+  const MAX_SLUG = 50
   const fullShard = (origin: string): string => {
     const entries = []
     for (let i = 0; i < SHARD_WIDTH; i++) {
       entries.push({
-        bare: cawPath({ id: 9_999_999 - i, username: 'u'.repeat(24), content: longContent }),
+        bare: `/users/${'u'.repeat(24)}/caw/${2_147_483_000 + i}-${'s'.repeat(MAX_SLUG)}`,
         lastmod: new Date('2026-11-02T00:00:00Z'),
         changefreq: 'monthly' as const,
         priority: 0.5,
@@ -106,6 +108,13 @@ describe('sitemap size limits', () => {
     return renderUrlset(entries, origin)
   }
   const origin = (n: number) => 'https://' + 'h'.repeat(n - 8)
+
+  it('cawPath never produces a slug longer than the length assumed above', () => {
+    const long = 'lorem ipsum dolor sitamet consectetur adipiscing elit sed do eiusmod tempor '.repeat(5)
+    const path = cawPath({ id: 2_147_483_000, username: 'u'.repeat(24), content: long })
+    const slug = path.split('/caw/')[1].replace(/^\d+-?/, '')
+    expect(slug.length).to.be.at.most(MAX_SLUG)
+  })
 
   it('a full shard stays under the URL limit', () => {
     const xml = fullShard(origin(43))
@@ -119,8 +128,8 @@ describe('sitemap size limits', () => {
     expect(bytes).to.be.lessThan(MAX_BYTES_PER_FILE * 0.8)
   })
 
-  it('a full shard stays under the byte limit for a 200-character origin', () => {
-    const bytes = Buffer.byteLength(fullShard(origin(200)), 'utf8')
+  it('a full shard stays under the byte limit for the longest possible origin (253-character host + "https://")', () => {
+    const bytes = Buffer.byteLength(fullShard(origin(261)), 'utf8')
     expect(bytes).to.be.lessThan(MAX_BYTES_PER_FILE)
   })
 })

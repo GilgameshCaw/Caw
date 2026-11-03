@@ -77,7 +77,7 @@ router.get('/sitemap-static.xml', (_req: Request, res: Response) => {
   sendXml(res, renderUrlset(entries, publicUrl()))
 })
 
-router.get(/^\/sitemap-(users|caws)-(\d+)\.xml$/, async (req: Request, res: Response) => {
+router.get(/^\/sitemap-(users|caws)-([^/]+)\.xml$/, async (req: Request, res: Response) => {
   try {
     const kind = (req.params as any)[0] as 'users' | 'caws'
     const n = parseShardNumber((req.params as any)[1])
