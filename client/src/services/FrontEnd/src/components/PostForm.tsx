@@ -37,6 +37,7 @@ import { useAIProviderStore } from '~/store/aiProviderStore'
 import { useNavigate } from '~/utils/localizedRouter'
 import { HiOutlineChartBar } from 'react-icons/hi'
 import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
+import { extractMentionNames } from '~/../../../tools/hashtagRegex'
 
 // AI button icon: just sparkles.
 // Rationale: letters/frames read like a sticker and look off next to toolbar icons.
@@ -656,15 +657,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const avatars = useTokenDataStore(s => s.avatarsByTokenId);
   const { data: activeUserData } = useUserByUsername(activeToken?.username);
 
-  // Mirror of backend /@(\w+)/ pattern (catches both usernames and numeric IDs).
+  // Same reader as the backend (NotificationService.extractMentions): catches
+  // both usernames and numeric IDs, and skips an @handle inside a link, which
+  // the server does not notify either.
   const mentionedHandles = useMemo<string[]>(() => {
-    const re = /@(\w+)/g
     const seen = new Set<string>()
     const out: string[] = []
-    let m: RegExpExecArray | null
-    while ((m = re.exec(text)) !== null) {
-      const h = m[1].toLowerCase()
-      if (!seen.has(h)) { seen.add(h); out.push(m[1]) }
+    for (const name of extractMentionNames(text)) {
+      const h = name.toLowerCase()
+      if (!seen.has(h)) { seen.add(h); out.push(name) }
     }
     return out
   }, [text])

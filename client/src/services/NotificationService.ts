@@ -1,4 +1,5 @@
 import { prisma } from '../prismaClient'
+import { extractMentionNames } from '../tools/hashtagRegex'
 import { NotificationType, Prisma } from '@prisma/client'
 import { elasticsearchService } from './ElasticsearchService'
 
@@ -202,13 +203,9 @@ export class NotificationService {
    * MAX_MENTIONS_PER_CAW.
    */
   static extractMentions(content: string): string[] {
-    const mentionRegex = /@(\w+)/g
-    const mentions: string[] = []
-    let match
-
-    while ((match = mentionRegex.exec(content)) !== null) {
-      mentions.push(match[1])
-    }
+    // Read the way the feed splits a post (a link is one piece, so the @handle
+    // in https://www.youtube.com/@name is not a mention of the user "name").
+    const mentions = extractMentionNames(content)
 
     const unique = [...new Set(mentions)]
     return unique.slice(0, NotificationService.MAX_MENTIONS_PER_CAW)
