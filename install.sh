@@ -17,6 +17,7 @@
 #   CAW_REPO       — git remote (default: https://github.com/GilgameshCaw/Caw.git)
 #   CAW_USER       — system user that will own the install (default: caw)
 #   CAW_BRANCH     — branch to check out (default: master)
+#   CAW_EXPECT_COMMIT — optional reviewed full commit SHA; refuse a different branch tip
 #   SKIP_BOOTSTRAP=1 — skip apt installs (assume system deps already there)
 #   CAW_REUSE_ENV  — path to a previous install's .env to reuse values from.
 #                    Auto-detects $CAW_DIR/client/.env if it exists. Set to
@@ -206,6 +207,12 @@ fi
 CAW_REPO="${CAW_REPO:-https://github.com/GilgameshCaw/Caw.git}"
 CAW_USER="${CAW_USER:-caw}"
 CAW_BRANCH="${CAW_BRANCH:-master}"
+CAW_EXPECT_COMMIT="${CAW_EXPECT_COMMIT:-}"
+if [[ -n "$CAW_EXPECT_COMMIT" && ! "$CAW_EXPECT_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  err "CAW_EXPECT_COMMIT must be a full 40-character hexadecimal commit SHA."
+  exit 1
+fi
+CAW_EXPECT_COMMIT="${CAW_EXPECT_COMMIT,,}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
 
 # Ask up front for the domain — it determines the install directory and
@@ -717,10 +724,25 @@ step "Fetching repository"
 mkdir -p "$CAW_DIR"
 chown "$CAW_USER":"$CAW_USER" "$CAW_DIR"
 
+# BEGIN reviewed source selection
+verify_reviewed_source() {
+  local ref="$1" actual
+  actual="$(sudo -u "$CAW_USER" -H git -C "$CAW_DIR" rev-parse --verify "${ref}^{commit}")" || return 1
+  if [[ "$actual" != "$CAW_EXPECT_COMMIT" ]]; then
+    err "Source commit mismatch: expected $CAW_EXPECT_COMMIT, fetched $actual. Refusing checkout."
+    return 1
+  fi
+}
 if [[ -d "$CAW_DIR/.git" ]]; then
   log "Existing checkout — pulling latest..."
   sudo -u "$CAW_USER" -H git -C "$CAW_DIR" fetch origin "$CAW_BRANCH"
-  sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
+  if [[ -n "$CAW_EXPECT_COMMIT" ]]; then
+    # FETCH_HEAD is the just-fetched branch, not a potentially stale remote-tracking ref.
+    verify_reviewed_source FETCH_HEAD
+    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
+  else
+    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
+  fi
 elif [[ -n "$(ls -A "$CAW_DIR" 2>/dev/null)" ]]; then
   err "Install dir $CAW_DIR exists and is non-empty but not a git checkout."
   err "Move or remove it, or set CAW_DIR to a different path."
@@ -728,8 +750,16 @@ elif [[ -n "$(ls -A "$CAW_DIR" 2>/dev/null)" ]]; then
 else
   # git clone refuses to clone into an existing directory unless it's empty,
   # which is exactly what we have. Use the directory directly.
-  sudo -u "$CAW_USER" -H git clone --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
+  if [[ -n "$CAW_EXPECT_COMMIT" ]]; then
+    sudo -u "$CAW_USER" -H git clone --no-checkout --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
+    verify_reviewed_source HEAD
+    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
+  else
+    sudo -u "$CAW_USER" -H git clone --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
+  fi
 fi
+
+# END reviewed source selection
 
 ok "Repo at ${CAW_DIR}"
 
