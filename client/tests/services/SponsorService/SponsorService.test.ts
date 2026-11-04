@@ -251,6 +251,48 @@ function buildService(providerOrOpts: MockProviderOpts | BuildServiceOpts = {}):
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('SponsorService', () => {
+  describe('relayExecuteBatch', () => {
+    const ACCOUNT = '0x4444444444444444444444444444444444444444'
+    const calls = [{ to: ACCOUNT, value: 1_000n, data: '0x' }]
+
+    async function relay(codeAt: string) {
+      const svc = buildService()
+      const provider = (svc as any).provider
+      const sent: string[] = []
+      const broadcast = provider.broadcastTransaction
+      provider.getCode = async () => codeAt
+      provider.broadcastTransaction = (tx: string) => {
+        sent.push(tx)
+        return broadcast(tx)
+      }
+      const result = await svc.relayExecuteBatch(ACCOUNT, calls, 0n, '0x', 1_000n, true)
+      return { result, sent }
+    }
+
+    it('refuses an account that is a plain contract, before sending anything', async () => {
+      const { result, sent } = await relay('0x6080604052')
+      expect((result as any).error).to.equal('NOT_SMART_EOA')
+      expect(sent).to.have.length(0)
+    })
+
+    it('refuses an account with no code', async () => {
+      const { result, sent } = await relay('0x')
+      expect((result as any).error).to.equal('NOT_SMART_EOA')
+      expect(sent).to.have.length(0)
+    })
+
+    it('refuses an account delegated to a different implementation', async () => {
+      const { result, sent } = await relay('0xef0100' + '55'.repeat(20))
+      expect((result as any).error).to.equal('NOT_SMART_EOA')
+      expect(sent).to.have.length(0)
+    })
+
+    it('gets past the check for an account delegated to the SmartEOA', async () => {
+      const { result } = await relay('0xef0100' + MOCK_SMART_EOA_ADDRESS.slice(2).toUpperCase())
+      expect((result as any).error).to.not.equal('NOT_SMART_EOA')
+    })
+  })
+
   let authSig: Awaited<ReturnType<typeof buildAuthTupleSig>>
 
   before(async () => {
