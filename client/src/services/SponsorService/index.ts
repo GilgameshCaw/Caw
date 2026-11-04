@@ -135,6 +135,7 @@ export type SponsorErrorCode =
   | 'RECIPIENT_NOT_DELEGATED'
   | 'TX_REVERTED'
   | 'SIMULATION_FAILED'
+  | 'NOT_SMART_EOA'
   | 'INTERNAL'
   // ── Sponsor-code gating errors (validateSponsorCode) ──────────────────────
   | 'INVALID_CODE'
@@ -244,6 +245,7 @@ const REVERT_SUBSTRINGS: Record<SponsorErrorCode, string[]> = {
   RECIPIENT_NOT_DELEGATED: ['direct submit required', 'not delegated', 'code.length'],
   TX_REVERTED:             [],    // fallback for unmatched reverts
   SIMULATION_FAILED:       [],    // generated locally (pre-submit staticCall revert)
+  NOT_SMART_EOA:           [],    // generated locally, never from contract
   INTERNAL:                [],    // internal service errors
   // ── Sponsor-code errors: never returned from on-chain reverts ────────────
   INVALID_CODE:            [],
@@ -1100,6 +1102,16 @@ export class SponsorService {
         return {
           error: 'LZ_FEE_TOO_LARGE',
           detail: `value ${value} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
+      // The signature and every batch rule below are enforced by SmartEOA.executeBatch,
+      // so only relay to an account delegated to it. Any other contract at this address
+      // could keep the attached value and ignore the batch, including its fee leg.
+      const code = (await this.provider.getCode(smartEoaAddress)).toLowerCase()
+      if (code !== `0xef0100${this.smartEoaAddress.slice(2).toLowerCase()}`) {
+        return {
+          error: 'NOT_SMART_EOA',
+          detail: `${smartEoaAddress} is not delegated to the SmartEOA implementation`,
         }
       }
       // The msg.value the relayer attaches. CAW-repay batches forward the inner value
