@@ -253,25 +253,6 @@ const BootstrapBodySchema = z.object({
   signedRepayAmount:  bigintSchema.optional(),
 })
 
-const DepositBodySchema = z.object({
-  tokenId:        z.number().int().positive(),
-  amount:         bigintSchema,
-  networkId:      z.number().int().nonnegative(),
-  lzDestId:       z.number().int().nonnegative(),
-  lzTokenAmount:  bigintSchema,
-  permitNonce:    bigintSchema,
-  permitSig:      sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
-})
-
-const AuthenticateBodySchema = z.object({
-  tokenId:        z.number().int().positive(),
-  networkId:      z.number().int().nonnegative(),
-  lzDestId:       z.number().int().nonnegative(),
-  lzTokenAmount:  bigintSchema,
-  permitNonce:    bigintSchema,
-  permitSig:      sigHexSchema as z.ZodType<`0x${string}`>,  // L-2: cap at 8 KB
-})
-
 // ─── Helper to get real client IP ────────────────────────────────────────────
 
 function clientIp(req: import('express').Request): string {
@@ -610,39 +591,24 @@ router.post('/bootstrap', async (req, res) => {
   return res.status(200).json(result)
 })
 
-// ─── POST /api/sponsor/deposit ───────────────────────────────────────────────
+// ─── POST /api/sponsor/deposit, /api/sponsor/authenticate (retired) ──────────
+// Both sent depositForSponsored / authenticateSponsored from this node's sponsor
+// wallet, with the CAW and the LZ value coming from that wallet, for any token
+// whose owner signs a permit. Neither had an invite code or any record of whose
+// CAW the wallet holds. The FE no longer calls them (useSponsorDeposit and
+// useSponsorAuthenticate have no callers, and send `sig` where these schemas
+// required `permitSig`): a Pop-B deposit and a second-network authenticate go
+// through /execute, funded by the user (TopUpForm; depositFor / authenticate on
+// CawProfile).
+function retiredSponsorRoute(_req: import('express').Request, res: import('express').Response): void {
+  res.status(410).json({
+    error: 'ROUTE_RETIRED',
+    detail: 'This endpoint is no longer available. Deposits and authentication go through /api/sponsor/execute.',
+  })
+}
 
-router.post('/deposit', async (req, res) => {
-  const service = getSponsorService()
-  if (!service) {
-    return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
-  }
-
-  const ip = clientIp(req)
-  const allowed = await checkSponsorRateLimit(ip, 'deposit')
-  if (!allowed) {
-    return res.status(429).json({
-      error: 'RATE_LIMITED',
-      detail: `Deposit limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day`,
-    })
-  }
-
-  let params: z.infer<typeof DepositBodySchema>
-  try {
-    params = DepositBodySchema.parse(req.body)
-  } catch (e) {
-    const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
-    return res.status(400).json({ error: 'VALIDATION', detail })
-  }
-
-  const result = await service.sponsorDeposit(params)
-  if (isSponsorError(result)) {
-    const status = result.error === 'TREASURY_LOW' ? 503 : 400
-    return res.status(status).json(result)
-  }
-  void recordSponsorUse(ip, 'deposit')   // count only on success; fire-and-forget
-  return res.status(200).json(result)
-})
+router.post('/deposit', retiredSponsorRoute)
+router.post('/authenticate', retiredSponsorRoute)
 
 // ─── POST /api/sponsor/delegate-l2 ───────────────────────────────────────────
 // Delegate a passkey user's EOA to SmartEOA on L2 + enroll their passkey, so the
@@ -723,40 +689,6 @@ router.post('/delegate-l2', async (req, res) => {
       if (n === 1) await redis.expire(DELEGATE_L2_GLOBAL_KEY, RATE_WINDOW_SECONDS)
     } catch { /* non-fatal — op already succeeded */ }
   })()
-  return res.status(200).json(result)
-})
-
-// ─── POST /api/sponsor/authenticate ─────────────────────────────────────────
-
-router.post('/authenticate', async (req, res) => {
-  const service = getSponsorService()
-  if (!service) {
-    return res.status(503).json({ error: 'SPONSOR_DISABLED', detail: 'Sponsored minting is not enabled on this node' })
-  }
-
-  const ip = clientIp(req)
-  const allowed = await checkSponsorRateLimit(ip, 'authenticate')
-  if (!allowed) {
-    return res.status(429).json({
-      error: 'RATE_LIMITED',
-      detail: `Authenticate limit is ${DEPOSIT_AUTH_RATE_LIMIT} per IP per day`,
-    })
-  }
-
-  let params: z.infer<typeof AuthenticateBodySchema>
-  try {
-    params = AuthenticateBodySchema.parse(req.body)
-  } catch (e) {
-    const detail = e instanceof ZodError ? e.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ') : String(e)
-    return res.status(400).json({ error: 'VALIDATION', detail })
-  }
-
-  const result = await service.sponsorAuthenticate(params)
-  if (isSponsorError(result)) {
-    const status = result.error === 'TREASURY_LOW' ? 503 : 400
-    return res.status(status).json(result)
-  }
-  void recordSponsorUse(ip, 'authenticate')   // count only on success; fire-and-forget
   return res.status(200).json(result)
 })
 

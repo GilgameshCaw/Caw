@@ -594,7 +594,7 @@ describe('Sponsor route layer', () => {
     expect(res.body.error).to.equal('SPONSOR_DISABLED')
   })
 
-  it('deposit returns 503 when sponsor disabled', async () => {
+  it('deposit is retired (410)', async () => {
     const res = await request(app)
       .post('/api/sponsor/deposit')
       .send({
@@ -606,11 +606,11 @@ describe('Sponsor route layer', () => {
         permitNonce: '0',
         permitSig: '0x' + 'ee'.repeat(65),
       })
-    expect(res.status).to.equal(503)
-    expect(res.body.error).to.equal('SPONSOR_DISABLED')
+    expect(res.status).to.equal(410)
+    expect(res.body.error).to.equal('ROUTE_RETIRED')
   })
 
-  it('authenticate returns 503 when sponsor disabled', async () => {
+  it('authenticate is retired (410)', async () => {
     const res = await request(app)
       .post('/api/sponsor/authenticate')
       .send({
@@ -621,8 +621,8 @@ describe('Sponsor route layer', () => {
         permitNonce: '0',
         permitSig: '0x' + 'dd'.repeat(65),
       })
-    expect(res.status).to.equal(503)
-    expect(res.body.error).to.equal('SPONSOR_DISABLED')
+    expect(res.status).to.equal(410)
+    expect(res.body.error).to.equal('ROUTE_RETIRED')
   })
 
   it('bootstrap returns 400 on bad request body (missing fields)', async () => {
