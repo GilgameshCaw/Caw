@@ -1,0 +1,2050 @@
+{
+  "baseline": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+  "captured": "2026-11-05T03:46:06.884594+00:00",
+  "purpose": "Known-gap release review; not certification or exhaustive audit",
+  "rows": [
+    {
+      "id": "GOV-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/PathwayExpander.sol",
+        "symbol": "contract PathwayExpander",
+        "line": 72,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L72"
+      },
+      "source_sha256": "08ae7dec09bb0077706fc5d65704e4f6b5d2990e220080c64550d14ad72d870a",
+      "observation": "Owner retains peer/configuration/KYC expansion powers on master.",
+      "acceptance_evidence_or_decision_needed": "Sealed multi-chain operational exercise remains; no merged acceptance.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        }
+      ],
+      "evidence_boundary": "Public lifecycle, negative verifier and local EVM evidence; independent review exists.",
+      "policy_or_specification_boundary": "Sealed multi-chain operational exercise remains; no merged acceptance.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "LZ-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/scripts/lz-dvn-config.js",
+        "symbol": "reconcile",
+        "line": 309,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/scripts/lz-dvn-config.js#L309"
+      },
+      "source_sha256": "c4c51c730eae8595976841bca0136ffe3b9755cc9e69d87753b9fafccb31f2dc",
+      "observation": "Endpoint default libraries are a mutable external dependency; #276 pins selected libraries.",
+      "acceptance_evidence_or_decision_needed": "Pinning does not eliminate DVN/endpoint or chain liveness dependency.",
+      "existing_prs": [
+        {
+          "number": 276,
+          "head": "47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276"
+        },
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276#issuecomment-6032625377",
+          "date": "2026-10-07T06:51:08Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        }
+      ],
+      "evidence_boundary": "Pinned source plus bounded callback/verifier and local contract evidence.",
+      "policy_or_specification_boundary": "Pinning does not eliminate DVN/endpoint or chain liveness dependency.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "NET-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawNetworkManager.sol",
+        "symbol": "lockNetworkOwnership",
+        "line": 683,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawNetworkManager.sol#L683"
+      },
+      "source_sha256": "e70862ce87cc331f859539d62f67e6dfd079b35d68713d810ed2cfeca96db881",
+      "observation": "Fee/ownership locks do not remove all network-owner authority.",
+      "acceptance_evidence_or_decision_needed": "Terminal policy and canonical deployment integration unresolved.",
+      "existing_prs": [
+        {
+          "number": 334,
+          "head": "4206f96cb0c1d1d70617fba4eabeb5b852768ed6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334"
+        },
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6255525806",
+          "date": "2026-10-18T21:45:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6264310519",
+          "date": "2026-10-19T09:43:12Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6279728839",
+          "date": "2026-10-19T23:36:45Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6283239216",
+          "date": "2026-10-20T04:15:32Z"
+        }
+      ],
+      "evidence_boundary": "Source/authority tests; #334 is documentation, #342 behavioral draft.",
+      "policy_or_specification_boundary": "Terminal policy and canonical deployment integration unresolved.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "NET-02",
+      "classification": "DESIGN DECISION",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawNetworkManager.sol",
+        "symbol": "isAuthorizedSponsor",
+        "line": 204,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawNetworkManager.sol#L204"
+      },
+      "source_sha256": "e70862ce87cc331f859539d62f67e6dfd079b35d68713d810ed2cfeca96db881",
+      "observation": "On master, sponsor membership is owner-managed even after both locks. The #342 candidate would freeze existing membership when it clears the owner; that is a proposal, not deployed master behavior.",
+      "acceptance_evidence_or_decision_needed": "Explicitly choose treatment of existing exemptions and compromised sponsors; reproduce that choice through finalization and withdrawal/action paths.",
+      "existing_prs": [
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        },
+        {
+          "number": 334,
+          "head": "4206f96cb0c1d1d70617fba4eabeb5b852768ed6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6255525806",
+          "date": "2026-10-18T21:45:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6264310519",
+          "date": "2026-10-19T09:43:12Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6279728839",
+          "date": "2026-10-19T23:36:45Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6283239216",
+          "date": "2026-10-20T04:15:32Z"
+        }
+      ],
+      "evidence_boundary": "Explicit policy question already public in coordination comment 6250314486; bounded draft tests.",
+      "policy_or_specification_boundary": "Explicitly choose treatment of existing exemptions and compromised sponsors; reproduce that choice through finalization and withdrawal/action paths.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "NET-03",
+      "classification": "DESIGN DECISION",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawNetworkManager.sol",
+        "symbol": "setGasOverride",
+        "line": 698,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawNetworkManager.sol#L698"
+      },
+      "source_sha256": "e70862ce87cc331f859539d62f67e6dfd079b35d68713d810ed2cfeca96db881",
+      "observation": "Master retains capped, owner-only gas increases after both network locks. Clearing the owner in #342 would remove that recovery mechanism.",
+      "acceptance_evidence_or_decision_needed": "Demonstrate post-finalization message liveness under changed gas requirements without a replacement privileged key; agree any finite supported envelope.",
+      "existing_prs": [
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        },
+        {
+          "number": 334,
+          "head": "4206f96cb0c1d1d70617fba4eabeb5b852768ed6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6255525806",
+          "date": "2026-10-18T21:45:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6264310519",
+          "date": "2026-10-19T09:43:12Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6279728839",
+          "date": "2026-10-19T23:36:45Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6283239216",
+          "date": "2026-10-20T04:15:32Z"
+        }
+      ],
+      "evidence_boundary": "Pinned setter and existing coordination policy notice.",
+      "policy_or_specification_boundary": "Demonstrate post-finalization message liveness under changed gas requirements without a replacement privileged key; agree any finite supported envelope.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "NET-04",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfile.sol",
+        "symbol": "function withdrawFeesFor",
+        "line": 504,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L504"
+      },
+      "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
+      "observation": "Network owner may trigger a swap paying feeAddress; recipient has direct withdrawal rights.",
+      "acceptance_evidence_or_decision_needed": "Recipient economics, slippage and terminal authority need separate agreement.",
+      "existing_prs": [
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        },
+        {
+          "number": 334,
+          "head": "4206f96cb0c1d1d70617fba4eabeb5b852768ed6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6255525806",
+          "date": "2026-10-18T21:45:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6264310519",
+          "date": "2026-10-19T09:43:12Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6279728839",
+          "date": "2026-10-19T23:36:45Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6283239216",
+          "date": "2026-10-20T04:15:32Z"
+        }
+      ],
+      "evidence_boundary": "Extracted actual withdrawal methods with local EVM fixture tests; not full Profile/Uniswap.",
+      "policy_or_specification_boundary": "Recipient economics, slippage and terminal authority need separate agreement.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "EXPAND-01",
+      "classification": "DESIGN DECISION",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/PathwayExpander.sol",
+        "symbol": "onlyOwner",
+        "line": 55,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L55"
+      },
+      "source_sha256": "08ae7dec09bb0077706fc5d65704e4f6b5d2990e220080c64550d14ad72d870a",
+      "observation": "The current expansion path is owner-only. Sealing it removes that path. Indefinite addition of future chains is not itself an explicit requirement in the quoted sources.",
+      "acceptance_evidence_or_decision_needed": "Choose a sealed supported network set or specify and test permissionless deterministic expansion. Do not call a developer key necessary compliance.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        },
+        {
+          "number": 276,
+          "head": "47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276#issuecomment-6032625377",
+          "date": "2026-10-07T06:51:08Z"
+        }
+      ],
+      "evidence_boundary": "Public #221 reviewer discussion and Xubu response 6034988614; historical combined evidence.",
+      "policy_or_specification_boundary": "Choose a sealed supported network set or specify and test permissionless deterministic expansion. Do not call a developer key necessary compliance.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "BIND-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfileMinter.sol",
+        "symbol": "IMint CawProfile",
+        "line": 26,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L26"
+      },
+      "source_sha256": "31da6efc43d4be9233b1d5f1207642d4965489208f375871a1635a18b2283980",
+      "observation": "Minter Profile binding is internal and has no public getter.",
+      "acceptance_evidence_or_decision_needed": "Binding proof through constructor/deployment evidence or reviewed getter design.",
+      "existing_prs": [
+        {
+          "number": 332,
+          "head": "4345d928f769cca0de8caf1d4337d91362bfb7fe",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/332"
+        },
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/332#issuecomment-6264474930",
+          "date": "2026-10-19T09:52:34Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        }
+      ],
+      "evidence_boundary": "Public #332 negative verifier tests and explicitly documented binding limit.",
+      "policy_or_specification_boundary": "Binding proof through constructor/deployment evidence or reviewed getter design.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "HIST-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/RawEventsGatherer/index.ts",
+        "symbol": "startBlock",
+        "line": 17,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/RawEventsGatherer/index.ts#L17"
+      },
+      "source_sha256": "afea8391d6642d44fe46ecd868fa9a0c2bc6c9de7fbe63d8a71cd8884df6412f",
+      "observation": "Fresh-node floors can be absent or drawn from the wrong chain domain.",
+      "acceptance_evidence_or_decision_needed": "End-to-end empty-DB acquisition and reconstruction incomplete.",
+      "existing_prs": [
+        {
+          "number": 328,
+          "head": "38fbdd6d45c8e0079c17b35460811863f48163cb",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328"
+        },
+        {
+          "number": 329,
+          "head": "b57ce8e470778ef2034558a5ea770abe79dd54ac",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329"
+        },
+        {
+          "number": 242,
+          "head": "c3362e02ba6b19a40c7c8aa898d8e6f786e57928",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/242"
+        },
+        {
+          "number": 277,
+          "head": "583ad3af7bef3fffe5864c25dc44e0c83693ccd0",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/277"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245361627",
+          "date": "2026-10-18T03:50:48Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245723506",
+          "date": "2026-10-18T04:38:07Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6258915720",
+          "date": "2026-10-19T03:19:57Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6263887020",
+          "date": "2026-10-19T09:19:33Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6269097289",
+          "date": "2026-10-19T14:03:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6281531733",
+          "date": "2026-10-20T01:57:33Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6283135587",
+          "date": "2026-10-20T04:07:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6290414215",
+          "date": "2026-10-20T12:04:05Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6245369419",
+          "date": "2026-10-18T03:51:48Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6259476860",
+          "date": "2026-10-19T04:12:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6264782519",
+          "date": "2026-10-19T10:09:47Z"
+        }
+      ],
+      "evidence_boundary": "Independent reviewer reproductions plus source-derived/floor checks; no whole-system replay certification.",
+      "policy_or_specification_boundary": "End-to-end empty-DB acquisition and reconstruction incomplete.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "HIST-02",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/scripts/deploy.js",
+        "symbol": "l2DeployBlock",
+        "line": 2482,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/scripts/deploy.js#L2482"
+      },
+      "source_sha256": "77f175d31b244c4876ae3cb0a07c03d3c4dbbbee96a0c782e49458f692aa49d4",
+      "observation": "Master samples a post-phase head rather than every relevant contract creation receipt.",
+      "acceptance_evidence_or_decision_needed": "Receipt trust/source and all deployment generations still require validation.",
+      "existing_prs": [
+        {
+          "number": 328,
+          "head": "38fbdd6d45c8e0079c17b35460811863f48163cb",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328"
+        },
+        {
+          "number": 329,
+          "head": "b57ce8e470778ef2034558a5ea770abe79dd54ac",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245361627",
+          "date": "2026-10-18T03:50:48Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245723506",
+          "date": "2026-10-18T04:38:07Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6258915720",
+          "date": "2026-10-19T03:19:57Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6263887020",
+          "date": "2026-10-19T09:19:33Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6269097289",
+          "date": "2026-10-19T14:03:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6281531733",
+          "date": "2026-10-20T01:57:33Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6283135587",
+          "date": "2026-10-20T04:07:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6290414215",
+          "date": "2026-10-20T12:04:05Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6245369419",
+          "date": "2026-10-18T03:51:48Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6259476860",
+          "date": "2026-10-19T04:12:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6264782519",
+          "date": "2026-10-19T10:09:47Z"
+        }
+      ],
+      "evidence_boundary": "Receipt/chain metadata tests and tentencaw/nyaromesama review; current public draft.",
+      "policy_or_specification_boundary": "Receipt trust/source and all deployment generations still require validation.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "REPLAY-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/ChainSyncService/index.ts",
+        "symbol": "handleSessionCreated",
+        "line": 827,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/ChainSyncService/index.ts#L827"
+      },
+      "source_sha256": "3f5d367a8a8a2f52308b77c732db0cd9dcfdf6e48f7cd36fc8b258b95cfd9275",
+      "observation": "Primary writes may fail while checkpoint advances; simple retry exposes partial accounting state.",
+      "acceptance_evidence_or_decision_needed": "PR #349 remains draft: preserved failed-write/session-reset interleaving overwrote an intervening update. Current atomic candidate has modeled checks only; real PostgreSQL/Prisma rollback, concurrency and timeout behavior remain unproved.",
+      "existing_prs": [
+        {
+          "number": 349,
+          "head": "11610f6abb89d9f64ace4b753102f24696272582",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/349"
+        },
+        {
+          "number": 345,
+          "head": "e2462760e661dc389643b94d89b92dd4c14dc5e8",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/345"
+        },
+        {
+          "number": 290,
+          "head": "a08f47b24fdfdc109f9cc5d27d88c6665b27a20f",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/290"
+        },
+        {
+          "number": 311,
+          "head": "76fabc02076b9d3e04471ce1dd0e857e7cca25aa",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/311"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "Zinsanjp",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/345#issuecomment-6462634653",
+          "date": "2026-10-28T06:49:02Z"
+        }
+      ],
+      "evidence_boundary": "Public #349 failing interleaving retained; latest atomic candidate has modeled checks only.",
+      "policy_or_specification_boundary": "Real PostgreSQL/Prisma concurrency, timeout and throughput unverified.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "REPLAY-02",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/ChainSyncService/index.ts",
+        "symbol": "L2_EVENT_BOOTSTRAP_LOOKBACK",
+        "line": 807,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/ChainSyncService/index.ts#L807"
+      },
+      "source_sha256": "3f5d367a8a8a2f52308b77c732db0cd9dcfdf6e48f7cd36fc8b258b95cfd9275",
+      "observation": "ChainSyncService includes bounded lookbacks and special missing-row handling. Complete reorg/backfill recovery is not established by those mechanisms.",
+      "acceptance_evidence_or_decision_needed": "Inventory every cursor and derived table; test absent rows, crash/restart, overlap, duplicate delivery and rollback against real database transactions.",
+      "existing_prs": [
+        {
+          "number": 290,
+          "head": "a08f47b24fdfdc109f9cc5d27d88c6665b27a20f",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/290"
+        },
+        {
+          "number": 311,
+          "head": "76fabc02076b9d3e04471ce1dd0e857e7cca25aa",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/311"
+        },
+        {
+          "number": 329,
+          "head": "b57ce8e470778ef2034558a5ea770abe79dd54ac",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329"
+        },
+        {
+          "number": 345,
+          "head": "e2462760e661dc389643b94d89b92dd4c14dc5e8",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/345"
+        },
+        {
+          "number": 349,
+          "head": "11610f6abb89d9f64ace4b753102f24696272582",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/349"
+        },
+        {
+          "number": 346,
+          "head": "5b270d7c040cbc2baee5bdfa013878ac4ec18e12",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/346"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6245369419",
+          "date": "2026-10-18T03:51:48Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6259476860",
+          "date": "2026-10-19T04:12:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/329#issuecomment-6264782519",
+          "date": "2026-10-19T10:09:47Z"
+        },
+        {
+          "author": "Zinsanjp",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/345#issuecomment-6462634653",
+          "date": "2026-10-28T06:49:02Z"
+        }
+      ],
+      "evidence_boundary": "Existing PRs cover distinct failures; they do not prove complete reconstruction.",
+      "policy_or_specification_boundary": "Inventory every cursor and derived table; test absent rows, crash/restart, overlap, duplicate delivery and rollback against real database transactions.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "ZK-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/zk/sig-recovery/VKEY_REPRODUCIBILITY.md",
+        "symbol": "VKEY",
+        "line": 1,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/zk/sig-recovery/VKEY_REPRODUCIBILITY.md#L1"
+      },
+      "source_sha256": "7dd2a2e87a75692f63f44dbd02fe05ac52f9c4dc63d4e9f7a94e172db4d575cc",
+      "observation": "Committed vkey/current toolchain reproducibility discrepancy is publicly recorded.",
+      "acceptance_evidence_or_decision_needed": "Reproduce source/toolchain/ELF/vkey/contract linkage.",
+      "existing_prs": [
+        {
+          "number": 330,
+          "head": "f141ba65c3d84ae8a9ff777c9cb930eecaf04007",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330#issuecomment-6245377006",
+          "date": "2026-10-18T03:52:47Z"
+        }
+      ],
+      "evidence_boundary": "Independent reviewer ran wrapper tests; mismatch is intentional detection, not fixed prover build.",
+      "policy_or_specification_boundary": "Reproduce source/toolchain/ELF/vkey/contract linkage.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "DEPLOY-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/scripts/deploy.js",
+        "symbol": "LINKING_STEPS",
+        "line": 49,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/scripts/deploy.js#L49"
+      },
+      "source_sha256": "77f175d31b244c4876ae3cb0a07c03d3c4dbbbee96a0c782e49458f692aa49d4",
+      "observation": "Source-level sealing improvements do not establish a complete sealed multichain interrupted-recovery run.",
+      "acceptance_evidence_or_decision_needed": "No full independent multi-chain sealed/recovery exercise evidenced.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        },
+        {
+          "number": 276,
+          "head": "47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276"
+        },
+        {
+          "number": 332,
+          "head": "4345d928f769cca0de8caf1d4337d91362bfb7fe",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/332"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276#issuecomment-6032625377",
+          "date": "2026-10-07T06:51:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/332#issuecomment-6264474930",
+          "date": "2026-10-19T09:52:34Z"
+        }
+      ],
+      "evidence_boundary": "Local fixtures and limited real-contract checks; historical combinations pinned separately.",
+      "policy_or_specification_boundary": "No full independent multi-chain sealed/recovery exercise evidenced.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "MIGRATE-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfile.sol",
+        "symbol": "networkManager",
+        "line": 19,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L19"
+      },
+      "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
+      "observation": "Immutable old deployments cannot inherit fresh-generation finalization functions.",
+      "acceptance_evidence_or_decision_needed": "Generation-specific migration, user balances and continued access not designed.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        },
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        }
+      ],
+      "evidence_boundary": "Fresh-generation limitations explicitly public in proposal/evidence; source constructor bindings.",
+      "policy_or_specification_boundary": "Generation-specific migration, user balances and continued access not designed.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "DEP-01",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "install.sh",
+        "symbol": "CAW_REPO",
+        "line": 17,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L17"
+      },
+      "source_sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
+      "observation": "A public 15-surface operator-disappearance map now exists. Mapping a dependency is not demonstrating its replacement.",
+      "acceptance_evidence_or_decision_needed": "Run the mapped loss/replacement exercises without original operators, secrets or private state. Record surviving and unavailable functionality separately.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        },
+        {
+          "number": 276,
+          "head": "47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276"
+        },
+        {
+          "number": 274,
+          "head": "82428f5f2b7fad370069bc3680c3eaf94be16fbb",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/274"
+        },
+        {
+          "number": 328,
+          "head": "38fbdd6d45c8e0079c17b35460811863f48163cb",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328"
+        },
+        {
+          "number": 330,
+          "head": "f141ba65c3d84ae8a9ff777c9cb930eecaf04007",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330"
+        },
+        {
+          "number": 316,
+          "head": "cf765087a8b76b50b3cbd2f66b6d504515a82191",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/316"
+        },
+        {
+          "number": 305,
+          "head": "a9db052504ee7de80e7f3292ac44e818b02df9a6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/305",
+          "scope": "Bind archive submissions and challenge origin to source stream; tests attributed."
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/276#issuecomment-6032625377",
+          "date": "2026-10-07T06:51:08Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/274#issuecomment-6027877628",
+          "date": "2026-10-07T00:09:32Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245361627",
+          "date": "2026-10-18T03:50:48Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245723506",
+          "date": "2026-10-18T04:38:07Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6258915720",
+          "date": "2026-10-19T03:19:57Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6263887020",
+          "date": "2026-10-19T09:19:33Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6269097289",
+          "date": "2026-10-19T14:03:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6281531733",
+          "date": "2026-10-20T01:57:33Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6283135587",
+          "date": "2026-10-20T04:07:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6290414215",
+          "date": "2026-10-20T12:04:05Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330#issuecomment-6245377006",
+          "date": "2026-10-18T03:52:47Z"
+        }
+      ],
+      "evidence_boundary": "Private authoritative-vs-derived matrix; public rebuild checklist and PR disclosures are partial.",
+      "policy_or_specification_boundary": "Run the mapped loss/replacement exercises without original operators, secrets or private state. Record surviving and unavailable functionality separately.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR.",
+      "archive_challenge_review": "ARCHIVE_CHALLENGE_WINDOW_REVIEW.md: canonical-hash delivery alone does not stop finalization; actual-contract disappearance and independent-reader recovery tests pending.",
+      "archive_source_binding_review": "ARCHIVE_SOURCE_BINDING_REVIEW.md: wrong peered source can supply non-existence height; existing305 stream binding and reported local regressions; no independent rerun."
+    },
+    {
+      "id": "GOV-02",
+      "classification": "RELEASE DECISION",
+      "requirement": "M-R / R-R / M-D",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/scripts/deploy.js",
+        "symbol": "Deployment complete",
+        "line": 3023,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/scripts/deploy.js#L3023"
+      },
+      "source_sha256": "77f175d31b244c4876ae3cb0a07c03d3c4dbbbee96a0c782e49458f692aa49d4",
+      "observation": "A public builder-coordination proposal exists; its existence is not adoption of a release or governance process.",
+      "acceptance_evidence_or_decision_needed": "Publish the candidate, independent review, objections, participants and explicit release agreement. Do not substitute Xubu for an indispensable maintainer.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Public cawdevelopment/manifesto#5 proposes shared review and continuation; not consensus.",
+      "policy_or_specification_boundary": "Publish the candidate, independent review, objections, participants and explicit release agreement. Do not substitute Xubu for an indispensable maintainer.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "ECON-01",
+      "classification": "SPECIFICATION DECISION",
+      "requirement": "M-E / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawActions.sol",
+        "symbol": "function _getCost",
+        "line": 1267,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L1267"
+      },
+      "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "observation": "CawActions contains dynamic action-cost cap logic. A lower price is still a change from a fixed literal schedule.",
+      "acceptance_evidence_or_decision_needed": "Publish the exact one-action accounting and reconcile body/appendix conflicts. Record agreement on the dynamic rule rather than declaring it automatically compliant.",
+      "existing_prs": [
+        {
+          "number": 193,
+          "head": "873f39193caa55bd857c09eae9ccf88258174ba0",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/193"
+        },
+        {
+          "number": 112,
+          "head": "c30771952390c38822adb3f340b867588fcd32e9",
+          "state": "closed",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/112"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Source and accounting PRs show dynamic formula; no accepted-change evidence established.",
+      "policy_or_specification_boundary": "Publish the exact one-action accounting and reconcile body/appendix conflicts. Record agreement on the dynamic rule rather than declaring it automatically compliant.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "ECON-02",
+      "classification": "SPECIFICATION DECISION",
+      "requirement": "M-E / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfile.sol",
+        "symbol": "function payFee",
+        "line": 434,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L434"
+      },
+      "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
+      "observation": "CawProfile.payFee accrues the fee to feeAddress and the buy-and-burn address, returning twice the input fee. This is an intentional code path, not by itself evidence of theft.",
+      "acceptance_evidence_or_decision_needed": "Pin each deployed network beneficiary and explain its purpose against the no-special-benefit and economic clauses. Agree deviations and reproduce total charges and payouts.",
+      "existing_prs": [
+        {
+          "number": 334,
+          "head": "4206f96cb0c1d1d70617fba4eabeb5b852768ed6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334"
+        },
+        {
+          "number": 342,
+          "head": "39435a853dd4673ac39ce5b34f97f7f0ef1e6299",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/342"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6255525806",
+          "date": "2026-10-18T21:45:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6264310519",
+          "date": "2026-10-19T09:43:12Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6279728839",
+          "date": "2026-10-19T23:36:45Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/334#issuecomment-6283239216",
+          "date": "2026-10-20T04:15:32Z"
+        }
+      ],
+      "evidence_boundary": "Actual fee/withdrawal source and draft disclosures; not evidence all compensation is prohibited.",
+      "policy_or_specification_boundary": "Pin each deployed network beneficiary and explain its purpose against the no-special-benefit and economic clauses. Agree deviations and reproduce total charges and payouts.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "WITHDRAW-01",
+      "classification": "SPECIFICATION / AUTHORITY CONFLICT",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfileMinter.sol",
+        "symbol": "function checkWithdrawAllowed",
+        "line": 331,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L331"
+      },
+      "source_sha256": "31da6efc43d4be9233b1d5f1207642d4965489208f375871a1635a18b2283980",
+      "observation": "A profile with recorded gate state waits 180 days at level 1, or requires its configured verifier at level 2 and above with no time fallback. Profiles with mintedAt == 0 are unrestricted by this gate; other withdrawal checks still apply. unlockWithdraw requires the same time/verifier condition before clearing it.",
+      "acceptance_evidence_or_decision_needed": "Record an agreed exception to NFT-holder withdrawal access or redesign sponsorship without silently changing its economics. Reproduce verifier disappearance, NFT transfer and later deposits. #274 repairs wiring, not this policy.",
+      "existing_prs": [
+        {
+          "number": 274,
+          "head": "82428f5f2b7fad370069bc3680c3eaf94be16fbb",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/274"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/274#issuecomment-6027877628",
+          "date": "2026-10-07T00:09:32Z"
+        }
+      ],
+      "evidence_boundary": "Source trace Profile.withdrawTo -> checkWithdrawAllowed plus clear unlocked/time/verification branches.",
+      "policy_or_specification_boundary": "Record an agreed exception to NFT-holder withdrawal access or redesign sponsorship without silently changing its economics. Reproduce verifier disappearance, NFT transfer and later deposits. #274 repairs wiring, not this policy.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "NFT-01",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfile.sol",
+        "symbol": "function transferAndSync",
+        "line": 792,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L792"
+      },
+      "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
+      "observation": "transferAndSync transfers the NFT on L1 and queues/flushes updates to other chains. Cross-chain ownership propagation is asynchronous.",
+      "acceptance_evidence_or_decision_needed": "Reproduce old-owner, new-owner and session permissions during delayed, reordered and replayed transfer messages. No concrete exploit window is certified by source inspection alone.",
+      "existing_prs": [
+        {
+          "number": 351,
+          "head": "f93957bd47c3d96b9af030e4b6412a68ece97c60",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/351",
+          "scope": "Expected-owner binding for stale marketplace listings; also refund handling. Test claims attributed, not rerun."
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Pinned transfer/sync source; historical source finding, no fresh exploit proof.",
+      "policy_or_specification_boundary": "Reproduce old-owner, new-owner and session permissions during delayed, reordered and replayed transfer messages. No concrete exploit window is certified by source inspection alone.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR.",
+      "additional_source_review": "NFT_OWNER_STAMP_REVIEW.md: equal block stamps skip owner update; predicate model only; actual-contract regression pending.",
+      "stale_listing_review": "STALE_LISTING_OWNERSHIP_REVIEW.md: source corroborates missing expected-seller binding; #351 author reports contract regressions; independent rerun pending."
+    },
+    {
+      "id": "DM-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/FrontEnd/src/services/DmCryptoService.ts",
+        "symbol": "Enable DMs",
+        "line": 109,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/FrontEnd/src/services/DmCryptoService.ts#L109"
+      },
+      "source_sha256": "3330f5f67ab29a395a00926160ee1da25d411a3c8648974d13c0991fdc141bbe",
+      "observation": "DM key derives from wallet signature; replacement owner does not automatically receive historical key.",
+      "acceptance_evidence_or_decision_needed": "Transfer privacy/key continuity design; no central escrow assumption.",
+      "existing_prs": [
+        {
+          "number": 218,
+          "head": "422153af1e63856c3cc76b8daa7cd641ab8c99ff",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/218"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Existing #218 explicitly documents historical-message limitation; source key derivation.",
+      "policy_or_specification_boundary": "Transfer privacy/key continuity design; no central escrow assumption.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "DM-02",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/api/dmSenderSig.ts",
+        "symbol": "verifyDmSenderSig",
+        "line": 80,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/api/dmSenderSig.ts#L80"
+      },
+      "source_sha256": "62da61b8189928d04b1432bb02d96a2aea3a2c5de5871b005379f7f0f1ad9784",
+      "observation": "verifyDmSenderSig exists. A blanket claim that this implementation has no sender-signature checks is unsupported.",
+      "acceptance_evidence_or_decision_needed": "Trace identity registration, key binding, handshake and send/receive/sync enforcement across transfers and instances. Test rejected identities; do not equate one verifier function with end-to-end proof.",
+      "existing_prs": [
+        {
+          "number": 185,
+          "head": "54b842b77ff7099f3dd143fb2322efa823a8f676",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/185"
+        },
+        {
+          "number": 218,
+          "head": "422153af1e63856c3cc76b8daa7cd641ab8c99ff",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/218"
+        },
+        {
+          "number": 348,
+          "head": "60295f42b216d274c6ca1b4da09d7281d12cbc62",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/348"
+        },
+        {
+          "number": 350,
+          "head": "bdcdcea1ed9d0abacaf7f962054ab5e5068f36e9",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/350"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Current sender-signature source plus relay/identity PRs; identity envelope route needs full reconciliation.",
+      "policy_or_specification_boundary": "Trace identity registration, key binding, handshake and send/receive/sync enforcement across transfers and instances. Test rejected identities; do not equate one verifier function with end-to-end proof.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "DM-03",
+      "classification": "SPECIFICATION / EVIDENCE GAP",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/DmRelayService/index.ts",
+        "symbol": "relayDm",
+        "line": 159,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/DmRelayService/index.ts#L159"
+      },
+      "source_sha256": "c7ae3eb78c6056a12b8d8b4e4ccad1d2afdc304d6dedc4f83e00586027b48d66",
+      "observation": "dm.ts distinguishes per-user hiding from sender-authorized tombstones that null local ciphertext/history, and group edits replace recipient ciphertext without history. See DM_PERMANENCE_REVIEW.md. Independent archive survival was not tested.",
+      "acceptance_evidence_or_decision_needed": "Resolve permanence versus privacy/deletion and transferred-NFT history access. Demonstrate the agreed encrypted-data recovery without central key escrow.",
+      "existing_prs": [
+        {
+          "number": 218,
+          "head": "422153af1e63856c3cc76b8daa7cd641ab8c99ff",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/218"
+        },
+        {
+          "number": 350,
+          "head": "bdcdcea1ed9d0abacaf7f962054ab5e5068f36e9",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/350"
+        },
+        {
+          "number": 215,
+          "head": "6fe053260213145d693b496d924725636d65539b",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/215",
+          "scope": "Group deletion privacy correction; not adoption of protocol retention policy"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Pinned source trace only, no database/API/relay or global-erasure proof.",
+      "policy_or_specification_boundary": "Resolve permanence versus privacy/deletion and transferred-NFT history access. Demonstrate the agreed encrypted-data recovery without central key escrow.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "META-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-I / M-D / R-C",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/prisma/schema.prisma",
+        "symbol": "model User",
+        "line": 28,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/prisma/schema.prisma#L28"
+      },
+      "source_sha256": "22608b74f385d96b1becf3542851f507c84a6724dcee602ee75643a4aa1afc0d",
+      "observation": "User mixes on-chain identity with local profile metadata.",
+      "acceptance_evidence_or_decision_needed": "Which text fields are protocol data rather than frontend conveniences?",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Schema and off-chain profile route; images explicitly frontend-scoped.",
+      "policy_or_specification_boundary": "Which text fields are protocol data rather than frontend conveniences?",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "REGISTRY-01",
+      "classification": "SOURCE FINDING / OPEN PROOF",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/InstanceRegistryService/index.ts",
+        "symbol": "findContractDeployBlock",
+        "line": 26,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/InstanceRegistryService/index.ts#L26"
+      },
+      "source_sha256": "8664c8ea9ba251a0a4d885c533f2e9da66c1409f5c662d311462e5d58ae7e69e",
+      "observation": "Registry depends on historical code search; pruned-state limitation is already disclosed by #316.",
+      "acceptance_evidence_or_decision_needed": "Receipt-derived manager floor integration with ordering/completeness guarantees.",
+      "existing_prs": [
+        {
+          "number": 314,
+          "head": "3ff8dfd245728e43b8b688ad19330a6efa5e86c6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/314"
+        },
+        {
+          "number": 316,
+          "head": "cf765087a8b76b50b3cbd2f66b6d504515a82191",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/316"
+        },
+        {
+          "number": 328,
+          "head": "38fbdd6d45c8e0079c17b35460811863f48163cb",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245361627",
+          "date": "2026-10-18T03:50:48Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6245723506",
+          "date": "2026-10-18T04:38:07Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6258915720",
+          "date": "2026-10-19T03:19:57Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6263887020",
+          "date": "2026-10-19T09:19:33Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6269097289",
+          "date": "2026-10-19T14:03:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6281531733",
+          "date": "2026-10-20T01:57:33Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6283135587",
+          "date": "2026-10-20T04:07:08Z"
+        },
+        {
+          "author": "tentencaw",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/328#issuecomment-6290414215",
+          "date": "2026-10-20T12:04:05Z"
+        }
+      ],
+      "evidence_boundary": "Existing public #316 limitation and pinned source.",
+      "policy_or_specification_boundary": "Receipt-derived manager floor integration with ordering/completeness guarantees.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "FE-01",
+      "classification": "UNCONFIRMED CONCERN",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/FrontEnd/src/store/instanceStore.ts",
+        "symbol": "setActiveApiHost",
+        "line": 29,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/FrontEnd/src/store/instanceStore.ts#L29"
+      },
+      "source_sha256": "561733d819b5c3363e8db07ad6bacfde8aa51c7c0e1f64da67117e4c1cacf92e",
+      "observation": "The instance store has an active API host and node-discovery state. That alone does not prove an irreplaceable host or an exploitable authentication migration.",
+      "acceptance_evidence_or_decision_needed": "Trace callers and reproduce authenticated failover before claiming a defect or opening a patch.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Private source finding plus current store; no fresh browser reproduction.",
+      "policy_or_specification_boundary": "Trace callers and reproduce authenticated failover before claiming a defect or opening a patch.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "FE-02",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/src/services/FrontEnd/src/store/instanceStore.ts",
+        "symbol": "chunkedGetLogs",
+        "line": 211,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/FrontEnd/src/store/instanceStore.ts#L211"
+      },
+      "source_sha256": "561733d819b5c3363e8db07ad6bacfde8aa51c7c0e1f64da67117e4c1cacf92e",
+      "observation": "chunkedGetLogs uses bounded backward windows. A finite search is not proof that every historical instance can be discovered.",
+      "acceptance_evidence_or_decision_needed": "Test sparse history, empty windows and alternate providers with known older registrations; reconcile #177/#347 before a new change.",
+      "existing_prs": [
+        {
+          "number": 177,
+          "head": "61495f8065b80aa95e69251ded116d308d8e735e",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/177"
+        },
+        {
+          "number": 347,
+          "head": "d0b600a441e5f4a42147f811e215fea41e6dd206",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/347"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Source candidate; similarly named scanner PRs may target different paths.",
+      "policy_or_specification_boundary": "Test sparse history, empty windows and alternate providers with known older registrations; reconcile #177/#347 before a new change.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "DEPLOY-ID-01",
+      "classification": "PORTABILITY EVIDENCE GAP",
+      "requirement": "M-A / R-A",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/scripts/deploy.js",
+        "symbol": "EXPECTED_DEPLOYER",
+        "line": 127,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/scripts/deploy.js#L127"
+      },
+      "source_sha256": "77f175d31b244c4876ae3cb0a07c03d3c4dbbbee96a0c782e49458f692aa49d4",
+      "observation": "The canonical deployment script contains EXPECTED_DEPLOYER and a fixed-address check. This is script policy, not proof of an on-chain exclusive right to deploy.",
+      "acceptance_evidence_or_decision_needed": "Reconcile deterministic addresses, constructor wiring, beneficiaries and interrupted recovery for an independent deployer; do not merely delete the check.",
+      "existing_prs": [
+        {
+          "number": 221,
+          "head": "9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5942528609",
+          "date": "2026-10-01T23:16:53Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5971728551",
+          "date": "2026-10-03T17:36:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-5986754799",
+          "date": "2026-10-05T01:51:42Z"
+        },
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6032679622",
+          "date": "2026-10-07T06:55:18Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6040616652",
+          "date": "2026-10-07T14:54:43Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6071476266",
+          "date": "2026-10-09T00:03:59Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/221#issuecomment-6234194642",
+          "date": "2026-10-17T13:02:17Z"
+        }
+      ],
+      "evidence_boundary": "Source constant/check; nonce/CREATE2 assumptions prevent blind deletion.",
+      "policy_or_specification_boundary": "Reconcile deterministic addresses, constructor wiring, beneficiaries and interrupted recovery for an independent deployer; do not merely delete the check.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "BURN-01",
+      "classification": "SPECIFICATION DECISION",
+      "requirement": "M-E / R-C",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawProfileMinter.sol",
+        "symbol": "DEAD",
+        "line": 312,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L312"
+      },
+      "source_sha256": "31da6efc43d4be9233b1d5f1207642d4965489208f375871a1635a18b2283980",
+      "observation": "The minter recipient differs from the literal recipient specified in the manifesto.",
+      "acceptance_evidence_or_decision_needed": "Resolve token compatibility and the exact intended burn semantics publicly; do not silently substitute an address or claim economic equivalence proves literal compliance.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Private audit/source observation; no token burn compatibility test.",
+      "policy_or_specification_boundary": "Resolve token compatibility and the exact intended burn semantics publicly; do not silently substitute an address or claim economic equivalence proves literal compliance.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "CONTENT-01",
+      "classification": "NO NEW DEFECT ESTABLISHED",
+      "requirement": "M-R / R-R / M-D",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawActions.sol",
+        "symbol": "contract CawActions",
+        "line": 49,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L49"
+      },
+      "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "observation": "This register does not establish a protocol content-admin function. Frontend moderation is explicitly distinguished from protocol blocking in the manifesto.",
+      "acceptance_evidence_or_decision_needed": "Keep protocol admission/censorship tests separate from permissible frontend policy; do not infer universal censorship resistance.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Pinned contract inventory plus prior sweep; targeted validator filter review remains.",
+      "policy_or_specification_boundary": "Keep protocol admission/censorship tests separate from permissible frontend policy; do not infer universal censorship resistance.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "MEDIA-01",
+      "classification": "NO NEW DEFECT ESTABLISHED",
+      "requirement": "M-R / R-R / M-D",
+      "severity": "LOW (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "client/prisma/schema.prisma",
+        "symbol": "avatar",
+        "line": 42,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/prisma/schema.prisma#L42"
+      },
+      "source_sha256": "22608b74f385d96b1becf3542851f507c84a6724dcee602ee75643a4aa1afc0d",
+      "observation": "The manifesto explicitly permits frontend image hosting. Centralized optional image hosting alone is not a protocol violation.",
+      "acceptance_evidence_or_decision_needed": "Classify optional hosted bytes versus protocol records and disclose retention/replacement limits.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Manifesto appendix iii/i and schema; preserve URL/content boundary.",
+      "policy_or_specification_boundary": "Classify optional hosted bytes versus protocol records and disclose retention/replacement limits.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "ADMISSION-01",
+      "classification": "NO NEW DEFECT ESTABLISHED",
+      "requirement": "M-R / R-R / M-D",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawActions.sol",
+        "symbol": "_requireValidatorExists",
+        "line": 374,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L374"
+      },
+      "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "observation": "The reviewed validator-admission path uses a minted profile rather than a special developer allowlist.",
+      "acceptance_evidence_or_decision_needed": "Retain independent admission and liveness tests; no duplicate allowlist-removal patch is justified.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Pinned source and authoritative-state audit; archive stake admission separately recorded.",
+      "policy_or_specification_boundary": "Retain independent admission and liveness tests; no duplicate allowlist-removal patch is justified.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "PROXY-01",
+      "classification": "DEPLOYMENT EVIDENCE GAP",
+      "requirement": "M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/SmartEOA.sol",
+        "symbol": "contract SmartEOA",
+        "line": 29,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/SmartEOA.sol#L29"
+      },
+      "source_sha256": "5a7d2797ce8b4fb3ea2448abc45e1fe849f3f3b2ec045eaf5037d511fbfa769d",
+      "observation": "No production upgrade-proxy or multisig finding is established by this register. Absence of a pattern in selected source is not a deployed dependency audit.",
+      "acceptance_evidence_or_decision_needed": "Enumerate actual deployed bytecode, endpoints, delegatecall targets and external authority before claiming the complete system has no such dependency.",
+      "existing_prs": [],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Pinned source inventory; actual deployment bytecode/config still separate.",
+      "policy_or_specification_boundary": "Enumerate actual deployed bytecode, endpoints, delegatecall targets and external authority before claiming the complete system has no such dependency.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "RELEASE-01",
+      "classification": "EVIDENCE GAP",
+      "requirement": "M-D / M-A / R-A",
+      "severity": "HIGH (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "install.sh",
+        "symbol": "CAW_BRANCH",
+        "line": 19,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L19"
+      },
+      "source_sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
+      "observation": "Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls.",
+      "acceptance_evidence_or_decision_needed": "Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.",
+      "existing_prs": [
+        {
+          "number": 330,
+          "head": "f141ba65c3d84ae8a9ff777c9cb930eecaf04007",
+          "state": "open",
+          "draft": true,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330"
+        },
+        {
+          "number": 421,
+          "head": "b210d060e247684edaab2021c3d8653d0c885ee5",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/421"
+        }
+      ],
+      "independent_discussion_records": [
+        {
+          "author": "nyaromesama",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/330#issuecomment-6245377006",
+          "date": "2026-10-18T03:52:47Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/421#issuecomment-6594444751",
+          "date": "2026-11-03T03:09:27Z"
+        }
+      ],
+      "evidence_boundary": "Pinned installer and public rebuild checklist; full dependencies not recovered.",
+      "policy_or_specification_boundary": "Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    },
+    {
+      "id": "TEXT-01",
+      "classification": "SOURCE DISCREPANCY / SPECIFICATION DECISION",
+      "requirement": "M-E / R-C",
+      "severity": "MEDIUM (review prioritization, not exploit rating)",
+      "source": {
+        "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+        "path": "solidity/contracts/CawActions.sol",
+        "symbol": "420",
+        "line": 206,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L206"
+      },
+      "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "observation": "The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed.",
+      "acceptance_evidence_or_decision_needed": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
+      "existing_prs": [
+        {
+          "number": 380,
+          "head": "289ee65e47261ec595dbaf7427d362d307ad8048",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/380",
+          "scope": "Bot compatibility with compressed-byte cap; not adoption of protocol character semantics"
+        }
+      ],
+      "independent_discussion_records": [],
+      "evidence_boundary": "Actual pinned codec reproduction and exact source predicate, not EVM/API/validator/live-chain execution. See TEXT_LIMIT_REVIEW.md and scripts/review-text-limit.cjs.",
+      "policy_or_specification_boundary": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+    }
+  ],
+  "sources": {
+    "solidity/contracts/PathwayExpander.sol": {
+      "sha256": "08ae7dec09bb0077706fc5d65704e4f6b5d2990e220080c64550d14ad72d870a",
+      "bytes": 16366,
+      "git_blob": "676576768d837ae3906d9ded8f187f2bdd6ebbe4"
+    },
+    "solidity/scripts/lz-dvn-config.js": {
+      "sha256": "c4c51c730eae8595976841bca0136ffe3b9755cc9e69d87753b9fafccb31f2dc",
+      "bytes": 20277,
+      "git_blob": "bdbbe504ebf8cfe937cd285e59ff0fb7a5bb9381"
+    },
+    "solidity/contracts/CawNetworkManager.sol": {
+      "sha256": "e70862ce87cc331f859539d62f67e6dfd079b35d68713d810ed2cfeca96db881",
+      "bytes": 36558,
+      "git_blob": "84b5e63d72c9c6e2ea84cc3f93897f09e6e50d7b"
+    },
+    "solidity/contracts/CawProfile.sol": {
+      "sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
+      "bytes": 59578,
+      "git_blob": "25126d46e7f513aab860f30ee30a6784b85504c7"
+    },
+    "solidity/contracts/CawProfileMinter.sol": {
+      "sha256": "31da6efc43d4be9233b1d5f1207642d4965489208f375871a1635a18b2283980",
+      "bytes": 46753,
+      "git_blob": "3d9ccc8881390034bb2e705d0fff9e8e5a9f2e43"
+    },
+    "client/src/services/RawEventsGatherer/index.ts": {
+      "sha256": "afea8391d6642d44fe46ecd868fa9a0c2bc6c9de7fbe63d8a71cd8884df6412f",
+      "bytes": 14107,
+      "git_blob": "49b58e27ab5d042ef21a7b76a655c906b24e3c71"
+    },
+    "solidity/scripts/deploy.js": {
+      "sha256": "77f175d31b244c4876ae3cb0a07c03d3c4dbbbee96a0c782e49458f692aa49d4",
+      "bytes": 142758,
+      "git_blob": "fff0a4b99e602cab47f2e296caaab38ec1391f76"
+    },
+    "client/src/services/ChainSyncService/index.ts": {
+      "sha256": "3f5d367a8a8a2f52308b77c732db0cd9dcfdf6e48f7cd36fc8b258b95cfd9275",
+      "bytes": 59165,
+      "git_blob": "c0390b7ea542cde4472adaf13ef245bf950ebc45"
+    },
+    "solidity/zk/sig-recovery/VKEY_REPRODUCIBILITY.md": {
+      "sha256": "7dd2a2e87a75692f63f44dbd02fe05ac52f9c4dc63d4e9f7a94e172db4d575cc",
+      "bytes": 7524,
+      "git_blob": "6348b47789b0a9278f66accf50cb3ae41990622b"
+    },
+    "install.sh": {
+      "sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
+      "bytes": 48346,
+      "git_blob": "3de2123f6418ff0fa8fb959d5b1883b38aedb6d0"
+    },
+    "solidity/contracts/CawActions.sol": {
+      "sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "bytes": 93414,
+      "git_blob": "d85f0a3b8d374899c6e293bada5548a2b9e4e6fe"
+    },
+    "client/src/services/FrontEnd/src/services/DmCryptoService.ts": {
+      "sha256": "3330f5f67ab29a395a00926160ee1da25d411a3c8648974d13c0991fdc141bbe",
+      "bytes": 22583,
+      "git_blob": "2c750f6a33ca4884a63132c80a5052aca3becd72"
+    },
+    "client/src/api/dmSenderSig.ts": {
+      "sha256": "62da61b8189928d04b1432bb02d96a2aea3a2c5de5871b005379f7f0f1ad9784",
+      "bytes": 4762,
+      "git_blob": "76ce4ba86550194ffd627f78441236d6225882ea"
+    },
+    "client/src/services/DmRelayService/index.ts": {
+      "sha256": "c7ae3eb78c6056a12b8d8b4e4ccad1d2afdc304d6dedc4f83e00586027b48d66",
+      "bytes": 14579,
+      "git_blob": "ae00f1ad62494bf0da71d0d09e3a46c11458f2cb"
+    },
+    "client/prisma/schema.prisma": {
+      "sha256": "22608b74f385d96b1becf3542851f507c84a6724dcee602ee75643a4aa1afc0d",
+      "bytes": 46738,
+      "git_blob": "74015149474d0015e1e5e52f0157b8bdf5700597"
+    },
+    "client/src/services/InstanceRegistryService/index.ts": {
+      "sha256": "8664c8ea9ba251a0a4d885c533f2e9da66c1409f5c662d311462e5d58ae7e69e",
+      "bytes": 32074,
+      "git_blob": "f6a8a1db21bc142a9e9469385c823d3c087c1dcf"
+    },
+    "client/src/services/FrontEnd/src/store/instanceStore.ts": {
+      "sha256": "561733d819b5c3363e8db07ad6bacfde8aa51c7c0e1f64da67117e4c1cacf92e",
+      "bytes": 16031,
+      "git_blob": "e26a33da68cfb4fa8dbdf5236eebd0606ca7e29b"
+    },
+    "solidity/contracts/SmartEOA.sol": {
+      "sha256": "5a7d2797ce8b4fb3ea2448abc45e1fe849f3f3b2ec045eaf5037d511fbfa769d",
+      "bytes": 54163,
+      "git_blob": "1b58a146178a98b5fc97a8897dd69ad878189803"
+    }
+  },
+  "new_sponsor_pr_heads": {
+    "422": "5df2eecc83a7595d71275379cf589c4732b1c1b4",
+    "423": "ca1b1fdee79bf2240e1a6a7a9befd1459160385e"
+  },
+  "sponsored_funder_consent_review": {
+    "document": "SPONSORED_FUNDER_CONSENT_REVIEW.md",
+    "classification": "source-corroborated authorization gap; manifesto connection is interpretation",
+    "existing_pr": 306,
+    "head": "b564bc7ab06465e4fd7a2a9f4a40bf2f9d2f0697",
+    "state": "open",
+    "draft": true,
+    "tests": "author reported; not independently rerun",
+    "next": "Review and reproduce306; no duplicate PR"
+  }
+}
