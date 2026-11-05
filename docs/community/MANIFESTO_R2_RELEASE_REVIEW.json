@@ -1856,6 +1856,13 @@
           "state": "open",
           "draft": true,
           "url": "https://github.com/GilgameshCaw/Caw/pull/330"
+        },
+        {
+          "number": 421,
+          "head": "aa2f799431df42a94ff032633b85148e9efa58be",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/421"
         }
       ],
       "independent_discussion_records": [
@@ -1863,6 +1870,11 @@
           "author": "nyaromesama",
           "url": "https://github.com/GilgameshCaw/Caw/pull/330#issuecomment-6245377006",
           "date": "2026-10-18T03:52:47Z"
+        },
+        {
+          "author": "ahdmesh",
+          "url": "https://github.com/GilgameshCaw/Caw/pull/421#issuecomment-6594444751",
+          "date": "2026-11-03T03:09:27Z"
         }
       ],
       "evidence_boundary": "Pinned installer and public rebuild checklist; full dependencies not recovered.",

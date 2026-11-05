@@ -304,7 +304,7 @@ Observation: The installer defaults to mutable source and allows repository over
 
 **Open acceptance gate:** Reproduce exact-source enforcement including replacement refs, pin dependencies and build artifacts, and prove independent installation. #421 alone is not supply-chain closure.
 
-Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft)
+Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#421](https://github.com/GilgameshCaw/Caw/pull/421) `aa2f799431df42a94ff032633b85148e9efa58be` (open)
 
 ### account
 
