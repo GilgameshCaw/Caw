@@ -4,71 +4,22 @@ Artifacts to publish alongside V2 mainnet deploy + renounce, so the
 manifesto compliance claims are independently verifiable rather than
 asserted. Maps to a public peer-review checklist circulating in 2026-06.
 
-Status: pre-mainnet. Most items ship in one pass post-deploy.
+Status: pre-mainnet. Establish candidate behavior and independent testnet recovery before release; add final mainnet receipts afterward. Missing release evidence is not merely a documentation task.
 
 ---
 
-## 0. Already verified (contract audit, 2026-06)
+## 0. Source review is not deployment certification
 
-A direct read of the deployed Solidity (not the docs) confirms the manifesto's
-hard claims are honored in code. These are provable TODAY from the verified
-source; the items below (1–9) are about *publishing* the receipts, not about
-making the claims true:
+The earlier blanket assertion that all hard claims were already verified is not a release certificate. See the [consolidated manifesto/R2 review](community/MANIFESTO_R2_RELEASE_REVIEW.md) for exact baseline, open decisions and existing patches.
 
-- **No upgradeable proxies.** Zero `Initializable` / UUPS / transparent-proxy
-  patterns anywhere. All contracts are constructor-only state. The two
-  `delegatecall`s (CawProfile/Ledger `_lzReceive`) are self-calls to a
-  hard-coded allow-listed selector — the standard LZ OApp receive pattern, not
-  proxy dispatch.
-- **No multisig.** No multisig contract is in the trust path.
-- **Ownership renounced at deploy.** CawProfileLedger renounces in its
-  constructor (owner = `address(0)` from block 0); CawProfile / Archive / Relay
-  hand ownership to PathwayExpander at deploy; CawActions / Marketplace /
-  NetworkManager / SmartEOA never had an owner. The only retained key is
-  PathwayExpander (see §below — additions-only, can't touch anything deployed).
-- **No trading-fee / royalty extraction.** CawProfile implements no EIP-2981 /
-  royalty surface; CawProfileMarketplace is 0%-fee with no admin. The deployer
-  *cannot* route secondary-sale royalties to a private wallet — the appendix-a
-  concern is structurally impossible.
-- **NFT = the account, holding-not-staking.** `ownerOf(tokenId)` gates the CAW
-  wallet + DMs; transferring the NFT transfers the balance + account with it; no
-  staking lock.
-- **Burn-to-mint → dead address.** Username CAW is sent to
-  `0xdEAD…2069`, removed from circulation.
-- **Economic constants match the manifesto exactly.** Send=5000 (100%
-  stakepool), Like=2000 (80/20), ReCAW=4000 (50/50), Follow=30000 (80/20), and
-  every username burn tier (1e12 … 1e6) — verified line-by-line in
-  CawActions/CawProfileMinter. The optional ETH cap oracle only ever makes
-  actions *cheaper* than the baseline, never more expensive: an enhancement, not
-  a deviation.
-- **Gasless except mint/deposit/withdraw**, and **DMs free + off-chain** — both
-  hold.
+- PathwayExpander retains owner-mediated expansion on the reviewed master. Bounded additions are still special authority; #221 proposes closing it and #276 addresses endpoint-library defaults.
+- NetworkManager has **per-network owner authority**, even though it is not a globally Ownable contract. `addAuthorizedSponsor`, `removeAuthorizedSponsor` and `setGasOverride` remain owner-only after fee and ownership locks. #334 documents the boundary; #342 proposes terminal finalization with unresolved sponsor/gas tradeoffs.
+- CawProfile also permits the network owner to trigger fee swaps paying the recorded recipient. Recipient direct withdrawal remains separate. A full authority review must include this path and the agreed beneficiaries.
+- NFT ownership does not alone settle sponsored-profile withdrawal conditions, asynchronous transfer semantics or historical DM key access. Those require explicit source review, decisions and tests.
+- Economic caps, allocation interpretation and burn semantics require agreement where they differ from literal source wording. Calling a change an enhancement is not evidence of that agreement.
+- Proxy/multisig absence, immutable wiring, library/delegate settings and key renunciation must be verified against the complete deployed graph. Source patterns and bounded local tests cannot certify it.
 
-### The one retained key: PathwayExpander — bounded liveness, by design
-
-`PathwayExpander` (one per chain) is owned by the deployer EOA and is the *only*
-post-deploy admin surface in the protocol. This is intentional and is a
-**strength, not a hedge**:
-
-**Nothing already deployed can be touched.** The owner cannot swap an existing
-peer, rewrite an existing DVN config, rotate an existing KYC verifier, pull back
-ownership of any OApp, pause, freeze, censor, or access any user balance. Every
-existing user, fund, identity, pathway, and fee is frozen the instant it exists.
-
-**The only retained capability is *addition*:** wiring a NEW chain (peer + DVN
-config for an eid that has never been configured), or adding a NEW KYC verifier
-level that has never been set. All additions are one-shot (`OnlyOnce` /
-`_pathwayConfigured` / `LevelAlreadySet` guards) — they can fill an empty slot
-but never overwrite a filled one. Even a fully compromised expander key is
-bounded: a forged `setWithdrawable` from a maliciously-added new peer underflows
-`cawDepositedByPeer` (the new eid has $0 bridged through it), so existing vault
-funds are untouchable.
-
-This exists because **CAW must be able to grow unbounded** — a renounced
-contract can never onboard the next L2. A protocol that can't expand isn't
-decentralized; it's frozen. The deployer holds exactly one power — *let CAW
-reach new chains* — and that power cannot harm anyone already on it. It can
-itself be renounced at any time once the target chain set is final.
+These corrections do not allege malicious intent or invalidate every implementation feature. They remove unsupported completion language. Preserve the earlier text through Git history; the remaining backlog describes evidence to produce, not evidence already supplied.
 
 ---
 
@@ -111,14 +62,7 @@ generated snapshot.
 
 ## 3. Historical-sync deterministic reproducer  ⚠️ NOT BUILT
 
-> **Status: PROMISED PUBLICLY, NOT YET BUILT.** The public peer-review reply
-> references "a one-command historical-sync reproducer anyone can run." That
-> artifact does NOT exist on disk yet (no `reproducibility/` dir). Do not cite
-> it as available until the files below are committed and the acceptance test
-> passes. This is the one genuine engineering item on the list — items 1, 2, 9
-> are mechanical doc-generation once mainnet is up; this is the real work, and
-> it needs PINNED MAINNET addresses + start blocks to produce a stable hash, so
-> it lands AFTER the V2 mainnet deploy + renounce.
+> **Status: public reproduction remains an acceptance gate.** Do not cite the proposed artifact as available until the implementation and independent acceptance result are linked. Testnet can establish the procedure before mainnet; final addresses and receipts then bind the result to the released generation. Other authority, specification and deployment-evidence gaps remain in the consolidated register.
 
 The big one. Single command path:
 
@@ -265,9 +209,7 @@ operators, integrators, and security researchers.
 
 ## Ordering
 
-Items 1, 2, and 3 are the highest-impact. Items 1 + 2 are mechanical
-once V2 mainnet is up. Item 3 is the genuine engineering work and the
-piece that makes everything else credible.
+Items 1, 2, and 3 are the highest-impact. Items 1 + 2 require a complete authority/configuration graph and independently checked receipts. Item 3 requires a real recovery exercise. None is closed by a promised post-launch publication.
 
 Items 5, 6 are mostly coordination with existing operators — could ship
 before mainnet if Zin / tenten consent.
