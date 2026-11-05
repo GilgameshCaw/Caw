@@ -516,3 +516,8 @@ Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) hand
 ### NFT-01 same-block owner-stamp review
 
 [The source trace](NFT_OWNER_STAMP_REVIEW.md) identifies a possible local owner-mirror divergence when two transfers share a block stamp. Predicate-model evidence is not contract execution. Actual-contract reproduction and replay-safe design remain required before a behavioral patch.
+
+
+### DEP-01 / HIST-01 archive challenge-window boundary
+
+[The archive review](ARCHIVE_CHALLENGE_WINDOW_REVIEW.md) traces the two-day monitoring and resolution assumption, including delivered-but-unresolved challenges. Source inspection does not establish a live exploit or disqualify optimistic designs. Independent outage/recovery and reader-rejection evidence remain necessary; existing archive PRs are linked rather than duplicated.
