@@ -1479,7 +1479,7 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/DmRelayService/index.ts#L159"
       },
       "source_sha256": "c7ae3eb78c6056a12b8d8b4e4ccad1d2afdc304d6dedc4f83e00586027b48d66",
-      "observation": "DM relay persistence and replication depend on instance storage; no complete independent DM-recovery result is established by this register.",
+      "observation": "dm.ts distinguishes per-user hiding from sender-authorized tombstones that null local ciphertext/history, and group edits replace recipient ciphertext without history. See DM_PERMANENCE_REVIEW.md. Independent archive survival was not tested.",
       "acceptance_evidence_or_decision_needed": "Resolve permanence versus privacy/deletion and transferred-NFT history access. Demonstrate the agreed encrypted-data recovery without central key escrow.",
       "existing_prs": [
         {
@@ -1495,10 +1495,18 @@
           "state": "open",
           "draft": false,
           "url": "https://github.com/GilgameshCaw/Caw/pull/350"
+        },
+        {
+          "number": 215,
+          "head": "6fe053260213145d693b496d924725636d65539b",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/215",
+          "scope": "Group deletion privacy correction; not adoption of protocol retention policy"
         }
       ],
       "independent_discussion_records": [],
-      "evidence_boundary": "Architecture source; not an observed global loss event.",
+      "evidence_boundary": "Pinned source trace only, no database/API/relay or global-erasure proof.",
       "policy_or_specification_boundary": "Resolve permanence versus privacy/deletion and transferred-NFT history access. Demonstrate the agreed encrypted-data recovery without central key escrow.",
       "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
     },

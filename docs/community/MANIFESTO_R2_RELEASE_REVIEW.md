@@ -506,3 +506,8 @@ The R-01 commit-replacement case was reproduced against the prior installer and 
 
 
 Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) handles bot compatibility with the compressed-byte ceiling. Its reported Japanese-text tests are attributed, not rerun here. TEXT-01 asks the separate protocol-rule question; no duplicate bot patch is proposed.
+
+
+### DM-03 storage trace — 2026-11-05
+
+[The retention decision record](DM_PERMANENCE_REVIEW.md) distinguishes per-user hiding from nulling ciphertext/history and replacing group ciphertext. It links existing #215 rather than duplicating it. Source inspection alone does not prove every copy is lost or resolve whether the permanent-data promise includes these DMs. The title warning labels a compliance review, not a verdict that every row is a demonstrated violation.
