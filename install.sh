@@ -725,9 +725,18 @@ mkdir -p "$CAW_DIR"
 chown "$CAW_USER":"$CAW_USER" "$CAW_DIR"
 
 # BEGIN reviewed source selection
+# Pinning must not resolve local replacement objects during acquisition or reset.
+# Keep the legacy Git behavior unchanged when no reviewed commit is selected.
+source_git() {
+  if [[ -n "$CAW_EXPECT_COMMIT" ]]; then
+    sudo -u "$CAW_USER" -H git --no-replace-objects "$@"
+  else
+    sudo -u "$CAW_USER" -H git "$@"
+  fi
+}
 verify_reviewed_source() {
   local ref="$1" actual
-  actual="$(sudo -u "$CAW_USER" -H git -C "$CAW_DIR" rev-parse --verify "${ref}^{commit}")" || return 1
+  actual="$(source_git -C "$CAW_DIR" rev-parse --verify "${ref}^{commit}")" || return 1
   if [[ "$actual" != "$CAW_EXPECT_COMMIT" ]]; then
     err "Source commit mismatch: expected $CAW_EXPECT_COMMIT, fetched $actual. Refusing checkout."
     return 1
@@ -735,13 +744,13 @@ verify_reviewed_source() {
 }
 if [[ -d "$CAW_DIR/.git" ]]; then
   log "Existing checkout — pulling latest..."
-  sudo -u "$CAW_USER" -H git -C "$CAW_DIR" fetch origin "$CAW_BRANCH"
+  source_git -C "$CAW_DIR" fetch origin "$CAW_BRANCH"
   if [[ -n "$CAW_EXPECT_COMMIT" ]]; then
     # FETCH_HEAD is the just-fetched branch, not a potentially stale remote-tracking ref.
     verify_reviewed_source FETCH_HEAD
-    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
+    source_git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
   else
-    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
+    source_git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
   fi
 elif [[ -n "$(ls -A "$CAW_DIR" 2>/dev/null)" ]]; then
   err "Install dir $CAW_DIR exists and is non-empty but not a git checkout."
@@ -751,11 +760,11 @@ else
   # git clone refuses to clone into an existing directory unless it's empty,
   # which is exactly what we have. Use the directory directly.
   if [[ -n "$CAW_EXPECT_COMMIT" ]]; then
-    sudo -u "$CAW_USER" -H git clone --no-checkout --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
+    source_git clone --no-checkout --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
     verify_reviewed_source HEAD
-    sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
+    source_git -C "$CAW_DIR" reset --hard "$CAW_EXPECT_COMMIT"
   else
-    sudo -u "$CAW_USER" -H git clone --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
+    source_git clone --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
   fi
 fi
 
