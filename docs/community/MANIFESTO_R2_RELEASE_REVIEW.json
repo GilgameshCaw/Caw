@@ -1883,7 +1883,7 @@
     },
     {
       "id": "TEXT-01",
-      "classification": "SOURCE FINDING / OPEN PROOF",
+      "classification": "SOURCE DISCREPANCY / SPECIFICATION DECISION",
       "requirement": "M-E / R-C",
       "severity": "MEDIUM (review prioritization, not exploit rating)",
       "source": {
@@ -1894,12 +1894,12 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L206"
       },
       "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
-      "observation": "Solidity byte length and user-perceived characters differ.",
-      "acceptance_evidence_or_decision_needed": "UTF-8 bytes/code points/graphemes specification choice.",
+      "observation": "The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed.",
+      "acceptance_evidence_or_decision_needed": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
       "existing_prs": [],
       "independent_discussion_records": [],
-      "evidence_boundary": "Source byte-length condition; not proof which interpretation was agreed.",
-      "policy_or_specification_boundary": "UTF-8 bytes/code points/graphemes specification choice.",
+      "evidence_boundary": "Actual pinned codec reproduction and exact source predicate, not EVM/API/validator/live-chain execution. See TEXT_LIMIT_REVIEW.md and scripts/review-text-limit.cjs.",
+      "policy_or_specification_boundary": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
       "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
     }
   ],

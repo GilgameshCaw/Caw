@@ -424,9 +424,9 @@ Requirement: **M-E / R-C**. Priority: MEDIUM (review prioritization, not exploit
 
 Source: [`solidity/contracts/CawActions.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L206) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: Solidity byte length and user-perceived characters differ.
+Observation: The contract counts smltxt-compressed payload bytes. The pinned codec round-trips 600 ASCII characters into 227 bytes, below the 420-byte check. This is not only a Unicode-counting ambiguity; full transaction acceptance was not tested.
 
-**Open acceptance gate:** UTF-8 bytes/code points/graphemes specification choice.
+**Open acceptance gate:** Agree the decoded-character versus compressed-byte rule and protocol enforcement; preserve signed encoding and replay compatibility. See [the pinned reproduction](TEXT_LIMIT_REVIEW.md).
 
 Existing work: No bounded implementation fix established by this record.
 
@@ -498,3 +498,8 @@ For each response, identify the row, candidate commit, test/reproduction or publ
 ### #421 amendment — 2026-11-05 UTC
 
 The R-01 commit-replacement case was reproduced against the prior installer and addressed at `b210d060e247684edaab2021c3d8653d0c885ee5`. Eleven local cases and two expected failing controls are recorded in the linked PR. This updates RELEASE-01 only; full installation, independent build, concurrency and #237 integration remain unproved. The initial register capture remains historical.
+
+
+### TEXT-01 reproduction — 2026-11-05
+
+[The codec/source-predicate reproduction](TEXT_LIMIT_REVIEW.md) sharpens the prior generic byte/character concern: 421 ASCII characters compress to160 bytes and600 compress to227. All round-trip. No EVM, API, valid signed action or deployed transaction was exercised. R2 permits clear agreed changes; the review asks for the rule and enforcement decision, not a silent behavioral change.

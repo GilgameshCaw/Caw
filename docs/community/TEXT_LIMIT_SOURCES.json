@@ -1,0 +1,80 @@
+{
+  "base": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
+  "files": [
+    {
+      "path": "smltxt/dist/src/Base64.js",
+      "sha256": "9679a717d8b6fff129d9bec1866bb75a43e727c7ee990ef7883662669bb16a81",
+      "bytes": 793
+    },
+    {
+      "path": "smltxt/dist/src/BitArray.js",
+      "sha256": "bf7b61113856cada80a13a2f2335f4f9194b1da23223752d3783a0b7d886a8ca",
+      "bytes": 930
+    },
+    {
+      "path": "smltxt/dist/src/BitReader.js",
+      "sha256": "5b428cb9d0a0a3621734cc01a66c3167170453bdd0b28c1c23f1cb6b55732285",
+      "bytes": 944
+    },
+    {
+      "path": "smltxt/dist/src/BitWriter.js",
+      "sha256": "e9584b48d18ae1441cf8621b732d60f5c9e5100eb2e7371bdd90e2a33e716de6",
+      "bytes": 1327
+    },
+    {
+      "path": "smltxt/dist/src/ByteWriter.js",
+      "sha256": "1eeb8ef439df4124ebf95fd8e11b51071202fe86d77c7e48b10b297021362e24",
+      "bytes": 629
+    },
+    {
+      "path": "smltxt/dist/src/SmlContext.js",
+      "sha256": "93482f02f764efb0c42bb214a54d1f394af390d8e2bdf77addc90437abc0afc4",
+      "bytes": 1223
+    },
+    {
+      "path": "smltxt/dist/src/SmlTxt.js",
+      "sha256": "a20f831eb214176f77245fc31b343c379e6448254f32f591aa92cf5a27406133",
+      "bytes": 2834
+    },
+    {
+      "path": "smltxt/dist/src/TableBuilder.js",
+      "sha256": "d7f916b9da1ef21d3a2b598ec4c977f5ac74dcd03f50564f0ba4843afa59a6be",
+      "bytes": 1063
+    },
+    {
+      "path": "smltxt/dist/src/huff.js",
+      "sha256": "9c561bb5ae2da0c1f5ddb680ef2ec4ddbbc58943a0d7d86c00872e5467d00603",
+      "bytes": 2542
+    },
+    {
+      "path": "smltxt/dist/src/index.js",
+      "sha256": "0fc9a218baab59e27889f5c5540f9299c637621e94035beaa0da32c5183aaac1",
+      "bytes": 407
+    },
+    {
+      "path": "smltxt/dist/src/parseTableData.js",
+      "sha256": "1e1c3d3f7b8ae660a91a4e327883e56d3d9af0716cce7f287970471b20ea5668",
+      "bytes": 910
+    },
+    {
+      "path": "smltxt/dist/src/sizeEncoding.js",
+      "sha256": "0881f62f87b61bbee18a5b96a3e968e0f2b3a0bf6d3bf6385113ba8571e32542",
+      "bytes": 1514
+    },
+    {
+      "path": "smltxt/dist/src/tableData.js",
+      "sha256": "e9675481509754d95c4619bfc0156f9287c5a5f073feab45860c84e75ed1e1f9",
+      "bytes": 519628
+    },
+    {
+      "path": "solidity/contracts/CawActions.sol",
+      "sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
+      "bytes": 93414
+    },
+    {
+      "path": "client/src/api/routes/actions.ts",
+      "sha256": "ddc9c3a7ab28093e60740e223f9b03cfd85388fd5742b973052050f9c9cd652a",
+      "bytes": 118046
+    }
+  ]
+}
