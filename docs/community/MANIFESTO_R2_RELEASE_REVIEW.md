@@ -526,3 +526,8 @@ Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) hand
 ### NFT-01 stale marketplace listings — existing #351
 
 [The ownership review](STALE_LISTING_OWNERSHIP_REVIEW.md) traces settlement paying the recorded seller while transferring from the current approved NFT owner. Existing draft #351 addresses this and reports contract regressions; those results are attributed, not independently rerun here. Separate stale-listing cleanup is not a settlement ownership check. No duplicate PR.
+
+
+### DEP-01 / HIST-01 archive source binding — existing #305
+
+[The source-chain binding review](ARCHIVE_SOURCE_BINDING_REVIEW.md) traces incorrect slashing from a different peered source chain and records the existing305 fix and attributed regression evidence. This is distinct from the archive challenge-window assumption. No duplicate patch or new administrator authority is proposed.

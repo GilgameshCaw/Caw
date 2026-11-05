@@ -1119,6 +1119,14 @@
           "state": "open",
           "draft": false,
           "url": "https://github.com/GilgameshCaw/Caw/pull/316"
+        },
+        {
+          "number": 305,
+          "head": "a9db052504ee7de80e7f3292ac44e818b02df9a6",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/305",
+          "scope": "Bind archive submissions and challenge origin to source stream; tests attributed."
         }
       ],
       "independent_discussion_records": [
@@ -1216,7 +1224,8 @@
       "evidence_boundary": "Private authoritative-vs-derived matrix; public rebuild checklist and PR disclosures are partial.",
       "policy_or_specification_boundary": "Run the mapped loss/replacement exercises without original operators, secrets or private state. Record surviving and unavailable functionality separately.",
       "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR.",
-      "archive_challenge_review": "ARCHIVE_CHALLENGE_WINDOW_REVIEW.md: canonical-hash delivery alone does not stop finalization; actual-contract disappearance and independent-reader recovery tests pending."
+      "archive_challenge_review": "ARCHIVE_CHALLENGE_WINDOW_REVIEW.md: canonical-hash delivery alone does not stop finalization; actual-contract disappearance and independent-reader recovery tests pending.",
+      "archive_source_binding_review": "ARCHIVE_SOURCE_BINDING_REVIEW.md: wrong peered source can supply non-existence height; existing305 stream binding and reported local regressions; no independent rerun."
     },
     {
       "id": "GOV-02",
