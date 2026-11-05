@@ -511,3 +511,8 @@ Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) hand
 ### DM-03 storage trace — 2026-11-05
 
 [The retention decision record](DM_PERMANENCE_REVIEW.md) distinguishes per-user hiding from nulling ciphertext/history and replacing group ciphertext. It links existing #215 rather than duplicating it. Source inspection alone does not prove every copy is lost or resolve whether the permanent-data promise includes these DMs. The title warning labels a compliance review, not a verdict that every row is a demonstrated violation.
+
+
+### NFT-01 same-block owner-stamp review
+
+[The source trace](NFT_OWNER_STAMP_REVIEW.md) identifies a possible local owner-mirror divergence when two transfers share a block stamp. Predicate-model evidence is not contract execution. Actual-contract reproduction and replay-safe design remain required before a behavioral patch.

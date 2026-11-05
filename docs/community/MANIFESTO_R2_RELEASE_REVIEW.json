@@ -1385,7 +1385,8 @@
       "independent_discussion_records": [],
       "evidence_boundary": "Pinned transfer/sync source; historical source finding, no fresh exploit proof.",
       "policy_or_specification_boundary": "Reproduce old-owner, new-owner and session permissions during delayed, reordered and replayed transfer messages. No concrete exploit window is certified by source inspection alone.",
-      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
+      "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR.",
+      "additional_source_review": "NFT_OWNER_STAMP_REVIEW.md: equal block stamps skip owner update; predicate model only; actual-contract regression pending."
     },
     {
       "id": "DM-01",
