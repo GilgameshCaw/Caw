@@ -2,6 +2,10 @@ import React from 'react'
 import ModalWrapper from './ModalWrapper'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { usePasskeySignIn } from '~/hooks/usePasskeySignIn'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
@@ -20,29 +24,62 @@ const VerifyWalletModal: React.FC = () => {
   // /api/auth/verify because the server enforces all four lines.
   const { verify, isVerifying, error } = useVerifyWallet()
 
-  const handleVerify = async () => {
-    await ensureWallet(null, async () => {
-      const ok = await verify()
-      if (ok) {
-        close()
-        onSuccess?.()
-      }
-    })
+  const { population } = useWalletPopulation()
+  const recovery = useRecoveryContext()
+  const activeToken = useActiveToken()
+  const passkeySignIn = usePasskeySignIn()
+  // verify() needs a personal_sign, which a passkey can't produce. A Pop-B user
+  // signs in with the passkey instead, unless the recovery key is in memory.
+  const isPopB = population === 'B'
+  const signsWithPasskey = isPopB && !recovery.privateKey
+  const busy = isVerifying || passkeySignIn.busy
+  const disabled = busy || (signsWithPasskey && !activeToken?.username)
+
+  const finish = () => {
+    close()
+    onSuccess?.()
   }
+
+  const runVerify = async () => {
+    if (await verify()) finish()
+  }
+
+  const handleVerify = async () => {
+    if (signsWithPasskey) {
+      if (!activeToken?.username) return
+      try {
+        await passkeySignIn.signIn(activeToken.username)
+      } catch {
+        return // the hook surfaces the error
+      }
+      finish()
+      return
+    }
+    // Pop-B has no wagmi wallet to wait for: ensureWallet would navigate away.
+    if (isPopB) {
+      await runVerify()
+      return
+    }
+    await ensureWallet(null, runVerify)
+  }
+
+  const shownError = signsWithPasskey ? passkeySignIn.error : error
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={close} usePortal zIndex={9999}>
       <div className="p-6">
         <h2 className={`text-lg font-bold mb-3 ${themeText(isDark)}`}>
-          {t('verify_wallet.title')}
+          {signsWithPasskey ? t('passkey_signin.title') : t('verify_wallet.title')}
         </h2>
-        <p className={`text-sm mb-6 ${themeTextSecondary(isDark)}`}>
-          {t('verify_wallet.body')}
-        </p>
+        {!signsWithPasskey && (
+          <p className={`text-sm mb-6 ${themeTextSecondary(isDark)}`}>
+            {t('verify_wallet.body')}
+          </p>
+        )}
 
-        {error && (
+        {shownError && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-error-dim text-sm">
-            {error}
+            {shownError}
           </div>
         )}
 
@@ -55,14 +92,16 @@ const VerifyWalletModal: React.FC = () => {
           </button>
           <button
             onClick={handleVerify}
-            disabled={isVerifying}
+            disabled={disabled}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-              isVerifying
+              disabled
                 ? 'opacity-50 cursor-not-allowed'
                 : 'hover:opacity-90'
             } bg-yellow-500 text-black`}
           >
-            {isVerifying ? t('verify_wallet.btn.signing') : t('verify_wallet.btn.verify')}
+            {signsWithPasskey
+              ? (passkeySignIn.busy ? t('passkey_signin.signing') : t('passkey_signin.cta'))
+              : (isVerifying ? t('verify_wallet.btn.signing') : t('verify_wallet.btn.verify'))}
           </button>
         </div>
       </div>
