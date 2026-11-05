@@ -2036,5 +2036,15 @@
   "new_sponsor_pr_heads": {
     "422": "5df2eecc83a7595d71275379cf589c4732b1c1b4",
     "423": "ca1b1fdee79bf2240e1a6a7a9befd1459160385e"
+  },
+  "sponsored_funder_consent_review": {
+    "document": "SPONSORED_FUNDER_CONSENT_REVIEW.md",
+    "classification": "source-corroborated authorization gap; manifesto connection is interpretation",
+    "existing_pr": 306,
+    "head": "b564bc7ab06465e4fd7a2a9f4a40bf2f9d2f0697",
+    "state": "open",
+    "draft": true,
+    "tests": "author reported; not independently rerun",
+    "next": "Review and reproduce306; no duplicate PR"
   }
 }

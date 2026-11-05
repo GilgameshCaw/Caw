@@ -531,3 +531,8 @@ Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) hand
 ### DEP-01 / HIST-01 archive source binding — existing #305
 
 [The source-chain binding review](ARCHIVE_SOURCE_BINDING_REVIEW.md) traces incorrect slashing from a different peered source chain and records the existing305 fix and attributed regression evidence. This is distinct from the archive challenge-window assumption. No duplicate patch or new administrator authority is proposed.
+
+
+### Sponsored payer authorization — existing #306
+
+[The funding-consent review](SPONSORED_FUNDER_CONSENT_REVIEW.md) distinguishes recipient permits, payer allowances and origin-funder consent. It links the existing draft306 proposal without treating it as adopted policy or duplicating the patch. Manifesto relevance is an asset-control/security inference; the manifesto does not prescribe this API.
