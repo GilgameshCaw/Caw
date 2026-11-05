@@ -37,3 +37,8 @@ The [official manifesto](https://github.com/cawdevelopment/manifesto/blob/37399a
 Please identify whether the agreed rule is 420 decoded characters, 420 compressed bytes, or another explicitly defined measure, and where protocol-level enforcement belongs. A frontend limit alone would not establish the same invariant for independent callers. A compressed-byte ceiling may serve resource control, but should not be described as equivalent without agreement.
 
 Do not introduce a new trusted validator/admin as the convenient enforcement mechanism. Do not remove compression or alter signed-action encoding without cost, compatibility and historical-replay analysis. This PR records the discrepancy and asks for the rule; it does not silently choose one or claim a complete exploit.
+
+
+## Existing related work
+
+[PR #380](https://github.com/GilgameshCaw/Caw/pull/380), head `289ee65e47261ec595dbaf7427d362d307ad8048`, already identifies compressed-length handling in the CawAI bot and proposes clamping its output to the contract byte ceiling. Its author reports Japanese-text cases and bounded tests; those were not rerun here. This review does not claim the underlying byte/character distinction is new. The ASCII reproduction sharpens TEXT-01 and separates bot compatibility from agreement on the protocol character rule. Do not duplicate #380 or interpret its open patch as an accepted specification change.

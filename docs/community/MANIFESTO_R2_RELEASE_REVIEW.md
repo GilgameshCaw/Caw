@@ -503,3 +503,6 @@ The R-01 commit-replacement case was reproduced against the prior installer and 
 ### TEXT-01 reproduction — 2026-11-05
 
 [The codec/source-predicate reproduction](TEXT_LIMIT_REVIEW.md) sharpens the prior generic byte/character concern: 421 ASCII characters compress to160 bytes and600 compress to227. All round-trip. No EVM, API, valid signed action or deployed transaction was exercised. R2 permits clear agreed changes; the review asks for the rule and enforcement decision, not a silent behavioral change.
+
+
+Related existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) handles bot compatibility with the compressed-byte ceiling. Its reported Japanese-text tests are attributed, not rerun here. TEXT-01 asks the separate protocol-rule question; no duplicate bot patch is proposed.

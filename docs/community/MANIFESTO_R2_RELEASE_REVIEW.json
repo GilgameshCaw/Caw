@@ -1896,7 +1896,16 @@
       "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
       "observation": "The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed.",
       "acceptance_evidence_or_decision_needed": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
-      "existing_prs": [],
+      "existing_prs": [
+        {
+          "number": 380,
+          "head": "289ee65e47261ec595dbaf7427d362d307ad8048",
+          "state": "open",
+          "draft": false,
+          "url": "https://github.com/GilgameshCaw/Caw/pull/380",
+          "scope": "Bot compatibility with compressed-byte cap; not adoption of protocol character semantics"
+        }
+      ],
       "independent_discussion_records": [],
       "evidence_boundary": "Actual pinned codec reproduction and exact source predicate, not EVM/API/validator/live-chain execution. See TEXT_LIMIT_REVIEW.md and scripts/review-text-limit.cjs.",
       "policy_or_specification_boundary": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
