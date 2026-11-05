@@ -100,14 +100,16 @@ export function withSecret(url, secret) {
  *                          rather than re-importing).
  * @param {string} url      RPC URL.
  * @param {string} [secret] Optional API Key Secret (Basic Auth).
+ * @param {number} [chainId] Required when a signer will use this provider: a
+ *                          Wallet signs with the provider's chain id.
  * @returns {import('ethers').JsonRpcProvider}
  */
-export function makeProvider(ethers, url, secret) {
-  // Network.from(0) = "don't detect" — we never need the chainId for the
-  // read-only lookups the installer does, and disabling detection is what
-  // stops the retry-spam when the endpoint is unreachable / unauthorized.
+export function makeProvider(ethers, url, secret, chainId = 0) {
+  // Network.from(0) = "don't detect" — read-only lookups never need the
+  // chainId, and disabling detection is what stops the retry-spam when the
+  // endpoint is unreachable / unauthorized.
   return new ethers.JsonRpcProvider(withSecret(url, secret), undefined, {
-    staticNetwork: ethers.Network.from(0),
+    staticNetwork: ethers.Network.from(chainId),
   })
 }
 
