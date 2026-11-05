@@ -3,12 +3,57 @@ import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.j
 import { addr } from '../addresses.js'
 import { makeProvider, withProvider } from '../utils/rpc.js'
 
+// Mirrors struct CawNetwork in solidity/contracts/CawNetworkManager.sol. Order
+// and field count both matter: they decide getNetwork's decoding and the
+// NetworkCreated topic.
+const CAW_NETWORK_TUPLE = 'tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling, uint256 tipTargetWei, uint256 tipCeilingWei)'
+
 // Just the bits of CawNetworkManager we use here.
 const NETWORK_MANAGER_ABI = [
-  'function createNetwork(string name, address feeAddress, uint32 storageChainEid, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public',
-  'function getNetwork(uint32 networkId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock))',
-  'event NetworkCreated(uint32 indexed networkId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock) network)',
+  'function createNetwork(string name, address feeAddress, uint32 storageChainEid, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling, uint256 tipCeilingWei) public payable',
+  `function getNetwork(uint32 networkId) view returns (${CAW_NETWORK_TUPLE})`,
+  'function cawProfile() view returns (address)',
+  'function nextNetworkId() view returns (uint32)',
+  `event NetworkCreated(uint32 indexed networkId, ${CAW_NETWORK_TUPLE} network)`,
 ]
+
+const CAW_PROFILE_ABI = [
+  'function mainnetLzId() view returns (uint32)',
+  'function lzQuote(uint32 cawNetworkId, bytes4 selector, uint256 n, bytes payload, uint32 lzDestId, bool _payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee) quote)',
+]
+
+// A provider without a real chain id would make the Wallet sign for chain 0.
+const L1_CHAIN_IDS = { testnet: 11155111, mainnet: 1 }
+
+// CawNetworkManager.MAX_TIP_TARGET_WEI. createNetwork reverts above this.
+const MAX_TIP_CEILING_WEI = 5_000_000_000_000n
+// tipCeilingWei used for the first Networks in solidity/scripts/deploy.js.
+const DEFAULT_TIP_CEILING_WEI = '500000000000'
+
+/**
+ * createNetwork ends in CawProfile.broadcastTipTarget, which forwards msg.value
+ * as the LayerZero fee when the storage chain is an L2. Returns the wei to
+ * attach: the quote plus 20% (lzSend refunds the excess to the sender), or 0
+ * when no message is sent (CawProfile not wired yet, or L1 as storage chain).
+ */
+async function quoteCreateNetworkLzFee(ethers, cm, provider, storageChainEid, tipCeilingWei) {
+  const cawProfileAddress = await cm.cawProfile()
+  if (cawProfileAddress === ethers.ZeroAddress) return 0n
+
+  const cawProfile = new ethers.Contract(cawProfileAddress, CAW_PROFILE_ABI, provider)
+  if (Number(await cawProfile.mainnetLzId()) === storageChainEid) return 0n
+
+  const networkId = await cm.nextNetworkId()
+  // Same bytes as CawProfile.broadcastTipTarget's encodeWithSelector. The fee
+  // depends on the size, so seq can be any value.
+  const selector = ethers.id('setNetworkTipTarget(uint32,uint256,uint64)').slice(0, 10)
+  const payload = ethers.concat([
+    selector,
+    ethers.AbiCoder.defaultAbiCoder().encode(['uint32', 'uint256', 'uint64'], [networkId, tipCeilingWei, 1n]),
+  ])
+  const quote = await cawProfile.lzQuote(networkId, selector, 0, payload, storageChainEid, false)
+  return (quote.nativeFee * 120n) / 100n
+}
 
 // Storage-chain options the CLI surfaces during createNetwork. Each entry
 // must have CawProfileLedger + CawActions deployed (or planned). The actual
@@ -62,7 +107,7 @@ export async function createNetworkFlow(ctx) {
   // makeProvider injects the API Key Secret (Basic Auth) + disables network
   // background-polling. A bare provider here would 403 on a secret-required
   // project and then spam "failed to detect network" forever.
-  const provider = makeProvider(ethers, l1RpcUrl, l1RpcSecret)
+  const provider = makeProvider(ethers, l1RpcUrl, l1RpcSecret, L1_CHAIN_IDS[network])
   const wallet = new ethers.Wallet(validatorPrivateKey, provider)
 
   // Show the operator who's about to spend gas + own the new Network.
@@ -155,21 +200,46 @@ export async function createNetworkFlow(ctx) {
     'mintFee actually costs the user 0.002 ETH (half goes to your fee address',
     'as CAW after withdrawal; half is burned).',
     '',
-    `Defaults below are reasonable testnet values — you can change them later`,
-    'with CawNetworkManager.setFees(). All can be 0 if you want a free Network.',
+    `${brand('Each amount is also that fee\'s permanent ceiling.')} You can lower a fee later`,
+    'with CawNetworkManager.setFees(), but never raise it above what you enter',
+    'here. A fee entered as 0 stays free forever.',
   ])
 
-  const { mintFeeEth, depositFeeEth, withdrawFeeEth, authFeeEth } = await inquirer.prompt([
+  const { mintFeeEth, depositFeeEth, withdrawFeeEth, authFeeEth, tipCeilingWeiInput } = await inquirer.prompt([
     { type: 'input', name: 'mintFeeEth',     message: 'Mint fee (ETH, charged when minting a username):',           default: '0.001' },
     { type: 'input', name: 'depositFeeEth',  message: 'Deposit fee (ETH, charged when depositing CAW to L2):',      default: '0' },
     { type: 'input', name: 'withdrawFeeEth', message: 'Withdraw fee (ETH, charged when withdrawing CAW back to L1):', default: '0' },
     { type: 'input', name: 'authFeeEth',     message: 'Auth fee (ETH, charged when authenticating to a new Network):', default: '0' },
+    {
+      type: 'input',
+      name: 'tipCeilingWeiInput',
+      message: `Validator tip ceiling (wei, max ${MAX_TIP_CEILING_WEI}; can be lowered later, never raised):`,
+      default: DEFAULT_TIP_CEILING_WEI,
+      validate: (input) => {
+        const v = String(input).trim()
+        if (!/^\d+$/.test(v)) return 'Enter a whole number of wei'
+        return BigInt(v) <= MAX_TIP_CEILING_WEI ? true : `Must be at most ${MAX_TIP_CEILING_WEI}`
+      },
+    },
   ])
   const toWei = (eth) => ethers.parseEther(String(eth || '0').trim())
   const mintFee = toWei(mintFeeEth)
   const depositFee = toWei(depositFeeEth)
   const withdrawFee = toWei(withdrawFeeEth)
   const authFee = toWei(authFeeEth)
+  const tipCeilingWei = BigInt(String(tipCeilingWeiInput).trim())
+
+  const networkManagerAddress = addr('NETWORK_MANAGER_ADDRESS')
+  const cm = new ethers.Contract(networkManagerAddress, NETWORK_MANAGER_ABI, wallet)
+
+  // ---- LayerZero fee for the initial tip target ----
+  let lzFee
+  try {
+    lzFee = await quoteCreateNetworkLzFee(ethers, cm, provider, storageChainEid, tipCeilingWei)
+  } catch (e) {
+    console.log(err(`  Could not quote the LayerZero fee: ${e?.shortMessage || e?.message || e}`))
+    return null
+  }
 
   // ---- Confirm ----
   console.log()
@@ -181,6 +251,8 @@ export async function createNetworkFlow(ctx) {
   console.log(`    depositFee:  ${ethers.formatEther(depositFee)} ETH`)
   console.log(`    withdrawFee: ${ethers.formatEther(withdrawFee)} ETH`)
   console.log(`    authFee:     ${ethers.formatEther(authFee)} ETH`)
+  console.log(`    tipCeiling:  ${tipCeilingWei} wei`)
+  console.log(`    LZ fee sent: ${ethers.formatEther(lzFee)} ETH (unused part is refunded)`)
   console.log(`    sender/owner: ${wallet.address}`)
   console.log()
 
@@ -193,14 +265,11 @@ export async function createNetworkFlow(ctx) {
   }
 
   // ---- Send tx ----
-  const networkManagerAddress = addr('NETWORK_MANAGER_ADDRESS')
-  const cm = new ethers.Contract(networkManagerAddress, NETWORK_MANAGER_ABI, wallet)
-
   console.log()
   console.log(dim('  Sending transaction...'))
   let tx, receipt
   try {
-    tx = await cm.createNetwork(name.trim(), feeAddress.trim(), storageChainEid, withdrawFee, depositFee, authFee, mintFee)
+    tx = await cm.createNetwork(name.trim(), feeAddress.trim(), storageChainEid, withdrawFee, depositFee, authFee, mintFee, tipCeilingWei, { value: lzFee })
     console.log(dim(`  tx hash: ${tx.hash}`))
     console.log(dim('  Waiting for confirmation...'))
     receipt = await tx.wait()
