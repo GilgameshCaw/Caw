@@ -1847,8 +1847,8 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L19"
       },
       "source_sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
-      "observation": "The installer defaults to mutable source and allows repository overrides. #421 proposes operator-selected commit enforcement; review also identified Git refs/replace handling.",
-      "acceptance_evidence_or_decision_needed": "Reproduce exact-source enforcement including replacement refs, pin dependencies and build artifacts, and prove independent installation. #421 alone is not supply-chain closure.",
+      "observation": "Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls.",
+      "acceptance_evidence_or_decision_needed": "Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.",
       "existing_prs": [
         {
           "number": 330,
@@ -1859,7 +1859,7 @@
         },
         {
           "number": 421,
-          "head": "aa2f799431df42a94ff032633b85148e9efa58be",
+          "head": "b210d060e247684edaab2021c3d8653d0c885ee5",
           "state": "open",
           "draft": false,
           "url": "https://github.com/GilgameshCaw/Caw/pull/421"
@@ -1878,7 +1878,7 @@
         }
       ],
       "evidence_boundary": "Pinned installer and public rebuild checklist; full dependencies not recovered.",
-      "policy_or_specification_boundary": "Reproduce exact-source enforcement including replacement refs, pin dependencies and build artifacts, and prove independent installation. #421 alone is not supply-chain closure.",
+      "policy_or_specification_boundary": "Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.",
       "next_action": "Amend linked work where the same invariant applies. Resolve explicit decisions before behavioral changes. No duplicate implementation PR."
     },
     {

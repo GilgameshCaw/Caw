@@ -300,11 +300,11 @@ Requirement: **M-D / M-A / R-A**. Priority: HIGH (review prioritization, not exp
 
 Source: [`install.sh`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L19) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: The installer defaults to mutable source and allows repository overrides. #421 proposes operator-selected commit enforcement; review also identified Git refs/replace handling.
+Observation: The installer defaults to mutable source and allows repository overrides. #421 now disables replacement-object lookup for pinned acquisition, verification and reset; the amendment has eleven local fixture scenarios and expected failing controls.
 
-**Open acceptance gate:** Reproduce exact-source enforcement including replacement refs, pin dependencies and build artifacts, and prove independent installation. #421 alone is not supply-chain closure.
+**Open acceptance gate:** Independently review the replacement amendment and integrate #237; verify installer/bootstrap trust, dependencies, filters/hooks/conversions and independent installation. #421 alone is not supply-chain closure.
 
-Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#421](https://github.com/GilgameshCaw/Caw/pull/421) `aa2f799431df42a94ff032633b85148e9efa58be` (open)
+Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#421](https://github.com/GilgameshCaw/Caw/pull/421) `b210d060e247684edaab2021c3d8653d0c885ee5` (open)
 
 ### account
 
@@ -493,3 +493,8 @@ From a repository containing the baseline, `git show 97cd13f3a1423f702d411472fdd
 The companion [JSON register](MANIFESTO_R2_RELEASE_REVIEW.json) lists exact PR heads and links to independent discussion records fetched for Xubu's PRs. A linked comment may contain objections or limited source review, not approval. In particular, #345's independent ABI/checkpoint review does not establish live L1 replay; #328's independent content/merge review does not establish complete history. Keep #334 (documentation), #342 (policy-sensitive terminal-state proposal) and #274 (Civic wiring) separate from acceptance of the policies they expose.
 
 For each response, identify the row, candidate commit, test/reproduction or public decision, and residual limitation. Close a row only when its own evidence gate is met or a source-backed no-defect classification is recorded. Prefer amending existing PRs. No runtime changes or automatic acceptance/merging are proposed here. Technical discussion belongs in the applicable PR; cross-cutting agreed specifications and release governance belong in the shared builder-coordination thread.
+
+
+### #421 amendment — 2026-11-05 UTC
+
+The R-01 commit-replacement case was reproduced against the prior installer and addressed at `b210d060e247684edaab2021c3d8653d0c885ee5`. Eleven local cases and two expected failing controls are recorded in the linked PR. This updates RELEASE-01 only; full installation, independent build, concurrency and #237 integration remain unproved. The initial register capture remains historical.
