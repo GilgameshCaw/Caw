@@ -27,3 +27,8 @@ The [reproduced R2 message](https://github.com/Xubu-Trad/caw-lab/blob/canon/laye
 ## Action and boundaries
 
 Review and independently reproduce #351 instead of duplicating it. Preserve its negative controls, check integration with the sale-quote fixes, and explicitly plan old marketplace listings/escrow handling: a replacement contract does not patch an immutable old deployment. No claim is made that a live theft occurred, that this is an administrator backdoor, or that the entire PR is ready to merge. This record is source corroboration plus attributed external test evidence.
+
+
+## Independent reviewer record
+
+[tentencaw's review](https://github.com/GilgameshCaw/Caw/pull/351#issuecomment-6384579042) independently reports 4/4 stale-listing tests on `f93957bd`, versus one control passing and three failures on master. Additional approved/unapproved-owner and auction-refund cases distinguish the approval prerequisite and confirm that reclaiming works after the fixed settlement rejects. The review reports the same 11 full-suite failures on both compared trees; it does not claim a fully green suite or deployed-chain certification. These are independently reported reviewer results, not a rerun by this review's author. Preserve both reviewer and original-author attribution.
