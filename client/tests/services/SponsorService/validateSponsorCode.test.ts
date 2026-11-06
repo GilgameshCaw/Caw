@@ -35,6 +35,7 @@ type SponsorCodeRow = {
   expiresAt: Date
   createdBy: string | null
   createdAt: Date
+  purchasedByTokenId: number | null
 }
 
 // Shared state for the in-memory mock.
@@ -163,6 +164,7 @@ function makeCode(overrides: Partial<SponsorCodeRow> = {}): SponsorCodeRow {
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),  // +24h
     createdBy: null,
     createdAt: new Date(),
+    purchasedByTokenId: null,
     ...overrides,
     // Always recompute hash if code wasn't set to a specific hash
     ...(overrides.codeHash ? {} : { codeHash }),
@@ -327,15 +329,54 @@ describe('validateSponsorCode', () => {
 
   // ── Username too short ────────────────────────────────────────────────────
 
-  it('username shorter than minUsernameLength → USERNAME_TOO_SHORT', async () => {
-    _mockCode = makeCode({ minUsernameLength: 5 })
+  const POT_50M = (50_000_000n * 10n ** 18n).toString()
+
+  it('operator code: name under minUsernameLength → USERNAME_TOO_SHORT even when the pot covers the burn', async () => {
+    _mockCode = makeCode({ minUsernameLength: 8, maxDepositCawWei: POT_50M })
+    const result = await validateSponsorCode(
+      'TEST-CODE-01A',
+      { username: 'abcdefg', depositAmountCAW: 1_000_000n * 10n ** 18n },
+      '1.2.3.4',
+    )
+    expect(result.ok).to.equal(false)
+    if (!result.ok) {
+      expect(result.error).to.equal('USERNAME_TOO_SHORT')
+      expect(result.detail).to.contain('at least 8 characters')
+    }
+  })
+
+  it('operator code: name at minUsernameLength → ok', async () => {
+    _mockCode = makeCode({ minUsernameLength: 8, maxDepositCawWei: POT_50M })
+    const result = await validateSponsorCode(
+      'TEST-CODE-01A',
+      { username: 'abcdefgh', depositAmountCAW: 1_000_000n * 10n ** 18n },
+      '1.2.3.4',
+    )
+    expect(result.ok).to.equal(true)
+  })
+
+  it('purchased code: the pot decides, not minUsernameLength', async () => {
+    _mockCode = makeCode({ minUsernameLength: 8, maxDepositCawWei: POT_50M, purchasedByTokenId: 7 })
+    const result = await validateSponsorCode(
+      'TEST-CODE-01A',
+      { username: 'abcdefg', depositAmountCAW: 1_000_000n * 10n ** 18n },
+      '1.2.3.4',
+    )
+    expect(result.ok).to.equal(true)
+  })
+
+  it('purchased code: a name the pot cannot afford → USERNAME_TOO_SHORT', async () => {
+    _mockCode = makeCode({ purchasedByTokenId: 7 })
     const result = await validateSponsorCode(
       'TEST-CODE-01A',
       { username: 'ab', depositAmountCAW: 1_000_000n * 10n ** 18n },
       '1.2.3.4',
     )
     expect(result.ok).to.equal(false)
-    if (!result.ok) expect(result.error).to.equal('USERNAME_TOO_SHORT')
+    if (!result.ok) {
+      expect(result.error).to.equal('USERNAME_TOO_SHORT')
+      expect(result.detail).to.contain('costs more than this invite covers')
+    }
   })
 
   // ── HMAC correctness ─────────────────────────────────────────────────────

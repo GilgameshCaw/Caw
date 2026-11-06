@@ -8,7 +8,8 @@
  *   - Code expiry
  *   - usesRemaining > 0
  *   - deposit amount within the code's maxDepositCawWei cap
- *   - username length >= minUsernameLength
+ *   - username length >= minUsernameLength (operator-minted codes only; a
+ *     purchased code's limit is what its pot can afford, checked at step 8/9)
  *   - per-code rate limit: 1 successful lookup per IP per hour
  *
  * Constant-time response on failure (sleeps to a target of ~100 ms) to
@@ -438,6 +439,22 @@ export async function validateSponsorCode(
   if (code.usesRemaining !== null && code.usesRemaining <= 0) {
     await sleepToTarget(startMs)
     return { ok: false, error: 'CODE_EXHAUSTED', detail: 'This invite code has no uses remaining.' }
+  }
+
+  // ── 7b. Operator's minimum name length ────────────────────────────────────
+  // An admin-minted code's minUsernameLength is the operator's policy. On a
+  // purchased code it's only a hint derived from the pot, so step 8/9 decides.
+  if (
+    code.purchasedByTokenId === null &&
+    code.minUsernameLength > 0 &&
+    params.username.length < code.minUsernameLength
+  ) {
+    await sleepToTarget(startMs)
+    return {
+      ok: false,
+      error: 'USERNAME_TOO_SHORT',
+      detail: `Username must be at least ${code.minUsernameLength} characters for this invite code.`,
+    }
   }
 
   // ── 8/9. GIFT-AWARE pot check (burn + LIVE GAS + deposit must fit the pot) ──
