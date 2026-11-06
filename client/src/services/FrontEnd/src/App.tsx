@@ -257,12 +257,12 @@ function App() {
   })
   const effectiveTokenId = activeTokenId || activeTokenFallback
   const fetchBlocks = useBlockedUsersStore(s => s.fetchBlocks)
-  const blocksInitialized = useBlockedUsersStore(s => s.initialized)
+  const blocksLoadedFor = useBlockedUsersStore(s => s.loadedFor)
   useEffect(() => {
-    if (effectiveTokenId && !blocksInitialized) {
+    if (effectiveTokenId && effectiveTokenId !== blocksLoadedFor) {
       fetchBlocks(effectiveTokenId)
     }
-  }, [effectiveTokenId, blocksInitialized, fetchBlocks])
+  }, [effectiveTokenId, blocksLoadedFor, fetchBlocks])
 
   const stakeModal = useInsufficientStakeStore()
   const actionError = useActionErrorStore()
