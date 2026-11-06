@@ -1,6 +1,7 @@
 import { prisma } from '../prismaClient'
 import { NotificationType, Prisma } from '@prisma/client'
 import { elasticsearchService } from './ElasticsearchService'
+import { MENTION_SIGIL_CLASS } from '../tools/hashtagRegex'
 
 /**
  * Derive the persistent-group `targetKey` for a notification. NULL
@@ -200,9 +201,15 @@ export class NotificationService {
   /**
    * Extract @mentions from a caw content. Deduplicated, capped at
    * MAX_MENTIONS_PER_CAW.
+   *
+   * The sigil is the shared MENTION_SIGIL_CLASS (ASCII @ or fullwidth ＠,
+   * which CJK keyboards emit), the same one the feed renderer and the ES
+   * indexer use, so a mention the feed shows as a link also notifies.
+   * The handle body stays ASCII \w so "@aliceさん" still resolves to
+   * "alice".
    */
   static extractMentions(content: string): string[] {
-    const mentionRegex = /@(\w+)/g
+    const mentionRegex = new RegExp(`${MENTION_SIGIL_CLASS}(\\w+)`, 'g')
     const mentions: string[] = []
     let match
 
