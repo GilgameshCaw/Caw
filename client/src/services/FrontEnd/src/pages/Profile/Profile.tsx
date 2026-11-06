@@ -31,6 +31,8 @@ import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { useMutePreferences } from '~/hooks/useMutePreferences'
+import { getJSON, setJSON } from '~/utils/safeStorage'
 import TipModal from '~/components/modals/TipModal'
 import { ShareProfileCardModal } from '~/components/modals/ShareProfileCardModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
@@ -223,7 +225,8 @@ export const Profile: React.FC = () => {
   // so a re-uploaded cover gets a fresh chance to load.
   const [coverImgFailed, setCoverImgFailed] = useState(false)
   useEffect(() => { setCoverImgFailed(false) }, [profileData?.coverPhotoUrl])
-  const [isMuted, setIsMuted] = useState(false)
+  const { preferences: mutePreferences } = useMutePreferences()
+  const isMuted = profileData?.tokenId != null && mutePreferences.mutedAccounts.includes(profileData.tokenId)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
@@ -426,41 +429,19 @@ export const Profile: React.FC = () => {
     }
   }, [profileData])
 
-  // Fetch mute status when viewing another user's profile (muting still uses API)
-  useEffect(() => {
-    const fetchMuteStatus = async () => {
-      if (!activeToken?.tokenId || !profileData?.tokenId || activeToken.tokenId === profileData.tokenId) {
-        return
-      }
-
-      try {
-        const muteRes = await apiFetch<{ isMuted: boolean }>(`/api/notifications/is-account-muted/${profileData.tokenId}`)
-        setIsMuted(muteRes.isMuted)
-      } catch (err) {
-        console.error('Failed to fetch mute status:', err)
-      }
-    }
-
-    fetchMuteStatus()
-  }, [activeToken?.tokenId, profileData?.tokenId])
-
-  // Handle mute/unmute (still uses API - requires auth)
-  const handleToggleMute = async () => {
+  // Muting is client-side: the same localStorage list the feed's "Mute"
+  // menu writes and the Muted content page lists. The event tells every
+  // useMutePreferences instance in this tab (this page, the feed) to reload.
+  const handleToggleMute = () => {
     if (!activeToken?.tokenId || !profileData?.tokenId) return
-
-    try {
-      if (isMuted) {
-        await apiFetch(`/api/notifications/mute-account/${profileData.tokenId}`, { method: 'DELETE' })
-        setIsMuted(false)
-      } else {
-        await apiFetch(`/api/notifications/mute-account/${profileData.tokenId}`, { method: 'POST' })
-        setIsMuted(true)
-      }
-    } catch (err) {
-      console.error('Failed to toggle mute:', err)
-    } finally {
-      setShowOptionsMenu(false)
-    }
+    const targetId = profileData.tokenId
+    const muted = getJSON<number[]>('mutedAccounts', [])
+    const updated = isMuted
+      ? muted.filter(id => id !== targetId)
+      : [...new Set([...muted, targetId])]
+    setJSON('mutedAccounts', updated)
+    window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+    setShowOptionsMenu(false)
   }
 
   // Handle block/unblock (server-backed)

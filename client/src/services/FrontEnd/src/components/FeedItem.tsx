@@ -1100,7 +1100,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }
         break
       case 'mute-account': {
-        const effectiveTokenId = activeToken?.tokenId ?? activeTokenId
         if (shouldShowMuteConfirmModal()) {
           setMuteConfirmAction('mute-account')
           setShowMuteConfirmModal(true)
@@ -1109,13 +1108,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           mutedAccounts.push(useItem.user.tokenId)
           setJSON('mutedAccounts', [...new Set(mutedAccounts)])
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
-          // Sync to server for notification filtering
-          if (effectiveTokenId) {
-            apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
-              method: 'POST',
-              headers: { 'x-user-id': effectiveTokenId.toString() }
-            }).catch(err => console.error('Failed to sync mute to server:', err))
-          }
         }
         break
       }
@@ -2428,14 +2420,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               mutedAccounts.push(useItem.user.tokenId)
               setJSON('mutedAccounts', [...new Set(mutedAccounts)])
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
-              // Sync to server for notification filtering
-              const muteTokenId = activeTokenId || activeToken?.tokenId
-              if (muteTokenId) {
-                apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
-                  method: 'POST',
-                  headers: { 'x-user-id': muteTokenId.toString() }
-                }).catch(err => console.error('Failed to sync mute to server:', err))
-              }
               break
             }
             case 'block-account': {
