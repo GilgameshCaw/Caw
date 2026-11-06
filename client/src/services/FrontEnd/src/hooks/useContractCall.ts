@@ -195,7 +195,11 @@ export default function useContractCall<
       });
 
       onPending?.(hash);
-      await publicClient?.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient?.waitForTransactionReceipt({ hash });
+      // viem resolves with a reverted receipt instead of throwing.
+      if (receipt?.status === 'reverted') {
+        throw new Error(`Transaction reverted: ${hash}`);
+      }
       onSuccess?.(hash);
       return hash;
     } catch (err) {
