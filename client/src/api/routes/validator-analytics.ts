@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { requireAdmin } from '../middleware/auth'
+import { parseTipSetting } from '../../utils/tipSetting'
 
 const router = Router()
 
@@ -291,6 +292,9 @@ const VALID_SETTINGS = [
   'minTipPerActionWei',
 ]
 
+// Read with BigInt by the validator, /tip-config and the FE.
+const TIP_SETTINGS = ['validatorBaseTip', 'priorityTip', 'minTipPerActionWei']
+
 /**
  * GET /api/validator-analytics/settings
  */
@@ -318,6 +322,13 @@ router.patch('/settings', async (req, res) => {
       return res.status(400).json({ error: `Invalid setting key. Valid: ${VALID_SETTINGS.join(', ')}` })
     }
 
+    if (TIP_SETTINGS.includes(key) && parseTipSetting(String(value)) === null) {
+      return res.status(400).json({
+        error: 'invalid_tip_value',
+        message: `${key} must be a whole number.`,
+      })
+    }
+
     // Cross-key invariant: priorityTip must be >= validatorBaseTip. The FE
     // tier picker (Quick Sign Cheap vs Fast) signs actions at a tip that's
     // "at base for cheap, at priority for fast." If priority < base, every
@@ -341,8 +352,8 @@ router.patch('/settings', async (req, res) => {
             })
           }
         } catch {
-          // BigInt parse failed; fall through and let the normal upsert
-          // either store the bad value (and the FE will notice) or 500.
+          // The other key's stored row is malformed. Let this save through, so
+          // the two can be fixed one at a time.
         }
       }
     }

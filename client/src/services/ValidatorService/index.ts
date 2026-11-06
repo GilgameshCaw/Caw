@@ -24,6 +24,7 @@ import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueu
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 import { span } from '../../utils/trace'
 import { requireValidatorSigner, type ValidatorSigner } from '../../utils/signer'
+import { parseTipSetting } from '../../utils/tipSetting'
 
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
@@ -831,14 +832,21 @@ async function refreshSettings(configCheckInterval?: number) {
   try {
     const rows = await prisma.validatorSetting.findMany()
     const map = new Map(rows.map(r => [r.key, r.value]))
-    if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = BigInt(map.get('validatorBaseTip')!)
-    if (map.has('priorityTip'))        liveSettings.priorityTip = BigInt(map.get('priorityTip')!) || DEFAULT_VALIDATOR_TIP * 3n
+    // A malformed tip row keeps the current value. It must not read as 0, and it
+    // must not stop the rows after it from loading.
+    const tipSetting = (key: string, current: bigint): bigint => {
+      const parsed = parseTipSetting(map.get(key)!)
+      if (parsed === null) console.error(`[Validator] Ignoring ValidatorSetting ${key}: not a whole number`)
+      return parsed ?? current
+    }
+    if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = tipSetting('validatorBaseTip', liveSettings.validatorBaseTip)
+    if (map.has('priorityTip'))        liveSettings.priorityTip = tipSetting('priorityTip', liveSettings.priorityTip) || DEFAULT_VALIDATOR_TIP * 3n
     if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 60_000
     if (map.has('minActionsPerBatch'))  liveSettings.minActionsPerBatch = Number(map.get('minActionsPerBatch')!) || 1
     if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 10_000
     if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 120_000
     if (map.has('acceptZeroTip'))       liveSettings.acceptZeroTip = map.get('acceptZeroTip') === 'true'
-    if (map.has('minAcceptableTipCAW')) liveSettings.minAcceptableTipCAW = BigInt(map.get('minAcceptableTipCAW')!)
+    if (map.has('minAcceptableTipCAW')) liveSettings.minAcceptableTipCAW = tipSetting('minAcceptableTipCAW', liveSettings.minAcceptableTipCAW)
     else                                liveSettings.minAcceptableTipCAW = liveSettings.validatorBaseTip
   } catch (e: any) {
     console.error('[Validator] Failed to refresh settings from DB:', e.message)
