@@ -4,6 +4,8 @@ import { formatEther, formatUnits } from 'viem'
 import { apiFetch } from '~/api/client'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
+import { chains } from '~/config/chains'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useTheme } from '~/hooks/useTheme'
 import { themeText, themeTextMuted, themeBorder, themeBgSubtle } from '~/utils/theme'
 
@@ -43,7 +45,8 @@ export const RefundsBanner: React.FC = () => {
   const [activeClaim, setActiveClaim] = useState<number | null>(null) // listingId being claimed
 
   const { writeContract, data: claimHash, isPending: isClaimPending, reset: resetClaim } = useWriteContract()
-  const { isSuccess: claimConfirmed } = useWaitForTransactionReceipt({ hash: claimHash })
+  const { isSuccess: claimConfirmed } = useWaitForTransactionReceipt({ hash: claimHash, chainId: chains.l1.chainId })
+  const ensureWallet = useEnsureWallet()
 
   // Fetch candidate listings from the API. Source-of-truth for amounts is the
   // chain (pendingReturns), but the API tells us *which* listings to check —
@@ -67,17 +70,30 @@ export const RefundsBanner: React.FC = () => {
     }
   }, [claimConfirmed, refresh, resetClaim])
 
+  // The API returns one row per bid, but pendingReturns is one balance per
+  // (bidder, listing): a bidder outbid twice on a listing has two rows and one
+  // balance. Keep one row per listing so the balance isn't counted twice.
+  const uniqueCandidates = useMemo(() => {
+    const seen = new Set<number>()
+    return candidates.filter(c => {
+      if (seen.has(c.listing.listingId)) return false
+      seen.add(c.listing.listingId)
+      return true
+    })
+  }, [candidates])
+
   // Read pendingReturns for each candidate. Hook order is stable across
   // renders because we always pass the same shape — only contents change.
   const contractReads = useMemo(() => {
     if (!address) return []
-    return candidates.map(c => ({
+    return uniqueCandidates.map(c => ({
       address: CAW_NAME_MARKETPLACE_ADDRESS as `0x${string}`,
       abi: cawProfileMarketplaceAbi,
       functionName: 'pendingReturns' as const,
       args: [address, BigInt(c.listing.listingId)] as const,
+      chainId: chains.l1.chainId,
     }))
-  }, [address, candidates])
+  }, [address, uniqueCandidates])
 
   const { data: readData } = useReadContracts({
     contracts: contractReads,
@@ -87,14 +103,14 @@ export const RefundsBanner: React.FC = () => {
   // Combine candidates with their on-chain pending balance, drop zeros.
   const claimable = useMemo(() => {
     if (!readData) return []
-    return candidates
+    return uniqueCandidates
       .map((c, i) => {
         const result = readData[i]
         const amountWei = result?.status === 'success' ? (result.result as bigint) : 0n
         return { ...c, amountWei }
       })
       .filter(c => c.amountWei > 0n)
-  }, [candidates, readData])
+  }, [uniqueCandidates, readData])
 
   // Sum per payment-token label.
   const totals = useMemo(() => {
@@ -106,12 +122,15 @@ export const RefundsBanner: React.FC = () => {
   }, [claimable])
 
   const handleClaim = (onChainListingId: number) => {
-    setActiveClaim(onChainListingId)
-    writeContract({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawProfileMarketplaceAbi,
-      functionName: 'withdrawBid',
-      args: [BigInt(onChainListingId)],
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      setActiveClaim(onChainListingId)
+      writeContract({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawProfileMarketplaceAbi,
+        functionName: 'withdrawBid',
+        args: [BigInt(onChainListingId)],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 

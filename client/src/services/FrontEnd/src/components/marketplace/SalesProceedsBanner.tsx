@@ -8,8 +8,9 @@
  * - "Claim to this wallet" — calls withdrawPayouts()
  * - "Send to a different address" — expands an input that calls withdrawPayoutsTo(recipient)
  *
- * Note: after a sale the seller's CAW balance does NOT update automatically —
- * proceeds queue here until claimed.
+ * Note: after a sale the seller's ETH balance does NOT update automatically —
+ * proceeds queue here until claimed. Only ETH proceeds show here: ERC20 proceeds
+ * are in pendingTokenPayouts.
  */
 
 import React, { useState } from 'react'
@@ -20,7 +21,7 @@ import { themeText, themeTextMuted, themeBorder, themeBgSubtle } from '~/utils/t
 import { useMarketplacePayouts } from '~/hooks/useMarketplacePayouts'
 import { useT } from '~/i18n/I18nProvider'
 
-function formatCaw(wei: bigint): string {
+function formatEth(wei: bigint): string {
   const whole = Number(formatUnits(wei, 18))
   if (whole === 0) return '0'
   if (whole < 0.0001) return whole.toExponential(2)
@@ -66,7 +67,7 @@ export const SalesProceedsBanner: React.FC = () => {
               {t('marketplace.proceeds_title')}
             </div>
             <div className={`text-xs ${themeTextMuted(isDark)}`}>
-              {formatCaw(pending)} CAW
+              {formatEth(pending)} ETH
             </div>
           </div>
         </div>
