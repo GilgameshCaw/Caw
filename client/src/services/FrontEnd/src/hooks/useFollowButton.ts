@@ -89,6 +89,10 @@ export function useFollowButton({
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollStartTimeRef = useRef<number | null>(null)
   const isSubmittingRef = useRef(false) // Prevent duplicate submissions
+  // The state before the click that started the action in flight. A cancel or a
+  // poll timeout goes back to this. initialIsFollowing won't do: Profile and
+  // FollowListModal feed the optimistic value back into that prop.
+  const preActionStateRef = useRef<boolean | null>(null)
   // Keep a ref to the latest onFollowStateChange so the polling effect doesn't
   // have to re-subscribe every time the parent re-renders with a fresh
   // callback. Prior behavior: the effect re-ran on every parent render,
@@ -108,6 +112,7 @@ export function useFollowButton({
   // anticipated state, not the previous server-confirmed state.
   useEffect(() => {
     if (!hasUserAction) {
+      preActionStateRef.current = null
       setIsFollowing(anticipated(initialIsPending, initialIsFollowing, initialPendingAction))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -161,6 +166,7 @@ export function useFollowButton({
 
     setHasUserAction(true)
     const newFollowingState = actionType === 'follow'
+    preActionStateRef.current = !newFollowingState
     setIsFollowing(newFollowingState)
     setPending(true)
     setIsSigning(true)
@@ -240,8 +246,9 @@ export function useFollowButton({
           setHasUserAction(false) // Allow prop sync again
           pendingActionRef.current = null
           // Revert to original state
-          setIsFollowing(initialIsFollowing)
-          onFollowStateChangeRef.current?.(initialIsFollowing)
+          const revertTo = preActionStateRef.current ?? initialIsFollowing
+          setIsFollowing(revertTo)
+          onFollowStateChangeRef.current?.(revertTo)
 
           // Clear the interval and stop polling
           if (pollIntervalRef.current) {
@@ -349,7 +356,8 @@ export function useFollowButton({
       const snapshotSpend = usePendingSpendStore.getState().pendingByTxQueue[cancelledTxQueueId]
       usePendingSpendStore.getState().removePendingSpend(cancelledTxQueueId)
       useBalanceChangeStore.getState().dropPendingWindow(`txq:${cancelledTxQueueId}`)
-      setIsFollowing(initialIsFollowing)
+      const revertTo = preActionStateRef.current ?? initialIsFollowing
+      setIsFollowing(revertTo)
       setPending(false)
       setIsSigning(false)
       setPendingTxQueueId(null)
@@ -361,7 +369,7 @@ export function useFollowButton({
       }
       pollStartTimeRef.current = null
       setIsPolling(false)
-      onFollowStateChange?.(initialIsFollowing)
+      onFollowStateChange?.(revertTo)
       try {
         await apiFetch(`/api/txqueue/${cancelledTxQueueId}/cancel`, { method: 'POST' })
       } catch (err: any) {
@@ -427,6 +435,7 @@ export function useFollowButton({
     setHasUserAction(true)
 
     // Optimistic update
+    preActionStateRef.current = isFollowing
     const newFollowingState = !isFollowing
     setIsFollowing(newFollowingState)
     setPending(true)
