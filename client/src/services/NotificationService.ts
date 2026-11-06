@@ -716,26 +716,55 @@ export class NotificationService {
   /**
    * Mark notifications as read
    */
-  static async markAsRead(userId: number, notificationIds?: number[], types?: NotificationType[]) {
+  static async markAsRead(
+    userId: number,
+    notificationIds?: number[],
+    types?: NotificationType[],
+    client: { notification: any; notificationGroup: any; $executeRaw: any } = prisma,
+    // Mark-all only: the newest notification id the client has seen
+    // (GET /api/notifications `readUpToId`). Anything newer stays unread.
+    opts: { readUpToId?: number } = {},
+  ) {
     if (notificationIds) {
       // Mark specific notifications as read. Also flip every NotificationGroup
       // those rows belong to — a group is read iff all its members are.
       // Closing a group like this is what causes the next event to open a
       // fresh group (the open-window check requires isRead=false to join).
-      const rows = await prisma.notification.findMany({
+      const rows: Array<{ id: number; groupId: number | null }> = await client.notification.findMany({
         where: { id: { in: notificationIds }, userId },
-        select: { groupId: true },
+        select: { id: true, groupId: true },
       })
-      await prisma.notification.updateMany({
+      await client.notification.updateMany({
         where: { id: { in: notificationIds }, userId },
         data: { isRead: true }
       })
-      const affectedGroupIds = Array.from(new Set(rows.map(r => r.groupId).filter((x): x is number => x != null)))
+      // The feed shows one row per group and sends that group's latest
+      // member id (GET /api/notifications `notificationIds`), so reading a
+      // member also reads the older members of its group. Without this a
+      // group with two or more unread members never closes on this path.
+      // Members newer than the id sent (arrived after the page was
+      // fetched) stay unread, so their group stays open.
+      const readUpTo = new Map<number, number>()
+      for (const r of rows) {
+        if (r.groupId == null) continue
+        readUpTo.set(r.groupId, Math.max(readUpTo.get(r.groupId) ?? 0, r.id))
+      }
+      if (readUpTo.size > 0) {
+        await client.notification.updateMany({
+          where: {
+            userId,
+            isRead: false,
+            OR: Array.from(readUpTo, ([groupId, maxId]) => ({ groupId, id: { lte: maxId } })),
+          },
+          data: { isRead: true },
+        })
+      }
+      const affectedGroupIds = Array.from(readUpTo.keys())
       if (affectedGroupIds.length > 0) {
         // Only flip a group read when ALL its members are now read.
         // For partial-read groups (user clicked individual rows), keep
         // them unread so the bell badge stays accurate.
-        await prisma.$executeRaw`
+        await client.$executeRaw`
           UPDATE "NotificationGroup" g
           SET "isRead" = true
           WHERE g.id = ANY(${affectedGroupIds}::int[])
@@ -748,25 +777,70 @@ export class NotificationService {
     } else if (types && types.length > 0) {
       // Tab-scoped clear: mark all unread of these types read at both
       // the notification level and the group level.
-      await prisma.notification.updateMany({
+      await client.notification.updateMany({
         where: { userId, isRead: false, type: { in: types } },
         data: { isRead: true }
       })
-      await prisma.notificationGroup.updateMany({
+      await client.notificationGroup.updateMany({
         where: { userId, isRead: false, type: { in: types } },
         data: { isRead: true },
       })
+    } else if (opts.readUpToId != null) {
+      // Bounded mark-all (the notifications page landing). An event that
+      // arrives between the client's GET and this call has a higher id, so
+      // its row stays unread and its group stays open; the client picks it
+      // up on the next poll instead of it being read without being shown.
+      const bound = opts.readUpToId
+      await client.notification.updateMany({
+        where: { userId, isRead: false, id: { lte: bound } },
+        data: { isRead: true },
+      })
+      // Close a group only if its latest member is within the bound and
+      // none of its members is still unread. The latestNotificationId check
+      // also covers an event caught mid-insert: createNotificationWithGroup
+      // bumps the group's latest pointer before it writes the row's groupId,
+      // so NOT EXISTS alone could miss that row.
+      await client.$executeRaw`
+        UPDATE "NotificationGroup" g
+        SET "isRead" = true
+        WHERE g."userId" = ${userId}
+          AND g."isRead" = false
+          AND g."latestNotificationId" <= ${bound}
+          AND NOT EXISTS (
+            SELECT 1 FROM "Notification" n
+            WHERE n."groupId" = g.id AND n."userId" = ${userId} AND n."isRead" = false
+          )
+      `
     } else {
       // Mark-all-read: flip every unread row and every unread group.
-      await prisma.notification.updateMany({
+      await client.notification.updateMany({
         where: { userId, isRead: false },
         data: { isRead: true }
       })
-      await prisma.notificationGroup.updateMany({
+      await client.notificationGroup.updateMany({
         where: { userId, isRead: false },
         data: { isRead: true },
       })
     }
+  }
+
+  /**
+   * The bound for a mark-all: the highest latestNotificationId across the
+   * user's groups, or null when they have none. Takes the max rather than
+   * the group with the newest lastEventAt, because undoing a repost moves a
+   * group's latest pointer back but leaves its lastEventAt. That group can
+   * sort first with a pointer below another group's, and a bound taken from
+   * it would leave the other group unread on every landing.
+   */
+  static async getReadUpToId(
+    userId: number,
+    client: { notificationGroup: any } = prisma,
+  ): Promise<number | null> {
+    const newest = await client.notificationGroup.aggregate({
+      where: { userId },
+      _max: { latestNotificationId: true },
+    })
+    return newest._max.latestNotificationId ?? null
   }
 
   /**

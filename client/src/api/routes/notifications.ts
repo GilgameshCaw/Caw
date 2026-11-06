@@ -49,6 +49,12 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
     // additional actors for the rollup stack. Read is O(group page
     // size) — no aggregation per request.
 
+    // Newest notification id this response can reflect, for a bounded
+    // POST /read (mark-all). Read BEFORE the page so an event that lands
+    // after it has a higher id and is not marked read unseen. Not scoped
+    // by type: the page landing marks every type read.
+    const readUpToId = await NotificationService.getReadUpToId(userTokenId)
+
     const groupWhere: any = { userId: userTokenId }
     if (typeFilter) groupWhere.type = typeFilter
     if (unreadOnly === 'true') groupWhere.isRead = false
@@ -75,7 +81,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       // badge should display now that the feed is group-paginated.
       const unreadWhereEmpty: any = { userId: userTokenId, isRead: false }
       const emptyCount = await prisma.notificationGroup.count({ where: unreadWhereEmpty })
-      return res.json({ notifications: [], unreadCount: emptyCount, hasMore: false })
+      return res.json({ notifications: [], unreadCount: emptyCount, hasMore: false, readUpToId })
     }
 
     // Fetch the representative notification (the group's latest member)
@@ -352,6 +358,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
       // hasMore is based on GROUPS. If the page returned exactly
       // notificationLimit groups, there may be more behind the cursor.
       hasMore: groups.length === notificationLimit,
+      readUpToId,
     })
 
   } catch (error) {
@@ -513,20 +520,31 @@ router.get('/group-actors', requireAuth({ lookup: async (req) => Number(req.quer
  */
 router.post('/read', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
-    const { userId, notificationIds, types } = req.body
+    const { userId, notificationIds, types, readUpToId } = req.body
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' })
+    }
+    if (readUpToId !== undefined && readUpToId !== null
+        && !(Number.isSafeInteger(readUpToId) && readUpToId > 0)) {
+      return res.status(400).json({ error: 'readUpToId must be a positive integer' })
     }
 
     const userTokenId = parseInt(userId)
 
     // If notificationIds provided → mark those specific ones.
     // Else if types provided → mark all unread of those types (tab-scoped clear).
-    // Else → mark all as read for the user.
-    await NotificationService.markAsRead(userTokenId, notificationIds, types)
+    // Else → mark all as read for the user, up to readUpToId when given
+    // (the readUpToId from the GET the client rendered).
+    await NotificationService.markAsRead(userTokenId, notificationIds, types, undefined, {
+      readUpToId: readUpToId ?? undefined,
+    })
 
-    return res.json({ success: true })
+    // Unread groups left after this call (events newer than the bound),
+    // so the client can set the badge instead of assuming 0.
+    const unreadCount = await NotificationService.getUnreadCount(userTokenId)
+
+    return res.json({ success: true, unreadCount })
 
   } catch (error) {
     console.error('POST /api/notifications/read error:', error)
