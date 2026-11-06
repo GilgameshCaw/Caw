@@ -19,7 +19,7 @@
  * blob is valid JSON and human-readable in a text editor.
  */
 
-import { deriveKey, deriveKeyPbkdf2, ARGON2_PARAMS, type DerivedKeyResult } from './vaultPassword'
+import { deriveArgon2KeyForDecrypt, deriveKey, deriveKeyPbkdf2, ARGON2_PARAMS, type DerivedKeyResult } from './vaultPassword'
 import { requireSecureCrypto } from '~/utils/secureContext'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -176,8 +176,7 @@ export async function decryptBackupBlob(
   if (blob.argon2.memorySize === 0) {
     aesKey = await deriveKeyPbkdf2(password, salt)
   } else {
-    const derivedResult = await deriveKey(password, salt)
-    aesKey = derivedResult.key
+    aesKey = await deriveArgon2KeyForDecrypt(password, salt)
   }
 
   let decryptedBuffer: ArrayBuffer

@@ -44,6 +44,17 @@ export const PBKDF2_FALLBACK_PARAMS = {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Thrown when a backup was encrypted with Argon2id and this browser can't load
+ * it. Says nothing about the password.
+ */
+export class Argon2UnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(`Argon2id is unavailable in this browser: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'Argon2UnavailableError'
+  }
+}
+
+/**
  * Result type from deriveKey. Carries the CryptoKey and a metadata flag
  * so callers can record which algorithm was used in the backup blob.
  */
@@ -93,8 +104,33 @@ export async function deriveKey(
 }
 
 /**
+ * Derive the key of a blob that's marked as Argon2id. Unlike `deriveKey`, there's
+ * no fallback: encrypting can pick another KDF and record it in the blob, but a
+ * PBKDF2 key can never open this one, and the failure would read as a wrong
+ * password.
+ *
+ * @throws Argon2UnavailableError when Argon2id can't run here.
+ */
+export async function deriveArgon2KeyForDecrypt(
+  password: string,
+  salt: Uint8Array,
+): Promise<CryptoKey> {
+  requireSecureCrypto('Vault password key derivation')
+
+  if (salt.length !== 16) {
+    throw new Error(`Salt must be 16 bytes; got ${salt.length}`)
+  }
+
+  try {
+    return await deriveKeyArgon2(password, salt)
+  } catch (err) {
+    throw new Argon2UnavailableError(err)
+  }
+}
+
+/**
  * Argon2id key derivation.
- * Internal — callers always go through `deriveKey`.
+ * Internal — callers go through `deriveKey` or `deriveArgon2KeyForDecrypt`.
  */
 async function deriveKeyArgon2(
   password: string,
