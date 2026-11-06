@@ -35,6 +35,10 @@ const PRESETS = {
 
 export type VideoPreset = keyof typeof PRESETS
 
+/** Compression runs in real time, so this is also the longest clip it can take
+ *  when the source reports no usable duration. */
+const UNKNOWN_DURATION_LIMIT_MS = 10 * 60 * 1000
+
 interface CompressResult {
   file: File
   /** True if the function actually transcoded; false means we returned
@@ -167,15 +171,26 @@ export async function compressVideo(file: File, preset: VideoPreset = 'feed'): P
 
     // Wait for the source to finish playing, then stop the recorder.
     await new Promise<void>((resolve) => {
-      video.onended = () => resolve()
-      // Safety: if the source video has no duration metadata or the
-      // 'ended' event somehow doesn't fire, bail after duration + 2s.
-      const safety = (video.duration || 60) * 1000 + 2000
-      setTimeout(resolve, safety)
+      // Safety: if the 'ended' event doesn't fire, bail after duration + 2s.
+      // A browser-recorded WebM can report Infinity, and setTimeout turns that
+      // into 0, so use a ceiling when the duration isn't usable.
+      const safety = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration * 1000 + 2000
+        : UNKNOWN_DURATION_LIMIT_MS
+      const safetyTimer = setTimeout(resolve, safety)
+      video.onended = () => {
+        clearTimeout(safetyTimer)
+        resolve()
+      }
     })
+    const finished = video.ended
     recorder.stop()
 
     const blob = await recordingDone
+    // Never post a clip that stops partway: the user would only see it after posting.
+    if (!finished) {
+      throw new Error('Video compression did not finish. Try a shorter clip.')
+    }
     const ext = recorderMime.includes('mp4') ? '.mp4' : '.webm'
     const baseName = file.name.replace(/\.[^.]+$/, '') || 'video'
     const out = new File([blob], `${baseName}${ext}`, { type: recorderMime.split(';')[0] })
