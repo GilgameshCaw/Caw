@@ -3,6 +3,7 @@ import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
+import { depositHoldCostWei } from '../../utils/depositHoldCost'
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cleanStaleOgCache } from '../../api/routes/og'
 import { cawProfileLedgerAbi } from '../../abi/generated'
@@ -926,12 +927,10 @@ async function cleanupOrphanActions() {
  * Flow:
  *   1. Group waiting_for_deposit rows by senderId.
  *   2. For each unique sender, read authenticated[CLIENT_ID][tokenId] on L2.
- *   3. If authenticated == true → the L1→L2 bridge has delivered. Promote all
- *      that sender's waiting rows back to 'pending' and clear pendingDepositTxHash.
- *      The validator will then simulate them normally — if the user's L2 CAW
- *      balance covers the cost, they succeed; if not, they fail with a clear
- *      "insufficient balance" reason (the user asked to spend more than they
- *      actually deposited, which is their problem, not a race condition).
+ *   3. If authenticated == true and the L2 balance covers what the held rows
+ *      cost, the L1→L2 bridge has delivered as far as these rows care. Promote
+ *      all that sender's waiting rows back to 'pending' and clear
+ *      pendingDepositTxHash. The validator then simulates them normally.
  *   4. Rows older than 20 min whose sender is still not authenticated get
  *      failed with a "deposit did not arrive" reason (L1 tx reverted, LZ
  *      delivery delayed, etc). The validator has its own 25-min safety-net
@@ -1085,14 +1084,15 @@ async function cleanupPendingMintDeposits() {
         ])
         const cawBalance = BigInt(cawBalanceRaw?.toString() ?? '0')
 
-        // "Deposit has landed" means auth is true AND the token has a
-        // non-zero L2 CAW balance. We don't compare against the specific
-        // deposit amount here because multi-deposit scenarios make that
-        // brittle — as long as there's SOME balance on L2, the validator
-        // can simulate normally. If the user queued more than they can
-        // afford, simulation will fail with a legitimate insufficient
-        // balance error (not a race-condition one).
-        if (isAuthenticated && cawBalance > 0n) {
+        // "Deposit has landed" means auth is true AND the token has a non-zero
+        // L2 CAW balance that covers the rows held for it. A non-zero balance
+        // alone only proves that for a new mint: a top-up's sender already has
+        // one, so promoting on it clears the hash while the deposit is still in
+        // flight, and the validator then fails the row as InsufficientBalance.
+        // We compare against the rows' cost, not the deposit amount, because
+        // multi-deposit scenarios make the amount brittle.
+        const heldCost = depositHoldCostWei(rows)
+        if (isAuthenticated && cawBalance > 0n && cawBalance >= heldCost) {
           // Both signals present. Promote all waiting rows for this sender
           // so the validator can simulate them normally.
           const promoted = await prisma.txQueue.updateMany({
@@ -1121,6 +1121,8 @@ async function cleanupPendingMintDeposits() {
 
         if (isAuthenticated && cawBalance === 0n) {
           logger.log(`[PendingMintDeposit] Sender ${senderId}: auth landed but balance still 0 — holding`)
+        } else if (isAuthenticated) {
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: balance ${cawBalance} below held rows' cost ${heldCost} — holding`)
         }
 
         // Not fully ready — check if any rows for this sender have timed
