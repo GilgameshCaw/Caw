@@ -10,6 +10,7 @@ import { isSafePublicUrl } from '../util/ssrfGuard'
 import { stripPollMarker } from '../../tools/pollMarker'
 import { t as i18nT } from '../util/i18n'
 import { hasLocale } from '../util/localePrefix'
+import { readMetaTags } from '../util/htmlMeta'
 
 const router = Router()
 
@@ -255,9 +256,8 @@ async function fetchBoundedBytes(rawUrl: string, capBytes: number, timeoutMs = 4
   }
 }
 
-// Scrape an HTML page for an og:image / twitter:image URL. Tiny regex
-// over the first ~1MB — we don't need a real parser since these meta
-// tags live in the head and are short. Returns the resolved image data
+// Scrape an HTML page for an og:image / twitter:image URL, over the
+// first ~1MB. Returns the resolved image data
 // URI or null if the page has no preview image (or the preview image
 // itself fails to fetch).
 //
@@ -277,20 +277,9 @@ async function scrapeOgImageFromUrl(pageUrl: string): Promise<string | null> {
   }
   if (!fetched.contentType.startsWith('text/html')) return null
   const html = fetched.buf.toString('utf-8')
-  // Permissive regex covers both attribute orderings (property/name first
-  // OR content first) and quote styles. og:image takes precedence;
-  // twitter:image is the fallback.
-  const tryTags = [
-    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
-    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
-    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
-    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i,
-  ]
-  let imgUrl: string | null = null
-  for (const re of tryTags) {
-    const m = html.match(re)
-    if (m) { imgUrl = m[1]; break }
-  }
+  // og:image takes precedence; twitter:image is the fallback.
+  const meta = readMetaTags(html)
+  const imgUrl = meta.property('og:image') ?? meta.name('twitter:image')
   if (!imgUrl) return null
   // Resolve relative og:image against the page URL.
   try {
