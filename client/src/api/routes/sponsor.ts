@@ -114,7 +114,8 @@ const EXECUTE_DUST_FLOOR_GAS = 80_000n
 /**
  * PEEK-ONLY per-IP limiter. Returns true if the IP is UNDER the limit, false if
  * at/over. Does NOT increment — a failed/abandoned attempt must not consume a
- * slot. The slot is only spent on actual success via recordSponsorUse() below.
+ * slot. The slot is only spent on actual success via recordSponsorUse() below,
+ * or on a mined revert in the execute route, which the relayer paid for.
  *
  * Rationale (updated): now that bootstrap invite codes are user-PURCHASED (each
  * already cost the buyer CAW that covers the validator's gas), the IP gate is a
@@ -150,7 +151,8 @@ async function checkSponsorRateLimit(ip: string, op: 'bootstrap' | 'deposit' | '
 
 /**
  * Record one successful sponsored op against an IP's daily quota. Call ONLY
- * after the account/op actually succeeded. Sets the 24h TTL on first use.
+ * after the account/op actually succeeded, or after a mined revert in the execute
+ * route. Sets the 24h TTL on first use.
  */
 async function recordSponsorUse(ip: string, op: 'bootstrap' | 'deposit' | 'authenticate' | 'ungated' | 'delegate-l2' | 'faucet'): Promise<void> {
   const key = `sponsor:${op}:${ip}`
@@ -1854,10 +1856,14 @@ router.post('/execute', async (req, res) => {
     forwardValue,
   )
   if (isSponsorError(result)) {
+    // A mined revert cost the relayer gas and paid no fee, and it leaves the nonce
+    // unused so the same signed batch can be sent again: it counts like a success.
+    // Errors where nothing was sent, like an RPC failure, don't count.
+    if (result.minedRevert) void recordSponsorUse(ip, 'authenticate')
     const status = result.error === 'TREASURY_LOW' ? 503 : 400
     return res.status(status).json(result)
   }
-  void recordSponsorUse(ip, 'authenticate')   // count only on success (shared bucket); fire-and-forget
+  void recordSponsorUse(ip, 'authenticate')   // shared bucket; fire-and-forget
 
   // ── RELAY ACCOUNTING: record gas SPENT vs fee RECEIVED so the operator can prove
   //    the validator isn't losing money on the passkey relay. Fire-and-forget — a
