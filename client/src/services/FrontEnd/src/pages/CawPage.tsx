@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useT } from '~/i18n/I18nProvider'
@@ -61,6 +61,14 @@ type CawDetailResponse = {
   tipsNextCursor?: number
 }
 
+// Put a fetched page into the replies already on screen: fetched rows replace
+// their old copies and new rows go on the end. replyRows sorts them for display.
+function mergeComments(loaded: CawItem[], fetched: CawItem[]): CawItem[] {
+  const fresh = new Map(fetched.map(c => [c.id, c]))
+  const known = new Set(loaded.map(c => c.id))
+  return [...loaded.map(c => fresh.get(c.id) ?? c), ...fetched.filter(c => !known.has(c.id))]
+}
+
 export const CawPage: React.FC = () => {
   const t = useT()
   // Route can be either the legacy /caws/:id or the canonical
@@ -121,6 +129,10 @@ export const CawPage: React.FC = () => {
   const [removedBy, setRemovedBy] = useState<{ author: string | null } | null>(null)
   const [hasMoreComments, setHasMoreComments] = useState(false)
   const [commentCursor, setCommentCursor] = useState<number | undefined>(undefined)
+  // The reply poll keeps the closure of the render that started it, so
+  // syncReplies reads the current list through this.
+  const repliesRef = useRef({ comments, hasMoreComments })
+  repliesRef.current = { comments, hasMoreComments }
   const [loadingMore, setLoadingMore] = useState(false)
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
@@ -325,6 +337,30 @@ export const CawPage: React.FC = () => {
     })
   }, [searchParams, isAuthenticated])
 
+  // GET /api/caws/:id returns the first page of replies only, so it can't simply
+  // replace a list that has more pages loaded.
+  const syncReplies = async (data: CawDetailResponse) => {
+    const { comments: loaded, hasMoreComments: hadMore } = repliesRef.current
+    if (loaded.length <= data.comments.length) {
+      setComments(data.comments)
+      setHasMoreComments(!!data.hasMoreComments)
+      setCommentCursor(data.nextCommentCursor)
+      return
+    }
+    setComments(prev => mergeComments(prev, data.comments))
+    // Replies are oldest first, so the cursor is still good and a new reply is
+    // somewhere ahead of it.
+    if (hadMore) return
+    // Everything was loaded, so there's no cursor, and a new reply is past the
+    // first page. Read on from the last row.
+    const tail = await apiFetch<{ comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(
+      `/api/caws/${id}?commentCursor=${loaded[loaded.length - 1].id}&commentLimit=20`
+    )
+    setComments(prev => mergeComments(prev, tail.comments))
+    setHasMoreComments(!!tail.hasMoreComments)
+    setCommentCursor(tail.nextCommentCursor)
+  }
+
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
     // No DB row for tempId routes — caller's reply was on an optimistic
@@ -335,11 +371,11 @@ export const CawPage: React.FC = () => {
       const data =
         await apiFetch<CawDetailResponse>(`/api/caws/${id}`)
       setCaw(data.caw)
-      setComments(data.comments)
       setRecaws(data.recaws || [])
       setTips(data.tips || [])
       setRecawsNextCursor(data.hasMoreRecaws && data.recawsNextCursor != null ? data.recawsNextCursor : null)
       setTipsNextCursor(data.hasMoreTips && data.tipsNextCursor != null ? data.tipsNextCursor : null)
+      await syncReplies(data)
     } catch (error) {
       console.error('Error refreshing comments:', error)
     }
@@ -384,11 +420,11 @@ export const CawPage: React.FC = () => {
         const data = await apiFetch<CawDetailResponse>(`/api/caws/${id}`)
 
         setCaw(data.caw)
-        setComments(data.comments)
         setRecaws(data.recaws || [])
         setTips(data.tips || [])
         setRecawsNextCursor(data.hasMoreRecaws && data.recawsNextCursor != null ? data.recawsNextCursor : null)
         setTipsNextCursor(data.hasMoreTips && data.tipsNextCursor != null ? data.tipsNextCursor : null)
+        await syncReplies(data)
         const hasPendingComments = data.comments.some(c => c.status === 'PENDING')
         if (!data.caw.replyPending && !hasPendingComments) {
           setPollingReplies(false)
@@ -408,7 +444,7 @@ export const CawPage: React.FC = () => {
       const data = await apiFetch<{ comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(
         `/api/caws/${id}?commentCursor=${commentCursor}&commentLimit=20`
       )
-      setComments(prev => [...prev, ...data.comments])
+      setComments(prev => mergeComments(prev, data.comments))
       setHasMoreComments(!!data.hasMoreComments)
       setCommentCursor(data.nextCommentCursor)
     } catch (err) {
