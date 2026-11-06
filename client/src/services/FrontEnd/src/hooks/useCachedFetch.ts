@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiFetch } from '~/api/client'
+import { isHttpUrl } from '~/utils/httpUrl'
 
 /**
  * Cached lookup that resolves an endpoint to a URL string and dedupes
@@ -10,6 +11,10 @@ import { apiFetch } from '~/api/client'
  * fully-qualified URL ("https://other-node.com/api/foo"), it bypasses
  * apiFetch and hits that host directly — used for cross-node short-URL
  * resolution where the answer only exists on the originating node's DB.
+ *
+ * Anything `extractUrl` returns other than an http(s) URL resolves to null:
+ * callers use the value during render, so the type has to hold whatever the
+ * other node sent.
  */
 export function useCachedFetch<T = unknown>(
   key: string,
@@ -44,7 +49,8 @@ export function useCachedFetch<T = unknown>(
         } else {
           data = await apiFetch<T>(endpoint)
         }
-        const resolved = extractRef.current(data)
+        const extracted = extractRef.current(data)
+        const resolved = isHttpUrl(extracted) ? extracted : null
         c.set(key, resolved)
         setUrl(resolved)
       } catch (err) {
