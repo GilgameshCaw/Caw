@@ -74,7 +74,7 @@ const TipModal: React.FC<TipModalProps> = ({
   const hasActiveSession = useHasActiveSession()
   const { population } = useWalletPopulation()
   const isPopB = population === 'B'
-  const wrongWallet = isConnected && !hasActiveSession && activeToken?.owner && address
+  const wrongWallet = !isPopB && isConnected && !hasActiveSession && activeToken?.owner && address
     ? activeToken.owner.toLowerCase() !== address.toLowerCase()
     : false
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)

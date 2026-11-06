@@ -969,7 +969,8 @@ export function useSignAndSubmitAction() {
       actionCode0 !== 6 && // exclude WITHDRAW
       (activeSession0.scopeBitmap & (1 << actionCode0)) !== 0
 
-    if (!canUseSession0 && isConnected && activeToken?.owner && address) {
+    // Pop-B signs with the passkey below, whichever wallet happens to be connected.
+    if (population !== 'B' && !canUseSession0 && isConnected && activeToken?.owner && address) {
       if (activeToken.owner.toLowerCase() !== address.toLowerCase()) {
         throw new Error('Wrong wallet connected. Please switch to the correct wallet.')
       }
@@ -2147,7 +2148,7 @@ export function useSignAndSubmitAction() {
 
       throw error
     }
-  }, [activeTokenId, address, signTypedDataAsync, setCawonce])
+  }, [activeTokenId, address, population, signTypedDataAsync, setCawonce])
 
   // as soon as we become connected with the correct wallet, replay the pending action
   useEffect(() => {

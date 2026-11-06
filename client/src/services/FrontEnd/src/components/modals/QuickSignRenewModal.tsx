@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useAccount, useChainId } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
@@ -72,7 +73,10 @@ const QuickSignRenewModal: React.FC = () => {
   const [walletProtect, setWalletProtect] = useState(false)
   const [userEditedTip, setUserEditedTip] = useState(false)
 
-  const wrongWallet = isConnected && activeToken && address
+  // Pop-B signs with the passkey, so a connected wallet doesn't have to match.
+  const { population } = useWalletPopulation()
+  const isPopB = population === 'B'
+  const wrongWallet = !isPopB && isConnected && activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false
 
@@ -147,7 +151,7 @@ const QuickSignRenewModal: React.FC = () => {
     // trip. signAndSubmit's catch-and-retry path (api/actions.ts:1340-1351
     // and 1634-1641) is the safety net for the handful of wallets that
     // reject cross-chain typed-data signing instead of auto-switching.
-    ensureWallet(null, async () => {
+    const retryManually = async () => {
       if (wrongWallet) return
 
       // Retry via the MANUAL path (forceManual: true) so the action signs with
@@ -171,7 +175,10 @@ const QuickSignRenewModal: React.FC = () => {
           }
         }, 100)
       }
-    })
+    }
+    // Pop-B has no wallet to ensure: the bridge would send them to passkey sign-in.
+    if (isPopB) void retryManually()
+    else ensureWallet(null, retryManually)
   }
 
   // Note: we used to show a "switch network first" hint here when the

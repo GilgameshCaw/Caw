@@ -228,7 +228,7 @@ const MessagesPage: React.FC = () => {
   // Detect wallet mismatch: connected wallet differs from token owner
   const tokenOwner = activeToken?.owner?.toLowerCase()
   const connectedAddress = address?.toLowerCase()
-  const isWrongWallet = !!connectedAddress && !!tokenOwner && connectedAddress !== tokenOwner
+  const isWrongWallet = !isPasskeyUser && !!connectedAddress && !!tokenOwner && connectedAddress !== tokenOwner
   const { openConnectModal } = useConnectModal()
 
   // Get URL parameters
@@ -1912,7 +1912,7 @@ const MessagesPage: React.FC = () => {
                   </div>
                 )}
                 {(() => {
-                  const wrongWallet = address && activeToken?.address && address.toLowerCase() !== activeToken.address.toLowerCase()
+                  const wrongWallet = !isPasskeyUser && address && activeToken?.address && address.toLowerCase() !== activeToken.address.toLowerCase()
                   return wrongWallet ? (
                     <div className="flex flex-col items-center gap-2">
                       <button
