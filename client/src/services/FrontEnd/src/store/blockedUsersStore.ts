@@ -14,7 +14,8 @@ interface BlockedUser {
 
 interface BlockedUsersState {
   blockedUsers: BlockedUser[]
-  initialized: boolean
+  // The token blockedUsers belongs to. Blocks are per token on the server.
+  loadedFor: number | null
 
   // Actions
   fetchBlocks: (userId: number) => Promise<void>
@@ -28,22 +29,27 @@ interface BlockedUsersState {
 export const useBlockedUsersStore = create<BlockedUsersState>()(
   (set, get) => ({
     blockedUsers: [],
-    initialized: false,
+    loadedFor: null,
 
-    resetBlocks: () => set({ initialized: false, blockedUsers: [] }),
+    resetBlocks: () => set({ loadedFor: null, blockedUsers: [] }),
 
     fetchBlocks: async (userId: number) => {
-      if (get().initialized) return
-      set({ initialized: true }) // Claim immediately to prevent concurrent calls
+      if (get().loadedFor === userId) return
+      // Claim immediately to prevent concurrent calls, and drop the previous
+      // token's list so it isn't applied to this one.
+      set({ loadedFor: userId, blockedUsers: [] })
       try {
         const data = await apiFetch<{ blockedUsers: BlockedUser[] }>(
           `/api/blocks?userId=${userId}`
         )
-        set({ blockedUsers: data.blockedUsers, initialized: true })
+        // The active token may have changed while this was in flight.
+        if (get().loadedFor !== userId) return
+        set({ blockedUsers: data.blockedUsers })
       } catch (err) {
         console.error('[BlockedUsersStore] Failed to fetch blocks:', err)
-        // Still mark as initialized so we don't keep retrying
-        set({ initialized: true })
+        // loadedFor stays set so we don't keep retrying. Skip the migration:
+        // with the server unreachable it would drop the legacy list unsent.
+        return
       }
 
       // Migrate legacy localStorage blocks to server
@@ -68,7 +74,7 @@ export const useBlockedUsersStore = create<BlockedUsersState>()(
             const refreshed = await apiFetch<{ blockedUsers: BlockedUser[] }>(
               `/api/blocks?userId=${userId}`
             )
-            set({ blockedUsers: refreshed.blockedUsers })
+            if (get().loadedFor === userId) set({ blockedUsers: refreshed.blockedUsers })
           } else {
             localStorage.removeItem('caw-blocked-users')
           }
