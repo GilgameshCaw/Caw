@@ -4,6 +4,7 @@ import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
 import { isSafePublicUrl } from '../util/ssrfGuard'
 import { requireAuth } from '../middleware/auth'
+import { readMetaTags, readTitle } from '../util/htmlMeta'
 
 const router = Router()
 
@@ -156,20 +157,13 @@ export async function extractMetadata(url: string): Promise<{
     const html = await response.text()
 
     // Extract Open Graph tags
-    const ogTitle = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
-                    html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1]
-    const ogDescription = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
-                          html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i)?.[1]
-    const ogImage = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
-                    html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)?.[1]
-    const ogSiteName = html.match(/<meta[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
-                       html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:site_name["']/i)?.[1]
+    const meta = readMetaTags(html)
+    const ogImage = meta.property('og:image')
+    const ogSiteName = meta.property('og:site_name')
 
     // Fallback to standard meta tags
-    const title = ogTitle || html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]
-    const description = ogDescription ||
-                        html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
-                        html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i)?.[1]
+    const title = meta.property('og:title') || readTitle(html)
+    const description = meta.property('og:description') || meta.name('description')
 
     // Extract site name from URL if not found
     const siteName = ogSiteName || new URL(url).hostname.replace(/^www\./, '')
