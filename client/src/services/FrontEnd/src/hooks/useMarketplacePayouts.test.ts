@@ -32,7 +32,12 @@ vi.mock('~/../../../abi/generated', () => ({
   cawProfileMarketplaceAbi: [],
 }))
 vi.mock('~/config/chains', () => ({
-  chains: { l2: { chainId: 84532 } },
+  chains: { l1: { chainId: 11155111 }, l2: { chainId: 84532 } },
+}))
+
+// Runs the action straight away, as the real hook does on the right chain.
+vi.mock('~/hooks/useEnsureWallet', () => ({
+  useEnsureWallet: () => (_opts: unknown, action: () => Promise<void>) => action(),
 }))
 
 const SELLER = '0xaAbBcCdDeEfF001122334455667788990011aabb' as `0x${string}`
@@ -139,6 +144,37 @@ describe('useMarketplacePayouts', () => {
     const { result } = renderHook(() => useMarketplacePayouts(SELLER))
 
     expect(result.current.isPending).toBe(true)
+  })
+
+  it('reads, writes and waits for the receipt on L1, where the marketplace is', () => {
+    const writeContract = vi.fn()
+    mockUseReadContract.mockReturnValue({ data: 100n, isLoading: false, refetch: vi.fn() })
+    mockUseWriteContract.mockReturnValue(makeWriteMock({ writeContract }))
+
+    const { result } = renderHook(() => useMarketplacePayouts(SELLER))
+    result.current.withdraw()
+    result.current.withdrawTo('0x1111111111111111111111111111111111111111')
+
+    expect(mockUseReadContract).toHaveBeenCalledWith(expect.objectContaining({ chainId: 11155111 }))
+    expect(mockUseWaitForTxReceipt).toHaveBeenCalledWith(expect.objectContaining({ chainId: 11155111 }))
+    expect(writeContract).toHaveBeenCalledTimes(2)
+    for (const [call] of writeContract.mock.calls) {
+      expect(call.chainId).toBe(11155111)
+    }
+  })
+
+  it('refetches and resets once after the withdrawal confirms', () => {
+    const refetch = vi.fn()
+    const reset = vi.fn()
+    mockUseReadContract.mockReturnValue({ data: 100n, isLoading: false, refetch })
+    mockUseWriteContract.mockReturnValue(makeWriteMock({ data: '0xabc', reset }))
+    mockUseWaitForTxReceipt.mockReturnValue(makeReceiptMock({ isSuccess: true }))
+
+    const { rerender } = renderHook(() => useMarketplacePayouts(SELLER))
+    rerender()
+
+    expect(refetch).toHaveBeenCalledOnce()
+    expect(reset).toHaveBeenCalledOnce()
   })
 
   it('reflects isConfirming from useWaitForTransactionReceipt', () => {

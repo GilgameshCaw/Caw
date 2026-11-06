@@ -2,21 +2,26 @@
  * useMarketplacePayouts
  *
  * Reads the H-15 pull-pattern pendingPayouts balance from
- * cawProfileMarketplace for a given seller address and exposes
+ * cawProfileMarketplace (on L1) for a given seller address and exposes
  * withdrawPayouts / withdrawPayoutsTo write helpers.
+ *
+ * pendingPayouts only holds ETH. ERC20 proceeds are in pendingTokenPayouts,
+ * which this hook doesn't read.
  *
  * V2 change: sale proceeds NO LONGER push to the seller's on-chain balance
  * directly. They accumulate in pendingPayouts[seller] until the seller calls
  * withdrawPayouts() (or withdrawPayoutsTo(recipient) for a different address).
  */
 
+import { useEffect } from 'react'
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 
 export interface MarketplacePayouts {
-  /** Raw CAW wei sitting in pendingPayouts[seller]. Null while loading. */
+  /** Raw ETH wei sitting in pendingPayouts[seller]. Null while loading. */
   pending: bigint | null
   loaded: boolean
   /** Withdraw all proceeds to the connected wallet address. */
@@ -31,6 +36,7 @@ export interface MarketplacePayouts {
 
 export function useMarketplacePayouts(sellerAddress: `0x${string}` | undefined): MarketplacePayouts {
   const enabled = !!sellerAddress
+  const ensureWallet = useEnsureWallet()
 
   const {
     data,
@@ -41,7 +47,7 @@ export function useMarketplacePayouts(sellerAddress: `0x${string}` | undefined):
     abi: cawProfileMarketplaceAbi,
     functionName: 'pendingPayouts',
     args: [sellerAddress ?? '0x0000000000000000000000000000000000000000'],
-    chainId: chains.l2.chainId,
+    chainId: chains.l1.chainId,
     query: { enabled },
   })
 
@@ -54,29 +60,37 @@ export function useMarketplacePayouts(sellerAddress: `0x${string}` | undefined):
 
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash: txHash,
+    chainId: chains.l1.chainId,
   })
 
   // Refetch after tx confirms so the pending balance updates immediately.
-  if (isSuccess && txHash) {
+  useEffect(() => {
+    if (!isSuccess || !txHash) return
     refetch()
     reset()
-  }
+  }, [isSuccess, txHash, refetch, reset])
 
   const withdraw = () => {
-    writeContract({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawProfileMarketplaceAbi,
-      functionName: 'withdrawPayouts',
-      args: [],
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeContract({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawProfileMarketplaceAbi,
+        functionName: 'withdrawPayouts',
+        args: [],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
   const withdrawTo = (recipient: `0x${string}`) => {
-    writeContract({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawProfileMarketplaceAbi,
-      functionName: 'withdrawPayoutsTo',
-      args: [recipient],
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeContract({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawProfileMarketplaceAbi,
+        functionName: 'withdrawPayoutsTo',
+        args: [recipient],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
