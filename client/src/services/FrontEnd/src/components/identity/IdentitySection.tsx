@@ -4,21 +4,12 @@
  * Identity management panel shown in AccountSettings for Population B
  * (EIP-7702) users only. Hidden for Population A and C.
  *
- * Reads passkey state from SmartEOA events via getLogs() because the
- * contract does not expose view functions for listing enrolled passkeys
- * or pending passkeys. Derivation:
- *   - Enrolled: addresses in PasskeyActivated events minus PasskeyRemoved
- *   - Pending:  PasskeyAdded minus (PasskeyActivated | PasskeyCancelled)
- *
- * The ecdsaFallback address is derived from the last EcdsaFallbackRotated
- * event (or taken from the EIP-7702 initialization log). Because the ABI
- * doesn't expose a view getter for the fallback address, we read it from
- * the events. This is acceptable for an identity panel that loads once on
- * mount — it's not a hot path.
+ * Reads passkey state and the ecdsaFallback address from L1 contract storage
+ * (see services/identity/passkeyState.ts): the contract has no view functions
+ * for them, and its events don't cover them.
  *
  * Passkey ID display: we show the first 8 chars of the pubkeyHash as the
- * short identifier. This matches the contract's keccak256(abi.encode(X, Y))
- * pubkeyHash emitted in events.
+ * short identifier.
  *
  * localStorage key for stored credential ID:
  *   "caw:passkey-credential-id" — used to badge "This device" on the
@@ -27,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { encodeAbiParameters } from 'viem'
+import { encodeAbiParameters, hexToBytes } from 'viem'
 import type { Address } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
@@ -36,6 +27,9 @@ import { erc20Abi, encodeFunctionData } from 'viem'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
+import { useRecoveryContext } from './RecoveryProvider'
+import { readPasskeyState } from '~/services/identity/passkeyState'
+import { chains } from '~/config/chains'
 import { getPasskeyCredential } from '~/constants/passkeyStorage'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal'
@@ -45,7 +39,7 @@ import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { smartEoaAbi } from '~/../../../abi/generated'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
 import { useSmartEoaManagement } from '~/hooks/useSmartEoaManagement'
-import AddPasskeyDialog, { type PendingPasskeyRow } from './AddPasskeyDialog'
+import AddPasskeyDialog from './AddPasskeyDialog'
 import RotateEcdsaFallbackDialog from './RotateEcdsaFallbackDialog'
 import ReDownloadBackupDialog from './ReDownloadBackupDialog'
 import RemovePasskeyDialog from './RemovePasskeyDialog'
@@ -57,105 +51,6 @@ interface SponsorExecuteQuote {
   cawAddress: Address
 }
 
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface EnrolledPasskey {
-  pubkeyHash: `0x${string}`
-  /** True if this hash matches the credential stored in localStorage. */
-  isThisDevice: boolean
-}
-
-interface PasskeyState {
-  enrolled: EnrolledPasskey[]
-  pending: PendingPasskeyRow[]
-  ecdsaFallbackAddress: `0x${string}` | undefined
-}
-
-// ─── Event-based passkey state reader ────────────────────────────────────────
-
-async function readPasskeyState(
-  publicClient: ReturnType<typeof usePublicClient>,
-  walletAddress: `0x${string}`,
-): Promise<PasskeyState> {
-  if (!publicClient) {
-    return { enrolled: [], pending: [], ecdsaFallbackAddress: undefined }
-  }
-
-  // Read all passkey-related events from this EOA address.
-  const [activated, added, removed, cancelled, fallbackRotated] = await Promise.all([
-    publicClient.getLogs({
-      address: walletAddress,
-      event: { type: 'event', name: 'PasskeyActivated', inputs: [{ name: 'pubkeyHash', type: 'bytes32', indexed: true }] } as const,
-      fromBlock: 0n,
-      toBlock: 'latest',
-    }).catch(() => []),
-    publicClient.getLogs({
-      address: walletAddress,
-      event: { type: 'event', name: 'PasskeyAdded', inputs: [{ name: 'pubkeyHash', type: 'bytes32', indexed: true }, { name: 'validFrom', type: 'uint64', indexed: false }] } as const,
-      fromBlock: 0n,
-      toBlock: 'latest',
-    }).catch(() => []),
-    publicClient.getLogs({
-      address: walletAddress,
-      event: { type: 'event', name: 'PasskeyRemoved', inputs: [{ name: 'pubkeyHash', type: 'bytes32', indexed: true }] } as const,
-      fromBlock: 0n,
-      toBlock: 'latest',
-    }).catch(() => []),
-    publicClient.getLogs({
-      address: walletAddress,
-      event: { type: 'event', name: 'PasskeyCancelled', inputs: [{ name: 'pubkeyHash', type: 'bytes32', indexed: true }] } as const,
-      fromBlock: 0n,
-      toBlock: 'latest',
-    }).catch(() => []),
-    publicClient.getLogs({
-      address: walletAddress,
-      event: { type: 'event', name: 'EcdsaFallbackRotated', inputs: [{ name: 'newFallback', type: 'address', indexed: true }] } as const,
-      fromBlock: 0n,
-      toBlock: 'latest',
-    }).catch(() => []),
-  ])
-
-  // Derive sets.
-  const removedHashes = new Set(removed.map(l => (l.topics[1] as `0x${string}`)))
-  const cancelledHashes = new Set(cancelled.map(l => (l.topics[1] as `0x${string}`)))
-  const activatedHashes = new Set(activated.map(l => (l.topics[1] as `0x${string}`)))
-
-  // Enrolled = activated minus removed.
-  const enrolledHashes = [...activatedHashes].filter(h => !removedHashes.has(h))
-
-  // Pending = added minus (activated OR cancelled).
-  const pendingRows: PendingPasskeyRow[] = added
-    .filter(l => {
-      const hash = l.topics[1] as `0x${string}`
-      return !activatedHashes.has(hash) && !cancelledHashes.has(hash)
-    })
-    .map(l => {
-      const pubkeyHash = l.topics[1] as `0x${string}`
-      // validFrom is non-indexed, encoded in data. Use block timestamp as fallback.
-      const logArgs = l.args as Record<string, unknown> | undefined
-      const validFrom = logArgs && typeof logArgs['validFrom'] === 'bigint'
-        ? Number(logArgs['validFrom'])
-        : 0
-      return {
-        pubkeyHash,
-        pubkeyX: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
-        pubkeyY: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
-        proposedAt: validFrom,
-      }
-    })
-
-  // Latest ecdsaFallback rotation.
-  const ecdsaFallbackAddress = fallbackRotated.length > 0
-    ? (fallbackRotated[fallbackRotated.length - 1].topics[1] as `0x${string}`)
-    : undefined
-
-  return {
-    enrolled: enrolledHashes.map(h => ({ pubkeyHash: h, isThisDevice: false })),
-    pending: pendingRows,
-    ecdsaFallbackAddress,
-  }
-}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -179,7 +74,15 @@ export function IdentitySection({
   // passkey". useWalletPopulation returns the recovered/​passkey owner address for
   // Population B whether or not a wagmi wallet is connected.
   const { population, address } = useWalletPopulation()
-  const publicClient = usePublicClient()
+  // L1 explicitly: management calls go to L1, and each chain has its own SmartEOA
+  // storage. The default client follows whichever chain the wallet is on.
+  const publicClient = usePublicClient({ chainId: chains.l1.chainId })
+  // A key loaded through the backup file lives in RecoveryProvider.
+  const { privateKey: recoveredKey } = useRecoveryContext()
+  const privateKey = useMemo(
+    () => inMemoryPrivateKey ?? (recoveredKey ? hexToBytes(recoveredKey) : null),
+    [inMemoryPrivateKey, recoveredKey],
+  )
 
   // Only render for Population B (not while loading, not for A/C/none).
   if (population !== 'B') return null
@@ -190,7 +93,7 @@ export function IdentitySection({
       publicClient={publicClient}
       isDark={isDark}
       t={t}
-      inMemoryPrivateKey={inMemoryPrivateKey}
+      inMemoryPrivateKey={privateKey}
       username={username}
     />
   )
@@ -238,10 +141,10 @@ function IdentitySectionInner({
     }
   }, [searchParams, setSearchParams])
 
-  // Read passkey state from chain events.
-  const { data: passkeyState, isLoading, refetch } = useQuery({
+  // Read passkey state from L1 contract storage.
+  const { data: passkeyState, isLoading, isError, refetch } = useQuery({
     queryKey: ['smart-eoa-passkeys', walletAddress],
-    queryFn: () => readPasskeyState(publicClient, walletAddress!),
+    queryFn: () => readPasskeyState(publicClient!, walletAddress!),
     enabled: !!walletAddress && !!publicClient,
     staleTime: 5 * 60 * 1000,
   })
@@ -255,6 +158,11 @@ function IdentitySectionInner({
       return null
     }
   }, [activeToken?.tokenId])
+
+  // Recovering = the backup key is loaded and this browser has no passkey for the
+  // profile. With a local passkey, keep using it: the recovery re-enroll below
+  // removes every active key.
+  const inRecovery = !!inMemoryPrivateKey && !localCredentialId
 
   const enrolled = passkeyState?.enrolled ?? []
   const pending = passkeyState?.pending ?? []
@@ -374,7 +282,13 @@ function IdentitySectionInner({
             </div>
           )}
 
-          {!isLoading && enrolled.length === 0 && pending.length === 0 && (
+          {isError && (
+            <p className={`text-sm ${mutedClass}`} data-testid="passkeys-error">
+              {t('common.something_went_wrong')}
+            </p>
+          )}
+
+          {!isLoading && !isError && enrolled.length === 0 && pending.length === 0 && (
             <p className={`text-sm ${mutedClass}`} data-testid="no-passkeys">
               {t('identity.section.no_passkeys')}
             </p>
@@ -478,7 +392,7 @@ function IdentitySectionInner({
             <p className={`text-xs font-mono break-all mb-3 ${mutedClass}`}>
               {ecdsaFallbackAddress}
             </p>
-          ) : (
+          ) : !isLoading && !isError && (
             <p className={`text-xs mb-3 ${mutedClass}`}>
               {t('identity.section.no_fallback')}
             </p>
@@ -548,7 +462,6 @@ function IdentitySectionInner({
           //      stale passkey enrolled, so we must REMOVE the stale one(s) FIRST.
           //      removePasskey + addPasskey run sequentially IN THE SAME batch tx,
           //      so activeCount is already 0 by the time addPasskey executes.
-          const inRecovery = !!inMemoryPrivateKey
           const calls: ExecCall[] = []
 
           // Nonce sequencing: the contract does ++managementNonce after EACH
@@ -556,8 +469,12 @@ function IdentitySectionInner({
           // (currentNonce + k). Track the running offset.
           let nonceK = 0
           if (inRecovery) {
-            // Remove every currently-enrolled (stale) passkey via the recovery key.
-            for (const p of passkeyState?.enrolled ?? []) {
+            // Read the list now, not from the cached query: a key whose timelock
+            // ended since the last read also has to go, or addPasskey reverts.
+            if (!publicClient) throw new Error('No L1 client available.')
+            const { enrolled: activeKeys } = await readPasskeyState(publicClient, eoaAccount)
+            // Remove every active (stale) passkey via the recovery key.
+            for (const p of activeKeys) {
               const rmParams = encodeAbiParameters([{ type: 'bytes32' }], [p.pubkeyHash]) as `0x${string}`
               const rmSig = await signManagementWithRecoveryKey('removePasskey', rmParams, nonceK)
               calls.push({
@@ -637,7 +554,10 @@ function IdentitySectionInner({
             [{ type: 'bytes32' }],
             [pubkeyId],
           ) as `0x${string}`
-          const mgmtSig = await signManagement('cancelPendingPasskey', params)
+          // The contract takes either key here. A recovered user has no passkey.
+          const mgmtSig = inRecovery
+            ? await signManagementWithRecoveryKey('cancelPendingPasskey', params)
+            : await signManagement('cancelPendingPasskey', params)
 
           const call1: ExecCall = {
             to: eoaAccount,
@@ -707,11 +627,12 @@ function IdentitySectionInner({
             ) as `0x${string}`
 
             // 3. Sign the management op with the appropriate key.
-            //    unlocked=true  → recovery key (secp256k1, 65-byte) → unconditional
-            //                     removal regardless of remaining passkey count.
-            //    unlocked=false → active passkey (WebAuthn) → co-signer removal
+            //    unlocked or recovery mode → recovery key (secp256k1, 65-byte) →
+            //                     unconditional removal regardless of remaining
+            //                     passkey count.
+            //    otherwise → active passkey (WebAuthn) → co-signer removal
             //                     (contract requires N>=2 and signer != target).
-            const mgmtSig = unlocked
+            const mgmtSig = unlocked || inRecovery
               ? await signManagementWithRecoveryKey('removePasskey', params)
               : await signManagement('removePasskey', params)
 
