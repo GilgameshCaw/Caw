@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
+import { isHttpUrl } from '~/utils/httpUrl'
 import { HiOutlineExternalLink } from 'react-icons/hi'
 
 interface LinkPreviewProps {
@@ -17,13 +18,11 @@ interface LinkPreviewProps {
 }
 
 interface ShortUrlMetadata {
-  code: string
   originalUrl: string
   title?: string
   description?: string
   imageUrl?: string
   siteName?: string
-  clickCount: number
 }
 
 // Cache for metadata to avoid repeated fetches. Keyed by `${host}|${code}`
@@ -32,24 +31,45 @@ const metadataCache = new Map<string, ShortUrlMetadata | null>()
 const cacheKey = (host: string | undefined, code: string) =>
   host ? `${host}|${code}` : code
 
+// A numeric reference above U+10FFFF stays as written. String.fromCodePoint
+// throws on it, and decodeEntities runs during render.
+const decodeCodePoint = (reference: string, codePoint: number) =>
+  codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : reference
+
 // Defensive entity decode. The shorturl extractor stores raw og:title /
 // og:description from upstream HTML attributes, which means values can
 // arrive entity-encoded (`&amp;`, `&#39;`, etc.). The server-side fix
 // decodes at write time going forward, but existing rows already contain
 // encoded strings. Decoding at read keeps them readable without a DB
-// migration. Identical helper to the one in api/routes/shorturl.ts —
-// kept inline because it's 8 lines and only used here.
+// migration. Same helper as the one in api/routes/shorturl.ts apart from
+// decodeCodePoint — kept inline because it's 8 lines and only used here.
 function decodeEntities(s: string | undefined): string {
   if (!s) return ''
   return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => decodeCodePoint(m, parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (m, d) => decodeCodePoint(m, parseInt(d, 10)))
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
+}
+
+// The response can come from another node, so its shape isn't guaranteed. Without
+// an http(s) originalUrl there's nothing to link to; optional fields that aren't
+// strings are dropped. Render relies on these types.
+function readMetadata(data: unknown): ShortUrlMetadata | null {
+  const raw = data as Record<string, unknown> | null | undefined
+  if (!isHttpUrl(raw?.originalUrl)) return null
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+  return {
+    originalUrl: raw.originalUrl,
+    title: text(raw.title),
+    description: text(raw.description),
+    imageUrl: text(raw.imageUrl),
+    siteName: text(raw.siteName),
+  }
 }
 
 const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className = '' }) => {
@@ -69,7 +89,7 @@ const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className =
 
     const fetchMetadata = async () => {
       try {
-        let data: ShortUrlMetadata
+        let data: unknown
         if (originHost) {
           // Cross-node short URL — fetch from the originating host directly,
           // not via apiFetch (which only reaches local + discovered instances).
@@ -77,10 +97,11 @@ const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className =
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           data = await res.json()
         } else {
-          data = await apiFetch(`/api/shorturl/${code}`) as ShortUrlMetadata
+          data = await apiFetch(`/api/shorturl/${code}`)
         }
-        metadataCache.set(ck, data)
-        setMetadata(data)
+        const parsed = readMetadata(data)
+        metadataCache.set(ck, parsed)
+        setMetadata(parsed)
       } catch (err) {
         console.error('Failed to fetch link preview:', err)
         metadataCache.set(ck, null)
