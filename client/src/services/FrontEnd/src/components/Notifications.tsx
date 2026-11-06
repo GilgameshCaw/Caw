@@ -127,6 +127,9 @@ interface NotificationsResponse {
   notifications: Notification[]
   unreadCount: number
   hasMore: boolean
+  // Newest notification id the response reflects; bounds the landing
+  // mark-all so later events stay unread. Null when there are none.
+  readUpToId?: number | null
 }
 
 type TabType = 'all' | 'mentions'
@@ -243,7 +246,15 @@ const Notifications: React.FC = () => {
       // Subsequent pages (loadMore) only mark their own visible IDs.
       if (data.notifications.length > 0) {
         if (reset) {
-          await markAsRead()
+          // Bounded by what this response saw, so an event that lands
+          // between the GET and this POST stays unread. Everything on
+          // screen is read now, so zero the local count: the poll below
+          // refetches as soon as the server reports anything unread.
+          await markAsRead(undefined, data.readUpToId ?? undefined)
+          setUnreadCount(0)
+          if (notifCache && notifCache.tokenId === activeToken.tokenId && notifCache.tab === activeTab) {
+            notifCache.unread = 0
+          }
         } else {
           const unreadIds = data.notifications
             .filter(n => !n.isRead)
@@ -262,19 +273,21 @@ const Notifications: React.FC = () => {
     }
   }, [activeToken, activeTab, offset])
 
-  const markAsRead = async (notificationIds?: number[]) => {
+  const markAsRead = async (notificationIds?: number[], readUpToId?: number) => {
     if (!activeToken) return
 
     try {
-      await apiFetch('/api/notifications/read', {
+      const res = await apiFetch<{ success: boolean; unreadCount?: number }>('/api/notifications/read', {
         method: 'POST',
         body: JSON.stringify({
           userId: activeToken.tokenId,
-          notificationIds
+          notificationIds,
+          readUpToId
         })
       })
-      // Clear the sidebar badge immediately
-      setGlobalUnreadCount(0)
+      // Update the sidebar badge immediately. Events newer than what the
+      // page showed stay unread, so use the server's count when it sends one.
+      setGlobalUnreadCount(res?.unreadCount ?? 0)
     } catch (err) {
       console.error('Failed to mark notifications as read:', err)
     }
