@@ -7,6 +7,7 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useRootSigner } from '~/hooks/useRootSigner'
 import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
+import { parseAmountWei } from '~/utils/parseAmountWei'
 import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
 import { useUserByToken } from '~/hooks/useUserData'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
@@ -310,12 +311,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     query: { enabled: !!tokenId && !!address }
   })
 
+  const amountWei = parseAmountWei(amount)
+
   const { data: depositQuote } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: 'depositQuote',
     address: CAW_NAME_QUOTER_ADDRESS,
-    args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || '0', 18), chains.l2.layerZero, false],
+    args: [CLIENT_ID, tokenId ?? 0, amountWei, chains.l2.layerZero, false],
     query: { enabled: !!tokenId && !!amount && currentStep === 0 }
   })
 
@@ -323,8 +326,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     if (depositQuote?.nativeFee != null) setDepositFee(BigInt(depositQuote.nativeFee))
   }, [depositQuote])
 
-  const insufficientBalance = !balance || parseUnits(amount || '0', 18) > balance
-  const needsApproval = !allowance || parseUnits(amount || '0', 18) > allowance
+  const insufficientBalance = !balance || amountWei > balance
+  const needsApproval = !allowance || amountWei > allowance
 
   const availableBalance = useMemo(() => {
     if (!balance) return 0
@@ -353,7 +356,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     abi: erc20Abi,
     functionName: 'approve',
     args: [CAW_NAMES_ADDRESS, maxUint256],
-    disabled: !amount || insufficientBalance || !isTokenOwner,
+    disabled: amountWei === 0n || insufficientBalance || !isTokenOwner,
     onError: (err) => { handleError(err, 'approve'); setIsApprovePending(false) },
     onPending: () => { setIsApprovePending(true) },
     onSuccess: async () => {
@@ -368,8 +371,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     address: CAW_NAMES_ADDRESS,
     abi: cawProfileAbi,
     functionName: 'deposit',
-    args: [CLIENT_ID, tokenId || 0, parseUnits((amount || '0').toString(), 18), chains.l2.layerZero, 0n],
-    disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
+    args: [CLIENT_ID, tokenId || 0, amountWei, chains.l2.layerZero, 0n],
+    disabled: !tokenId || amountWei === 0n || depositFee === 0n || !isTokenOwner,
     value: depositFee,
     onPending: () => { setIsStakePending(true) },
     onSuccess: async (hash) => {
@@ -1197,11 +1200,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
                   <button
                     onClick={handleStake}
-                    disabled={isStakePending || isApprovePending || (isConnected && (!amount || parseFloat(amount) === 0))}
+                    disabled={isStakePending || isApprovePending || (isConnected && amountWei === 0n)}
                     className={`w-full py-3 rounded-full font-bold transition-all ${
                       isStakePending || isApprovePending
                         ? 'bg-yellow-600 text-black cursor-not-allowed'
-                        : isConnected && (!amount || parseFloat(amount) === 0)
+                        : isConnected && amountWei === 0n
                           ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed')
                           : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                     }`}
