@@ -48,14 +48,16 @@ export default function ModeratorsAdmin() {
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
 
-  // Resolve a `target` (digits = tokenId, otherwise treat as username
-  // and look it up). Single round-trip path on the username branch.
+  // Resolve a `target`: bare digits are a tokenId, anything else is a username
+  // to look up. Usernames can be all digits, so a leading @ always means a name.
+  // Single round-trip path on the username branch.
   const resolveTokenId = async (raw: string): Promise<number | null> => {
-    const trimmed = raw.trim().replace(/^@/, '')
-    if (!trimmed) return null
-    if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10)
+    const trimmed = raw.trim()
+    const username = trimmed.replace(/^@/, '')
+    if (!username) return null
+    if (!trimmed.startsWith('@') && /^\d+$/.test(username)) return parseInt(username, 10)
     try {
-      const u = await apiFetch<{ tokenId: number }>(`/api/users/${encodeURIComponent(trimmed)}`)
+      const u = await apiFetch<{ tokenId: number }>(`/api/users/${encodeURIComponent(username)}`)
       return u?.tokenId ?? null
     } catch {
       return null
