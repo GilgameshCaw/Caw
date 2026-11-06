@@ -3,6 +3,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react"
 import toast from 'react-hot-toast'
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
+import { parseAmountWei } from '~/utils/parseAmountWei'
 import { useSearchParams, useLocation } from 'react-router-dom'
 import { useNavigate } from '~/utils/localizedRouter'
 import { FormHeader } from "~/components/forms/FormHeader"
@@ -207,12 +208,14 @@ const Staking = () => {
   }, [refetchTokenData, refetchBalance, isPasskeyUser, refetchPopBEth, refetchPopBCaw])
 
   // Get deposit quote from CawProfileQuoter
+  const amountWei = parseAmountWei(amount)
+
   const { data: depositQuote } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "depositQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
-    args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || "0", 18), chains.l2.layerZero, false],
+    args: [CLIENT_ID, tokenId ?? 0, amountWei, chains.l2.layerZero, false],
     query: {
       enabled: !!tokenId && !!amount && activeTab === 'stake' && paymentMode === 'caw'
     }
@@ -438,8 +441,8 @@ const Staking = () => {
   // Balance" on the button makes the staking page look broken before the user
   // has even connected. Treat unknown as not-insufficient so the button shows
   // the normal label and clicking enters the connect flow.
-  const insufficientBalance = balance !== undefined && parseUnits(amount || "0", 18) > balance
-  const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
+  const insufficientBalance = balance !== undefined && amountWei > balance
+  const needsApproval = !allowance || amountWei > allowance
 
   // Dollar-based preset buttons, converted to CAW at current price
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
@@ -538,7 +541,7 @@ const Staking = () => {
     abi: erc20Abi,
     functionName: "approve",
     args: [CAW_NAMES_ADDRESS, maxUint256],
-    disabled: !amount || insufficientBalance || !isTokenOwner,
+    disabled: amountWei === 0n || insufficientBalance || !isTokenOwner,
     onError: (err) => {
       handleError(err, "approve")
       setIsApprovePending(false)
@@ -563,8 +566,8 @@ const Staking = () => {
     address: CAW_NAMES_ADDRESS,
     abi: cawProfileAbi,
     functionName: "deposit",
-    args: [CLIENT_ID, tokenId || 0, parseUnits((amount || "0").toString(), 18), chains.l2.layerZero, 0n],
-    disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
+    args: [CLIENT_ID, tokenId || 0, amountWei, chains.l2.layerZero, 0n],
+    disabled: !tokenId || amountWei === 0n || depositFee === 0n || !isTokenOwner,
     value: depositFee,
     onPending: () => {
       setIsStakePending(true)
@@ -1040,7 +1043,7 @@ const Staking = () => {
                 : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
                     paymentMode === 'eth'
                       ? (ethAmountWei === 0n || depositFee === 0n)
-                      : (!amount || depositFee === 0n))))
+                      : (amountWei === 0n || depositFee === 0n))))
                 ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
                 : (isStakePending || isApprovePending)
                 ? 'bg-yellow-600 text-black cursor-not-allowed'
@@ -1049,7 +1052,7 @@ const Staking = () => {
             disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
               paymentMode === 'eth'
                 ? (ethAmountWei === 0n || depositFee === 0n || isStakePending || isApprovePending)
-                : (!amount || depositFee === 0n || isStakePending || isApprovePending))))}
+                : (amountWei === 0n || depositFee === 0n || isStakePending || isApprovePending))))}
           >
             {isSwitchingNetwork
               ? t('staking.button.switching')
