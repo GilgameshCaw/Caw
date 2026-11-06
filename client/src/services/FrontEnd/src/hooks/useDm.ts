@@ -27,6 +27,7 @@ import { buildPrfSalt, prfSecretToAesKey, prfCapableForCredential, markPrfCapabl
 import { privateKeyToAccount } from 'viem/accounts'
 import { bytesToHex } from 'viem'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { Argon2UnavailableError } from '~/services/identity/vaultPassword'
 
 export type UiConversationStatus = 'ACCEPTED' | 'REQUEST' | 'BLOCKED'
 export type UiInbox = 'main' | 'requests'
@@ -575,7 +576,9 @@ export function useDmClient(tokenId?: number, username?: string) {
       try {
         recoveryKey = await decryptBackupBlob(blobJson, password)
         break
-      } catch {
+      } catch (err) {
+        // Asking again can't help: the password wasn't what failed.
+        if (err instanceof Argon2UnavailableError) throw err
         if (attempt === MAX_PW_TRIES - 1) {
           throw new Error('Incorrect vault password. Try again, or use your backup file.')
         }

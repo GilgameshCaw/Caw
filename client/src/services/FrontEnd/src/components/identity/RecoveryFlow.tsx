@@ -23,6 +23,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { decryptBackupBlob, validateBackupBlobShape, type BackupBlob } from '~/services/identity/backupBlob'
 import { useRecoveryContext } from '~/components/identity/RecoveryProvider'
+import { Argon2UnavailableError } from '~/services/identity/vaultPassword'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { wagmiConfig } from '~/config/wagmiConfig'
@@ -176,7 +177,9 @@ export default function RecoveryFlow({ onSignedIn, onBack, variant = 'page' }: R
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
-      if (msg.includes('corrupted')) {
+      if (err instanceof Argon2UnavailableError) {
+        setError(t('recovery.error.argon2_unavailable'))
+      } else if (msg.includes('corrupted')) {
         setError(t('recovery.error.decrypt_failed'))
       } else {
         setError(t('recovery.error.wrong_password'))
