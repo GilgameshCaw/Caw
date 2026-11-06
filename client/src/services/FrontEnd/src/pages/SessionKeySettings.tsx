@@ -383,7 +383,7 @@ const SessionKeySettings: React.FC = () => {
 
                     <div className="text-center">
                       {(() => {
-                        const wrongWallet = isConnected && activeToken?.owner && address?.toLowerCase() !== activeToken.owner.toLowerCase()
+                        const wrongWallet = rootSigner.kind !== 'passkey' && isConnected && activeToken?.owner && address?.toLowerCase() !== activeToken.owner.toLowerCase()
                         return (
                           <>
                             <button

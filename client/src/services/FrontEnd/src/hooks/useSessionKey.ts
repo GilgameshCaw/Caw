@@ -374,10 +374,15 @@ export function useCreateSession() {
     // so getActiveSessionForAddress(activeToken.owner) missed and the UI stayed
     // "not connected" despite a confirmed on-chain registration. Mirrors
     // registerSponsoredSession (the onboarding path), which already keys by owner.
-    const effectiveOwner = (connectedAddress ?? activeToken?.owner)?.toLowerCase()
+    // A wallet connected alongside a passkey may be unrelated, so Pop-B never keys
+    // by it: useHasActiveSession looks the session up by owner.
+    const effectiveOwner = (isPasskey
+      ? (activeToken?.owner ?? rootSigner.address)
+      : (connectedAddress ?? activeToken?.owner))?.toLowerCase()
 
-    // Store session locally after confirmation
-    if (encryptWithWallet && connectedAddress) {
+    // Store session locally after confirmation. Only the owner's own wallet can
+    // protect the key: an unrelated one couldn't be asked for it on the next visit.
+    if (encryptWithWallet && connectedAddress && connectedAddress.toLowerCase() === effectiveOwner) {
       onProgress?.('Encrypting session key...')
       // Sign a deterministic message to derive the encryption key
       const walletSig = await signMessageAsync({ message: getEncryptionSignMessage() })

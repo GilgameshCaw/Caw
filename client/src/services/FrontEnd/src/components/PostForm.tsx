@@ -21,6 +21,7 @@ import { getUserAvatar } from '~/utils/defaultAvatar'
 import { formatWalletError } from '~/utils/errorMessage'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useComposeDraftStore } from '~/store/composeDraftStore'
 import { useUserByUsername } from '~/hooks/useUserData'
@@ -724,11 +725,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();
   const hasNoToken = !activeToken?.tokenId;
+  // Pop-B signs with the passkey, so a connected wallet doesn't have to match.
+  const { population } = useWalletPopulation();
+  const isPopB = population === 'B';
   // Allow posting whenever there's an active profile. If the wallet isn't
   // connected, signAndSubmit opens the connect modal and auto-retries. If on
   // the wrong chain, it auto-switches before signing. No need to gate the
   // button on those here — let the user click and we'll handle it.
-  const canPost = !hasNoToken && (hasActiveSession || isTokenOwner || !isConnected);
+  const canPost = !hasNoToken && (hasActiveSession || isTokenOwner || !isConnected || isPopB);
 
   const handleMediaSelected = (media: any[]) => {
     setSelectedMedia(media)
@@ -3164,7 +3168,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 // doesn't own the active token (and no Quick Sign session is
                 // covering for it). If no wallet is connected, the button just
                 // triggers the connect flow and should say "Post".
-                const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                const wrongWallet = !isPopB && isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? t('post_form.error.wrong_wallet_tooltip') : ''
                 const threadTooLong = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
                 const isDisabled = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong || pollInvalid
@@ -4037,7 +4041,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </div>
 
             {(() => {
-                const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                const wrongWallet2 = !isPopB && isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? t('post_form.error.wrong_wallet_tooltip') : ''
                 const threadTooLong2 = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
                 const isDisabled2 = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2 || pollInvalid

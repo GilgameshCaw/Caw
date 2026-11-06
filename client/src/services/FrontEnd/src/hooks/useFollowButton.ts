@@ -98,8 +98,9 @@ export function useFollowButton({
   const onFollowStateChangeRef = useRef(onFollowStateChange)
   useEffect(() => { onFollowStateChangeRef.current = onFollowStateChange }, [onFollowStateChange])
 
-  // Check if connected to wrong wallet (skip if session key active)
-  const wrongWallet = hasActiveSession ? false : (activeToken && address
+  // Check if connected to wrong wallet (skip if session key active, or for Pop-B,
+  // who sign with the passkey whichever wallet is connected)
+  const wrongWallet = (hasActiveSession || isPopB) ? false : (activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false)
 
