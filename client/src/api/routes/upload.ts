@@ -246,7 +246,7 @@ router.post('/variant', requireAuth({ anySession: true }), variantUpload.single(
     const variantName = `${stem}_${width}${ext}`
 
     // Same EXIF strip + dimension check as POST / (L-1/L-2). The frontend
-    // re-encodes variants through a canvas, but the server doesn't rely on it.
+    // re-encodes most variants through a canvas, but GIFs pass through.
     const buf = await stripExifAndCheckDimensions(file.buffer)
     const url = await storage.putVariant(baseFilename, variantName, buf, file.mimetype)
     res.json({ success: true, url })
