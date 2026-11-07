@@ -319,11 +319,31 @@ export function createApp() {
     legacyHeaders: false,
     message: { error: 'Too many uploads. Verify your wallet to increase your limit.' }
   }))
-  // Upload: 30/15min authenticated
+  // Authenticated uploads are counted per session tokenIds, not per IP:
+  // with the default key, every signed-in user behind one NAT or carrier
+  // IP shared a single 30. Only called when hasValidSession passed (the
+  // limiter checks skip before keyGenerator), so sessionData is set.
+  const uploadSessionKey = (req: express.Request) =>
+    'tokens:' + [...req.sessionData!.authorizedTokenIds].sort((a, b) => a - b).join(',')
+  // The FE sends up to three /variant requests (320/640/2048) after each
+  // feed image, so they get their own bucket instead of using up the 30.
+  const isVariantUpload = (req: express.Request) => /^\/variant\/?$/i.test(req.path)
+  // Upload: 30/15min authenticated (every /api/upload route except /variant)
   app.use('/api/upload', rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 30,
+    skip: async (req) => isVariantUpload(req) || !(await hasValidSession(req)),
+    keyGenerator: uploadSessionKey,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many uploads, try again later' }
+  }))
+  // Upload variants: 90/15min authenticated, three per base file above
+  app.use('/api/upload/variant', rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 90,
     skip: async (req) => !(await hasValidSession(req)),
+    keyGenerator: uploadSessionKey,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many uploads, try again later' }
