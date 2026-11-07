@@ -14,6 +14,7 @@ import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 import { cawUrl, parseCawIdSlug } from '~/utils/cawUrl'
+import { parseLocaleFromPath, withLocalePrefix } from '~/utils/localePrefix'
 import { useViewTrackingSingle } from '~/hooks/useViewTracking'
 
 type IndicatorUser = {
@@ -508,7 +509,14 @@ export const CawPage: React.FC = () => {
     if (!id) return
     if (String(caw.id) !== String(id)) return
     const canonical = cawUrl(caw)
-    if (canonical === location.pathname) return
+    // cawUrl() returns the bare path, and navigate() below adds the URL's
+    // locale prefix back (/ja/...). Compare with that prefix added, or every
+    // visit under a locale replaces the URL with itself. Each replace gives
+    // location.state back as a new copy of history.state, which runs this
+    // effect again, so the replace never stops. /en/ parses to no locale, so
+    // /en/... still goes to the bare path.
+    const urlLocale = parseLocaleFromPath(location.pathname).locale
+    if (withLocalePrefix(canonical, urlLocale) === location.pathname) return
     // Preserve the query string (e.g. ?reply=1, ?media=N) when redirecting.
     const target = location.search ? `${canonical}${location.search}` : canonical
     navigate(target, { replace: true, state: location.state })
