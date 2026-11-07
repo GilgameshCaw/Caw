@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useSearchParams } from 'react-router-dom'
@@ -147,6 +147,15 @@ const dateFromKey = (key: string) => {
   return new Date(y, m - 1, d)
 }
 
+/** Local start and end of a YYYY-MM-DD day, as ISO strings */
+const dayRange = (key: string): { from: string; to: string } => {
+  const [y, m, d] = key.split('-').map(Number)
+  return {
+    from: new Date(y, m - 1, d, 0, 0, 0, 0).toISOString(),
+    to: new Date(y, m - 1, d, 23, 59, 59, 999).toISOString(),
+  }
+}
+
 function getRange(range: TimeRange, customFrom: string, customTo: string): { from: string; to: string } {
   const now = new Date()
   // End of today in local time
@@ -214,21 +223,29 @@ const ValidatorAnalytics: React.FC = () => {
   }, [setSearchParams])
 
   const PAGE_SIZE = 50
+  // Only the latest fetchData call may write state; an older one that
+  // resolves later would put the wrong range or page back in the table.
+  const fetchSeq = useRef(0)
 
   const fetchData = useCallback(async () => {
+    const seq = ++fetchSeq.current
     setLoading(true)
     setError('')
     const { from, to } = getRange(timeRange, customFrom, customTo)
     const params = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    // While a day is selected, the transaction list (and its pages) covers that day only
+    const txRange = selectedDay ? dayRange(selectedDay) : { from, to }
+    const txParams = `from=${encodeURIComponent(txRange.from)}&to=${encodeURIComponent(txRange.to)}`
     // Adaptive chart interval: aim for 24+ bars
     const chartInterval = timeRange === '24h' ? 'hour' : timeRange === '7d' ? '6hour' : 'day'
     try {
       const [summaryData, txData, repData, chartRes] = await Promise.all([
         apiFetch(`/api/validator-analytics/summary?${params}`),
-        apiFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=${txOffset}`),
+        apiFetch(`/api/validator-analytics/transactions?${txParams}&limit=${PAGE_SIZE}&offset=${txOffset}`),
         apiFetch(`/api/validator-analytics/replication?${params}&limit=${PAGE_SIZE}&offset=${repOffset}`),
         apiFetch(`/api/validator-analytics/chart?${params}&interval=${chartInterval}&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`)
       ])
+      if (seq !== fetchSeq.current) return
       // Map API response to frontend interface
       setSummary({
         totalTransactions: summaryData.transactions || 0,
@@ -353,16 +370,19 @@ const ValidatorAnalytics: React.FC = () => {
               : `${dk.slice(5)} ${hh}:00 – ${endHh}:00`
             paddedChart.push({ date: label, dateKey: dk, ...emptyPoint })
           }
-          cursor.setTime(cursor.getTime() + stepHours * 3600000)
+          // Step in local clock hours, not elapsed time: the server buckets by
+          // local hour (00, 06, 12, 18), and across a DST change elapsed time
+          // lands on 05, 11, ... and misses every bucket after it.
+          cursor.setHours(cursor.getHours() + stepHours)
         }
         setChartData(paddedChart)
       }
     } catch {
-      setError('Failed to load data')
+      if (seq === fetchSeq.current) setError('Failed to load data')
     } finally {
-      setLoading(false)
+      if (seq === fetchSeq.current) setLoading(false)
     }
-  }, [timeRange, customFrom, customTo, txOffset, repOffset])
+  }, [timeRange, customFrom, customTo, selectedDay, txOffset, repOffset])
 
   useEffect(() => {
     fetchData()
@@ -376,22 +396,16 @@ const ValidatorAnalytics: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // Only on mount
 
-  // Fetch hourly chart data for a selected day
+  // Fetch the hourly chart for a selected day. The day's transaction list
+  // comes from fetchData, which reads selectedDay.
   const fetchHourlyData = useCallback(async (dateKey: string) => {
     setHourlyLoading(true)
     // Use local timezone boundaries for the selected day
-    const [year, month, day] = dateKey.split('-').map(Number)
-    const localStart = new Date(year, month - 1, day, 0, 0, 0, 0)
-    const localEnd = new Date(year, month - 1, day, 23, 59, 59, 999)
-    const dayStart = localStart.toISOString()
-    const dayEnd = localEnd.toISOString()
+    const { from: dayStart, to: dayEnd } = dayRange(dateKey)
     const params = `from=${encodeURIComponent(dayStart)}&to=${encodeURIComponent(dayEnd)}`
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-      const [chartRes, txData] = await Promise.all([
-        apiFetch(`/api/validator-analytics/chart?${params}&interval=hour&tz=${encodeURIComponent(tz)}`),
-        apiFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=0`),
-      ])
+      const chartRes = await apiFetch(`/api/validator-analytics/chart?${params}&interval=hour&tz=${encodeURIComponent(tz)}`)
       // Build 24-hour padded chart using local hours
       const emptyPoint: Omit<ChartPoint, 'date'> = { profit: 0, txCount: 0, actionCount: 0, ethCost: 0, tipEth: 0, actionBreakdown: {} }
       const rawHourly = (chartRes.chart || []).map((p: any) => {
@@ -421,25 +435,6 @@ const ValidatorAnalytics: React.FC = () => {
         }
       }
       setHourlyData(padded)
-      // Update transaction list to show this day's transactions
-      setTransactions((txData.transactions || []).map((t: any) => ({
-        id: t.id,
-        time: t.createdAt,
-        txHash: t.txHash,
-        txType: t.txType || 'processActions',
-        actions: t.actionCount,
-        actionBreakdown: t.actionBreakdown || undefined,
-        gasEth: t.ethCost || '0',
-        tipCaw: t.tipCaw || '0',
-        tipEth: t.tipEthValue || '0',
-        profitEth: t.profit || '0',
-        waitSeconds: (t.avgWaitMs || 0) / 1000,
-        status: t.status,
-        sessionUser: t.sessionUser || undefined,
-      })))
-      setTxTotal(txData.total || 0)
-      setTxOffset(0)
-      setActiveTab('transactions')
     } catch (err) {
       console.error('Failed to fetch hourly data:', err)
     } finally {
@@ -450,15 +445,19 @@ const ValidatorAnalytics: React.FC = () => {
   const handleBarClick = (i: number) => {
     const point = chartData[i]
     if (!point?.dateKey) return
+    // fetchData re-runs on these and loads the day's first page
     setSelectedDay(point.dateKey)
+    setTxOffset(0)
+    setActiveTab('transactions')
     fetchHourlyData(point.dateKey)
   }
 
   const clearDaySelection = () => {
+    // fetchData re-runs on these and loads the range's first page
     setSelectedDay(null)
+    setTxOffset(0)
     setHourlyData([])
     setHoveredHourBar(null)
-    fetchData() // Re-fetch original data
   }
 
   const fetchRelayAccounting = useCallback(async () => {
