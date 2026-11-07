@@ -18,9 +18,10 @@
 // friction."
 
 import inquirer from 'inquirer'
-import { Contract, JsonRpcProvider } from 'ethers'
+import * as ethers from 'ethers'
 import { brand, dim, section, tipBlock, warn } from '../utils/ui.js'
 import { addr } from '../addresses.js'
+import { makeProvider } from '../utils/rpc.js'
 
 // Minimal ABI — just what we need. Saves importing the full generated.ts
 // (the CLI doesn't currently import any client-side ABIs and starting
@@ -28,7 +29,9 @@ import { addr } from '../addresses.js'
 const NETWORK_MANAGER_ABI = [
   'function nextNetworkId() view returns (uint32)',
   'function nextInstanceId() view returns (uint32)',
-  'function getNetwork(uint32 networkId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address ownerAddress, address feeAddress, uint256 mintFee, uint256 authFee, uint256 depositFee, uint256 withdrawFee))',
+  // Mirrors struct CawNetwork in solidity/contracts/CawNetworkManager.sol.
+  // The decoder reads the fields by position, so the order must match.
+  'function getNetwork(uint32 networkId) view returns (tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee, uint256 authFee, uint256 creationBlock, uint256 withdrawFeeCeiling, uint256 depositFeeCeiling, uint256 authFeeCeiling, uint256 mintFeeCeiling, uint256 tipTargetWei, uint256 tipCeilingWei))',
   'function instanceActive(uint32) view returns (bool)',
   'event InstanceRegistered(uint32 indexed instanceId, uint32 indexed networkId, address indexed owner, string apiUrl, address validatorAddress)',
   'event InstanceUpdated(uint32 indexed instanceId, string apiUrl, address validatorAddress)',
@@ -50,11 +53,11 @@ const PUBLIC_SEPOLIA_RPCS = [
  */
 async function pickWorkingRpc(urls, perAttemptTimeoutMs = 4000) {
   for (const url of urls) {
+    // makeProvider skips network detection, so an unreachable URL doesn't
+    // start ethers' "failed to detect network, retry in 1s" loop.
+    const provider = makeProvider(ethers, url)
     try {
-      const provider = new JsonRpcProvider(url, undefined, { staticNetwork: true })
-      // getBlockNumber is the lightest sanity check — also wakes up the
-      // provider so the chain-id / network fetch lands before our first
-      // real read.
+      // getBlockNumber is the lightest sanity check.
       const result = await Promise.race([
         provider.getBlockNumber(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), perAttemptTimeoutMs)),
@@ -63,6 +66,8 @@ async function pickWorkingRpc(urls, perAttemptTimeoutMs = 4000) {
     } catch {
       // try the next one
     }
+    // Not using this one; destroy it so nothing of it keeps running.
+    try { provider.destroy() } catch { /* noop */ }
   }
   return null
 }
@@ -91,7 +96,7 @@ function displayNetworkName(name) {
  * Returns [{ id, name, ownerAddress }, …] sorted by id.
  */
 async function loadNetworks(provider, networkManagerAddress) {
-  const cm = new Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
+  const cm = new ethers.Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
   const nextId = Number(await cm.nextNetworkId())
   if (nextId <= 1) return [] // no Networks exist
 
@@ -162,7 +167,7 @@ async function chunkedQueryLogs(provider, addr, topics, opts = {}) {
  * deactivated instances via the on-chain instanceActive() flag.
  */
 async function loadInstances(provider, networkManagerAddress, networkId) {
-  const cm = new Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
+  const cm = new ethers.Contract(networkManagerAddress, NETWORK_MANAGER_ABI, provider)
   const iface = cm.interface
 
   // Topic-filter on (sig, indexed instanceId=ANY, indexed networkId).
