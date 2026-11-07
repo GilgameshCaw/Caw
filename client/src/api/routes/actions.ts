@@ -118,6 +118,111 @@ function extractClientProvenance(req: any): { clientVersion: string | null; clie
   }
 }
 
+type PassiveAuthResult = { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number }
+
+/**
+ * Create or extend the HTTP session for `ownerAddress` after a verified action.
+ *
+ * SECURITY: an action signature is public once it lands in L2 calldata, so a
+ * verified signature alone does NOT prove the caller is the owner. Call this
+ * only after the request has enqueued a NEW action (past the dedup, cawonce
+ * collision, retry and rate-limit gates) and only when the cawonce is not
+ * already used on chain (see cawonceUnusedOnChain). Otherwise an attacker can
+ * replay a victim's past action with their own x-session-token header and get
+ * that existing session authorized as the victim, even if no cookie or `auth`
+ * field is returned to them.
+ */
+async function grantPassiveAuth(
+  sessionTokenHeader: string | undefined,
+  ownerAddress: string,
+): Promise<PassiveAuthResult | null> {
+  let authResult: PassiveAuthResult | null = null
+  let sessionToken = sessionTokenHeader
+  try {
+    let session = sessionToken ? await getSession(sessionToken) : null
+    const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
+
+    if (!alreadyAuthorized) {
+      const userTokens = await prisma.user.findMany({
+        where: { address: ownerAddress },
+        select: { tokenId: true }
+      })
+      const tokenIds = userTokens.map(u => u.tokenId)
+
+      if (!session) {
+        const created = await createSession()
+        sessionToken = created.token
+        session = created.session
+      }
+
+      const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
+      if (updated) {
+        authResult = {
+          sessionToken: sessionToken!,
+          authorizedTokenIds: updated.authorizedTokenIds,
+          authorizedAddresses: updated.authorizedAddresses,
+          expiresAt: updated.expiresAt
+        }
+      }
+    } else if (session && sessionToken) {
+      // Already authorized — but re-check DB for any new token IDs the user may have
+      // acquired since the session was created (e.g., bought/transferred a new CawProfile).
+      // This ensures the session stays in sync with on-chain ownership.
+      const userTokens = await prisma.user.findMany({
+        where: { address: ownerAddress },
+        select: { tokenId: true }
+      })
+      const currentTokenIds = userTokens.map(u => u.tokenId)
+      const hasNewTokens = currentTokenIds.some(id => !session!.authorizedTokenIds.includes(id))
+
+      if (hasNewTokens) {
+        const updated = await addAuthorization(sessionToken, ownerAddress, currentTokenIds)
+        if (updated) {
+          authResult = {
+            sessionToken,
+            authorizedTokenIds: updated.authorizedTokenIds,
+            authorizedAddresses: updated.authorizedAddresses,
+            expiresAt: updated.expiresAt
+          }
+        }
+      } else {
+        // Return existing session data so the frontend can resync its local state
+        authResult = {
+          sessionToken,
+          authorizedTokenIds: session.authorizedTokenIds,
+          authorizedAddresses: session.authorizedAddresses,
+          expiresAt: session.expiresAt
+        }
+      }
+    }
+  } catch (err: any) {
+    // Don't dump the full stack — it's a passive-auth attempt that often
+    // fails for benign reasons (no x-session-token, signature timeout
+    // races, etc.). Message + code is enough to triage. Audit fix
+    // 2026-05-13.
+    console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
+  }
+  return authResult
+}
+
+/**
+ * True only when the chain says (senderId, cawonce) has NOT been used yet.
+ * A used cawonce means this signature was already settled, so the request is
+ * a replay (possibly from another node's calldata) and must not earn a
+ * session. Fails closed: an RPC error returns false (no session; the action
+ * itself is still queued and the user keeps their existing login).
+ */
+async function cawonceUnusedOnChain(senderId: number, cawonce: number): Promise<boolean> {
+  try {
+    const contract = await getCawActionsContract()
+    const used: boolean = await contract.isCawonceUsed(senderId, cawonce)
+    return used === false
+  } catch (err: any) {
+    console.warn('[Actions] isCawonceUsed check failed; skipping passive auth:', err?.shortMessage || err?.message || String(err))
+    return false
+  }
+}
+
 // Highest cawonce this mirror has ever seen for a sender, across every
 // status (including terminal — done/failed/retried). The 409 suggestion
 // must clear ALL known-used slots on this mirror: if a row is `done`
@@ -631,89 +736,9 @@ router.post('/', async (req, res) => {
     }
     mark('sessionCheck')
 
-    // --- Passive auth accumulation ---
-    // Now that the signer is verified, create/extend the HTTP session for the token owner.
-    // Runs for both wallet-signed actions AND session-key-signed actions — in the
-    // session-key case we've just proved on-chain that the signer is a valid delegate
-    // for `ownerAddress`, so it's safe to accumulate an HTTP session for the owner.
-    // Without this, Quick-Sign-only users never get an HTTP session and see
-    // "Verify Wallet" on pages like Notifications despite actively using the app.
-    let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
-    let sessionToken = req.headers['x-session-token'] as string | undefined
-    try {
-      let session = sessionToken ? await getSession(sessionToken) : null
-      const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
-
-      if (!alreadyAuthorized) {
-        const userTokens = await prisma.user.findMany({
-          where: { address: ownerAddress },
-          select: { tokenId: true }
-        })
-        const tokenIds = userTokens.map(u => u.tokenId)
-
-        if (!session) {
-          const created = await createSession()
-          sessionToken = created.token
-          session = created.session
-        }
-
-        const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
-        if (updated) {
-          authResult = {
-            sessionToken: sessionToken!,
-            authorizedTokenIds: updated.authorizedTokenIds,
-            authorizedAddresses: updated.authorizedAddresses,
-            expiresAt: updated.expiresAt
-          }
-        }
-      } else if (session && sessionToken) {
-        // Already authorized — but re-check DB for any new token IDs the user may have
-        // acquired since the session was created (e.g., bought/transferred a new CawProfile).
-        // This ensures the session stays in sync with on-chain ownership.
-        const userTokens = await prisma.user.findMany({
-          where: { address: ownerAddress },
-          select: { tokenId: true }
-        })
-        const currentTokenIds = userTokens.map(u => u.tokenId)
-        const hasNewTokens = currentTokenIds.some(id => !session!.authorizedTokenIds.includes(id))
-
-        if (hasNewTokens) {
-          const updated = await addAuthorization(sessionToken, ownerAddress, currentTokenIds)
-          if (updated) {
-            authResult = {
-              sessionToken,
-              authorizedTokenIds: updated.authorizedTokenIds,
-              authorizedAddresses: updated.authorizedAddresses,
-              expiresAt: updated.expiresAt
-            }
-          }
-        } else {
-          // Return existing session data so the frontend can resync its local state
-          authResult = {
-            sessionToken,
-            authorizedTokenIds: session.authorizedTokenIds,
-            authorizedAddresses: session.authorizedAddresses,
-            expiresAt: session.expiresAt
-          }
-        }
-      }
-    } catch (err: any) {
-      // Don't dump the full stack — it's a passive-auth attempt that often
-      // fails for benign reasons (no x-session-token, signature timeout
-      // races, etc.). Message + code is enough to triage. Audit fix
-      // 2026-05-13.
-      console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
-    }
-    // NOTE: the HttpOnly session cookie is NOT set here. It (and the `auth`
-    // field in the response body) is delivered only on the genuine-success
-    // path — i.e. when this request actually enqueues a NEW action (the 201
-    // at the bottom of this handler). An action signature is public (it rides
-    // in L2 calldata), so delivering a session on every verified signature let
-    // anyone replay a victim's past action and receive a cookie authorized as
-    // that victim. The dedup / cawonce-collision early-returns below (which is
-    // where a replay lands, since its cawonce is already used) therefore do
-    // NOT hand back a session. See the cookie set at the 201 below.
-    mark('passiveAuth')
+    // Passive auth (creating/extending an HTTP session for the token owner)
+    // is deliberately NOT done here. It runs only on the genuine-success path
+    // just before the 201 below (see the grantPassiveAuth helper).
 
     // Pre-flight gates that decide whether we'll create a TxQueue row at
     // all. Run them BEFORE any optimistic write so a fail-fast can't
@@ -1777,6 +1802,9 @@ router.post('/', async (req, res) => {
     // been enqueued (see the passiveAuth block above). Setting the HttpOnly
     // cookie here mirrors the /api/auth/* login routes and keeps extractSession
     // (cookie-first) from being shadowed by a stale cookie.
+    const authResult = (await cawonceUnusedOnChain(data.senderId, data.cawonce))
+      ? await grantPassiveAuth(req.headers['x-session-token'] as string | undefined, ownerAddress)
+      : null
     if (authResult) {
       res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
     }
