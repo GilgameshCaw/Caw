@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import type { UploadedUrlCache } from '~/api/upload'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { Link } from '~/utils/localizedRouter'
@@ -472,6 +473,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     return byteLen(getOnChainText(input))
   }
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Media already uploaded by this form, so a second press of Post after a
+  // failed signature reuses the URLs. See UploadedUrlCache in ~/api/upload.
+  const uploadedUrlCache = useRef<UploadedUrlCache>(new WeakMap())
   const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Per-chunk textarea refs for thread mode (N separate textareas).
@@ -1059,12 +1063,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     onProgress?: (msg: string) => void,
   ) => {
     if (type === 'image') {
-      const { uploadFeedImage } = await import('~/api/upload')
-      const urls = await Promise.all(files.map(f => uploadFeedImage(f, tokenId)))
+      const { uploadFeedImages } = await import('~/api/upload')
+      const urls = await uploadFeedImages(files, tokenId, uploadedUrlCache.current)
       return { success: true, urls }
     }
-    const { uploadMedia: sharedUpload } = await import('~/api/upload')
-    const urls = await sharedUpload(files, tokenId, 'feed', onProgress)
+    const { uploadMediaOnce } = await import('~/api/upload')
+    const urls = await uploadMediaOnce(files, tokenId, uploadedUrlCache.current, onProgress)
     return { success: true, urls }
   }
 

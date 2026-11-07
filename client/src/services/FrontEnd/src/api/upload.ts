@@ -144,7 +144,8 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
     tFd.append('baseFilename', baseFilename)
     tFd.append('width', '96')
     tFd.append('tokenId', String(tokenId))
-    await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
+    const tRes = await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
+    if (!tRes.ok) console.warn(`[uploadAvatar] thumb upload got ${tRes.status}, will fall back to main`)
   } catch (err) {
     console.warn('[uploadAvatar] thumb generation failed, will fall back to main:', err)
   }
@@ -161,9 +162,11 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
  *   - 2048: lightbox/click-to-expand only.
  *
  * Variants are uploaded sequentially so an early failure (auth, quota,
- * network) doesn't pile follow-ups on top. Each variant is best-effort —
- * a missing inline variant just means the renderer drops to the next-up
- * size; a missing lightbox means click-to-expand serves the 1024 main.
+ * network) doesn't pile follow-ups on top: after a 429, 401 or 403 the
+ * rest are skipped, since they would get the same answer. Each variant is
+ * best-effort — a missing inline variant just means the renderer drops to
+ * the next-up size; a missing lightbox means click-to-expand serves the
+ * 1024 main.
  */
 export async function uploadFeedImage(file: File, tokenId: number): Promise<string> {
   const main = await compressImage(file, 'feed')
@@ -184,7 +187,9 @@ export async function uploadFeedImage(file: File, tokenId: number): Promise<stri
   if (!mainUrl) throw new Error('No URL returned')
 
   const baseFilename = mainUrl.split('/').pop()!
-  const uploadVariant = async (preset: CompressionPreset, width: number) => {
+  // Resolves false when the server refused in a way the next variant would
+  // hit too (rate limit, auth), so the caller stops sending them.
+  const uploadVariant = async (preset: CompressionPreset, width: number): Promise<boolean> => {
     try {
       const variant = await compressImage(file, preset)
       const fd = new FormData()
@@ -192,17 +197,65 @@ export async function uploadFeedImage(file: File, tokenId: number): Promise<stri
       fd.append('baseFilename', baseFilename)
       fd.append('width', String(width))
       fd.append('tokenId', String(tokenId))
-      await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: fd })
+      const res = await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: fd })
+      if (!res.ok) {
+        console.warn(`[uploadFeedImage] ${preset} variant got ${res.status}, will fall back at render time`)
+        return res.status !== 429 && res.status !== 401 && res.status !== 403
+      }
     } catch (err) {
       console.warn(`[uploadFeedImage] ${preset} variant failed, will fall back at render time:`, err)
     }
+    return true
   }
 
-  await uploadVariant('feedSmall', 320)
-  await uploadVariant('feedMedium', 640)
-  await uploadVariant('feedLarge', 2048)
+  if (await uploadVariant('feedSmall', 320) && await uploadVariant('feedMedium', 640)) {
+    await uploadVariant('feedLarge', 2048)
+  }
 
   return mainUrl
+}
+
+/**
+ * Files a form has already uploaded, keyed by the File object it holds.
+ * Pressing Post again after a failure (a rejected signature, a 429 on one
+ * of the other images) reuses these URLs instead of storing the same file
+ * again, which would also spend the rate limit and the daily quota twice.
+ * Removing a file from the form drops its entry with it.
+ */
+export type UploadedUrlCache = WeakMap<File, { tokenId: number; url: string }>
+
+/**
+ * uploadFeedImage for each file, in parallel, skipping files already in
+ * `cache` for this tokenId. Waits for every upload to settle before
+ * throwing, so the ones that succeeded are in the cache for the next try.
+ */
+export async function uploadFeedImages(files: File[], tokenId: number, cache: UploadedUrlCache): Promise<string[]> {
+  const results = await Promise.allSettled(files.map(async f => {
+    const hit = cache.get(f)
+    if (hit && hit.tokenId === tokenId) return hit.url
+    const url = await uploadFeedImage(f, tokenId)
+    cache.set(f, { tokenId, url })
+    return url
+  }))
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+  if (failed) throw failed.reason
+  return results.map(r => (r as PromiseFulfilledResult<string>).value)
+}
+
+/** uploadMedia, skipping files already in `cache` for this tokenId. */
+export async function uploadMediaOnce(
+  files: File[],
+  tokenId: number,
+  cache: UploadedUrlCache,
+  onProgress?: (msg: string) => void,
+): Promise<string[]> {
+  const pending = files.filter(f => cache.get(f)?.tokenId !== tokenId)
+  if (pending.length > 0) {
+    const urls = await uploadMedia(pending, tokenId, 'feed', onProgress)
+    if (urls.length !== pending.length) throw new Error('Upload returned the wrong number of URLs')
+    pending.forEach((f, i) => cache.set(f, { tokenId, url: urls[i] }))
+  }
+  return files.map(f => cache.get(f)!.url)
 }
 
 /**
