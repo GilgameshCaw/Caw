@@ -251,6 +251,84 @@ function buildService(providerOrOpts: MockProviderOpts | BuildServiceOpts = {}):
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('SponsorService', () => {
+  describe('relayExecuteBatch', () => {
+    const ACCOUNT = '0x4444444444444444444444444444444444444444'
+    const calls = [{ to: ACCOUNT, value: 0n, data: '0x' }]
+    const ETH_FEE = 6_000_000_000_000_000n // above the 0.005 ETH default cap
+
+    async function relay(opts: { gas?: bigint; value?: bigint; forward?: boolean; setup?: (provider: any) => void } = {}) {
+      const svc = buildService()
+      const provider = (svc as any).provider
+      opts.setup?.(provider)
+      const sent: string[] = []
+      const broadcast = provider.broadcastTransaction
+      provider.getCode = async () => '0xef0100' + MOCK_SMART_EOA_ADDRESS.slice(2)
+      provider.call = async () => '0x'
+      provider.estimateGas = async () => opts.gas ?? 200_000n
+      provider.broadcastTransaction = (tx: string) => {
+        sent.push(tx)
+        return broadcast(tx)
+      }
+      const result = await svc.relayExecuteBatch(ACCOUNT, calls, 0n, '0x', opts.value ?? 0n, opts.forward ?? false)
+      return { result, sent }
+    }
+
+    it('does not send a batch that needs more gas than the ceiling', async () => {
+      const { result, sent } = await relay({ gas: 1_100_000n })
+      expect((result as any).error).to.equal('SIMULATION_FAILED')
+      expect(sent).to.have.length(0)
+    })
+
+    it('sends a batch at the ceiling', async () => {
+      const { sent } = await relay({ gas: 800_000n })
+      expect(sent).to.have.length(1)
+    })
+
+    it('does not cap an ETH fee the relayer is not fronting', async () => {
+      const { result, sent } = await relay({ value: ETH_FEE, forward: false })
+      expect((result as any).error).to.not.equal('LZ_FEE_TOO_LARGE')
+      expect(sent).to.have.length(1)
+    })
+
+    it('still caps a value the relayer would front', async () => {
+      const { result, sent } = await relay({ value: ETH_FEE, forward: true })
+      expect((result as any).error).to.equal('LZ_FEE_TOO_LARGE')
+      expect(sent).to.have.length(0)
+    })
+
+    it('marks a mined revert, which the relayer paid for', async () => {
+      const { result, sent } = await relay({
+        setup: provider => {
+          provider.getTransactionReceipt = async () => ({ status: 0, to: ACCOUNT, from: ACCOUNT, hash: '0xabc' })
+        },
+      })
+      expect(sent).to.have.length(1)
+      expect((result as any).error).to.equal('TX_REVERTED')
+      expect((result as any).minedRevert).to.equal(true)
+    })
+
+    it('does not mark an RPC failure before anything was sent', async () => {
+      const { result, sent } = await relay({
+        setup: provider => {
+          provider.getBalance = async () => { throw new Error('upstream request timeout') }
+        },
+      })
+      expect(sent).to.have.length(0)
+      expect((result as any).error).to.equal('TX_REVERTED')
+      expect((result as any).minedRevert).to.equal(undefined)
+    })
+
+    it('does not mark a broadcast the RPC refused', async () => {
+      const { result } = await relay({
+        setup: provider => {
+          provider.broadcastTransaction = async () => { throw new Error('already known') }
+        },
+      })
+      expect((result as any).error).to.equal('TX_REVERTED')
+      expect((result as any).minedRevert).to.equal(undefined)
+    })
+  })
+
   let authSig: Awaited<ReturnType<typeof buildAuthTupleSig>>
 
   before(async () => {

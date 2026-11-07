@@ -148,6 +148,10 @@ export type SponsorErrorCode =
 export interface SponsorError {
   error: SponsorErrorCode
   detail: string
+  /** relayExecuteBatch only: the tx was mined and reverted, so the relayer paid for
+   *  its gas. TX_REVERTED alone doesn't say this, it's also the fallback for any
+   *  error thrown before a tx was sent. */
+  minedRevert?: boolean
 }
 
 export interface SponsorSuccess {
@@ -1096,15 +1100,17 @@ export class SponsorService {
     forwardValue: boolean,
   ): Promise<SponsorResult> {
     try {
-      if (value > this.maxLzFeeWei) {
-        return {
-          error: 'LZ_FEE_TOO_LARGE',
-          detail: `value ${value} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
-        }
-      }
       // The msg.value the relayer attaches. CAW-repay batches forward the inner value
       // (EOA may hold 0 ETH); ETH-repay zaps attach 0 (EOA self-funds the swap ETH).
       const msgValue = forwardValue ? value : 0n
+      // Only ETH the relayer actually fronts counts against the cap. `value` also
+      // includes an ETH fee leg, which the EOA pays from its own balance.
+      if (msgValue > this.maxLzFeeWei) {
+        return {
+          error: 'LZ_FEE_TOO_LARGE',
+          detail: `value ${msgValue} exceeds SPONSOR_MAX_LZ_FEE_WEI (${this.maxLzFeeWei})`,
+        }
+      }
 
       // The relayer must keep its floor AFTER attaching msgValue — forwarding the LZ
       // fee spends real ETH on top of gas, so guard against draining below the floor.
@@ -1141,6 +1147,15 @@ export class SponsorService {
       try {
         await smartEoa.executeBatch.staticCall(batchArg, nonce, sig, { value: msgValue })
         const estimated = await smartEoa.executeBatch.estimateGas(batchArg, nonce, sig, { value: msgValue })
+        // The simulation above has no gas limit, but the tx is sent with at most the
+        // ceiling. A batch over it would pass here, run out of gas once mined and
+        // revert its own fee leg, so the relayer would pay for nothing.
+        if (estimated > GAS_LIMIT_EXECUTE_BATCH) {
+          return {
+            error: 'SIMULATION_FAILED',
+            detail: `executeBatch needs ${estimated} gas, over the ${GAS_LIMIT_EXECUTE_BATCH} gas ceiling (not submitted — no gas spent).`,
+          }
+        }
         const padded = (estimated * 125n) / 100n
         gasLimit = padded > GAS_LIMIT_EXECUTE_BATCH ? GAS_LIMIT_EXECUTE_BATCH : padded
       } catch (simErr) {
@@ -1184,6 +1199,7 @@ export class SponsorService {
           error: 'TX_REVERTED',
           detail: `executeBatch tx ${txResponse.hash} reverted on-chain (status ${receipt?.status ?? 'null'}). ` +
             `Common causes: stale executeNonce, signature mismatch, or a failing inner call.`,
+          minedRevert: !!receipt,
         }
       }
       // Actual gas the relayer spent = gasUsed × effective gas price. Returned so
@@ -1198,7 +1214,10 @@ export class SponsorService {
       } catch { /* best-effort */ }
       return { txHash: txResponse.hash, gasSpentWei }
     } catch (err) {
-      return parseRevertError(err)
+      // ethers' wait() throws on a mined revert, with the receipt attached, so that
+      // case lands here rather than in the status check above.
+      const parsed = parseRevertError(err)
+      return (err as any)?.receipt ? { ...parsed, minedRevert: true } : parsed
     }
   }
 
