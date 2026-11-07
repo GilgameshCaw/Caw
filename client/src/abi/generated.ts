@@ -5682,6 +5682,7 @@ export const cawProfileMinterAbi = [
       { name: 'kycLevel', internalType: 'uint8', type: 'uint8' },
       { name: 'sponsorTokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'repayAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'funderSig', internalType: 'bytes', type: 'bytes' },
     ],
     name: 'mintAndDepositSponsored',
     outputs: [],

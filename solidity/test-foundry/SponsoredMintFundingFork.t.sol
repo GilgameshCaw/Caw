@@ -219,7 +219,8 @@ contract SponsoredMintFundingForkTest is Test {
 
     // Sponsor wallet: holds CAW + UNLIMITED approval to Minter.
     // In unit tests this is a cheatcode-controlled address.
-    address internal constant UNIT_SPONSOR = address(0xF1e5700000000000000000000000000000000001);
+    uint256 internal constant UNIT_SPONSOR_PK = 0xF1E57;
+    address internal immutable UNIT_SPONSOR = vm.addr(UNIT_SPONSOR_PK);
 
     // Non-empty sig accepted by ForkSmartEOAMock.
     bytes internal constant ANY_SIG = hex"abcd";
@@ -265,6 +266,12 @@ contract SponsoredMintFundingForkTest is Test {
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /// @dev The funder's (tx.origin's) SponsorFunding signature for one permit.
+    function _funderSig(uint256 funderPk, bytes32 permitDigest) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(funderPk, minter.sponsorFundingDigest(permitDigest));
+        return abi.encodePacked(r, s, v);
+    }
 
     function _mintDigest(
         address recipient,
@@ -355,7 +362,8 @@ contract SponsoredMintFundingForkTest is Test {
             ANY_SIG,
             uint8(0),
             uint32(0),
-            uint256(0)
+            uint256(0),
+            _funderSig(UNIT_SPONSOR_PK, _mintDigest(address(userSmartEOA), "txoriginsponsor", depositAmount, permitNonce))
         );
 
         uint256 sponsorBalBefore = caw.balanceOf(UNIT_SPONSOR);
@@ -389,7 +397,7 @@ contract SponsoredMintFundingForkTest is Test {
         vm.prank(UNIT_SPONSOR, UNIT_SPONSOR);
         minter.mintAndDepositSponsored(
             1, address(userSmartEOA), "directsponsor", depositAmount, 0, 0,
-            permitNonce, ANY_SIG, 0, 0, 0
+            permitNonce, ANY_SIG, 0, 0, 0, ""
         );
 
         assertEq(profile.ownerOf(1), address(userSmartEOA), "direct-call: NFT minted to user");
@@ -417,7 +425,9 @@ contract SponsoredMintFundingForkTest is Test {
             ANY_SIG,
             uint8(0),
             uint32(0),
-            uint256(0)
+            uint256(0),
+            // zeroCawOrigin consents, so the call reaches the balance check.
+            _funderSig(0xdeadbeef, _mintDigest(address(userSmartEOA), "badorigintest", depositAmount, permitNonce))
         );
 
         // CallerProxy calls Minter; tx.origin = zeroCawOrigin (no CAW, no approval).
@@ -430,14 +440,15 @@ contract SponsoredMintFundingForkTest is Test {
     // depositForSponsored — same bug, same fix
     // -----------------------------------------------------------------------
 
-    /// @notice AFTER-FIX: depositForSponsored via CallerProxy (0 CAW), sponsor is tx.origin.
-    ///         The deposit is pulled from tx.origin (UNIT_SPONSOR).
-    function test_unit_after_fix_depositForSponsored_pullsFromTxOrigin_succeeds() public {
+    /// @notice depositForSponsored never pulls from tx.origin: a contract caller
+    ///         (here CallerProxy with 0 CAW) pays itself, so a call reached inside
+    ///         someone else's tx cannot spend the broadcaster's allowance.
+    function test_depositForSponsored_viaContract_doesNotUseTxOrigin() public {
         // Mint token first so depositForSponsored has a token to deposit into.
         uint256 mintNonce = userSmartEOA.nonceOf(address(minter), 1);
         vm.prank(UNIT_SPONSOR, UNIT_SPONSOR);
         minter.mintAndDepositSponsored(
-            1, address(userSmartEOA), "depositbase", 0, 0, 0, mintNonce, ANY_SIG, 0, 0, 0
+            1, address(userSmartEOA), "depositbase", 0, 0, 0, mintNonce, ANY_SIG, 0, 0, 0, ""
         );
         assertEq(profile.ownerOf(1), address(userSmartEOA), "pre: token minted");
 
@@ -458,17 +469,10 @@ contract SponsoredMintFundingForkTest is Test {
         );
 
         vm.prank(address(callerProxy), UNIT_SPONSOR);
+        vm.expectRevert("ERC20: bal");
         callerProxy.callMinter(address(minter), depositCalldata);
 
-        uint256 sponsorBalAfter = caw.balanceOf(UNIT_SPONSOR);
-        assertLt(sponsorBalAfter, sponsorBalBefore, "Sponsor CAW must decrease by deposit amount");
-        assertApproxEqAbs(
-            sponsorBalBefore - sponsorBalAfter,
-            depositAmount,
-            0,
-            "Sponsor CAW decrease must equal depositAmount"
-        );
-        assertEq(caw.balanceOf(address(callerProxy)), 0, "CallerProxy (SmartEOA) must remain at 0 CAW");
+        assertEq(caw.balanceOf(UNIT_SPONSOR), sponsorBalBefore, "tx.origin (sponsor) CAW must be untouched");
     }
 
     /// @notice depositForSponsored: direct sponsor call (msg.sender == tx.origin) still works.
@@ -476,7 +480,7 @@ contract SponsoredMintFundingForkTest is Test {
         uint256 mintNonce = userSmartEOA.nonceOf(address(minter), 1);
         vm.prank(UNIT_SPONSOR, UNIT_SPONSOR);
         minter.mintAndDepositSponsored(
-            1, address(userSmartEOA), "depositdirect", 0, 0, 0, mintNonce, ANY_SIG, 0, 0, 0
+            1, address(userSmartEOA), "depositdirect", 0, 0, 0, mintNonce, ANY_SIG, 0, 0, 0, ""
         );
 
         uint256 depositAmount = 200 * 10**18;

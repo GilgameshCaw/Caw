@@ -167,6 +167,48 @@ export interface SponsorSuccess {
 
 export type SponsorResult = SponsorSuccess | SponsorError
 
+const MINTER_DOMAIN_NAME = 'CawProfileMinter'
+const MINTER_DOMAIN_VERSION = '1'
+
+/** EIP-712 digest of the recipient's MintAndDeposit permit (CawProfileMinter). */
+export function mintDepositPermitDigest(
+  chainId: number,
+  minterAddress: string,
+  value: {
+    networkId: number; recipient: string; username: string; depositAmount: bigint
+    lzDestId: number; lzTokenAmount: bigint; nonce: bigint | number
+    kycLevel: number; sponsorTokenId: number; repayAmount: bigint
+  },
+): string {
+  return TypedDataEncoder.hash(
+    { name: MINTER_DOMAIN_NAME, version: MINTER_DOMAIN_VERSION, chainId: BigInt(chainId), verifyingContract: minterAddress },
+    {
+      MintAndDeposit: [
+        { name: 'networkId', type: 'uint32' },
+        { name: 'recipient', type: 'address' },
+        { name: 'username', type: 'string' },
+        { name: 'depositAmount', type: 'uint256' },
+        { name: 'lzDestId', type: 'uint32' },
+        { name: 'lzTokenAmount', type: 'uint256' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'kycLevel', type: 'uint8' },
+        { name: 'sponsorTokenId', type: 'uint32' },
+        { name: 'repayAmount', type: 'uint256' },
+      ],
+    },
+    value,
+  )
+}
+
+/** EIP-712 digest the funder (tx.origin) signs: CawProfileMinter.sponsorFundingDigest. */
+export function sponsorFundingDigest(chainId: number, minterAddress: string, permitDigest: string): string {
+  return TypedDataEncoder.hash(
+    { name: MINTER_DOMAIN_NAME, version: MINTER_DOMAIN_VERSION, chainId: BigInt(chainId), verifyingContract: minterAddress },
+    { SponsorFunding: [{ name: 'permitDigest', type: 'bytes32' }] },
+    { permitDigest },
+  )
+}
+
 export function isSponsorError(r: SponsorResult): r is SponsorError {
   return 'error' in r
 }
@@ -454,40 +496,18 @@ export class SponsorService {
       //     tell whether the FE ran stale code.
       try {
         const chainIdNum = await this.getChainId()
-        const expectedDigest = TypedDataEncoder.hash(
-          {
-            name: 'CawProfileMinter',
-            version: '1',
-            chainId: BigInt(chainIdNum),
-            verifyingContract: this.minterAddress,
-          },
-          {
-            MintAndDeposit: [
-              { name: 'networkId', type: 'uint32' },
-              { name: 'recipient', type: 'address' },
-              { name: 'username', type: 'string' },
-              { name: 'depositAmount', type: 'uint256' },
-              { name: 'lzDestId', type: 'uint32' },
-              { name: 'lzTokenAmount', type: 'uint256' },
-              { name: 'nonce', type: 'uint256' },
-              { name: 'kycLevel', type: 'uint8' },
-              { name: 'sponsorTokenId', type: 'uint32' },
-              { name: 'repayAmount', type: 'uint256' },
-            ],
-          },
-          {
-            networkId: params.networkId,
-            recipient: userEoaAddress,
-            username: params.username,
-            depositAmount: params.depositAmountCAW,
-            lzDestId: params.lzDestId,
-            lzTokenAmount: params.lzTokenAmount,
-            nonce: params.permitNonce,
-            kycLevel: params.kycLevel ?? 0,
-            sponsorTokenId: params.sponsorTokenId ?? 0,
-            repayAmount: params.repayAmount ?? 0n,
-          },
-        )
+        const expectedDigest = mintDepositPermitDigest(chainIdNum, this.minterAddress, {
+          networkId: params.networkId,
+          recipient: userEoaAddress,
+          username: params.username,
+          depositAmount: params.depositAmountCAW,
+          lzDestId: params.lzDestId,
+          lzTokenAmount: params.lzTokenAmount,
+          nonce: params.permitNonce,
+          kycLevel: params.kycLevel ?? 0,
+          sponsorTokenId: params.sponsorTokenId ?? 0,
+          repayAmount: params.repayAmount ?? 0n,
+        })
 
         // Decode the challenge the passkey actually signed. WebAuthn blob =
         // abi.encode(bytes authenticatorData, bytes clientDataJSON, bytes32 r,
@@ -541,6 +561,28 @@ export class SponsorService {
       // repayAmount) default to zero — only set when /api/sponsor/bootstrap
       // applied a non-zero sponsor-code policy. Zero values match the
       // pre-Phase-2 behaviour exactly (no kyc gate, no repay obligation).
+      // The Minter pulls the CAW from tx.origin (this.wallet) only with this
+      // wallet's own SponsorFunding signature over the exact permit digest.
+      // That stops any contract reached inside a tx we broadcast (a stale 7702
+      // delegation, or a call in a relayed executeBatch) from choosing its own
+      // depositAmount and spending our allowance.
+      const fundingChainId = await this.getChainId()
+      const permitDigest = mintDepositPermitDigest(fundingChainId, this.minterAddress, {
+        networkId: params.networkId,
+        recipient: userEoaAddress,
+        username: params.username,
+        depositAmount: params.depositAmountCAW,
+        lzDestId: params.lzDestId,
+        lzTokenAmount: params.lzTokenAmount,
+        nonce: params.permitNonce,
+        kycLevel: params.kycLevel ?? 0,
+        sponsorTokenId: params.sponsorTokenId ?? 0,
+        repayAmount: params.repayAmount ?? 0n,
+      })
+      const funderSig = this.wallet.signingKey
+        .sign(sponsorFundingDigest(fundingChainId, this.minterAddress, permitDigest))
+        .serialized
+
       const minterIface = new Interface(cawProfileMinterAbi as any)
       const mintCalldata = minterIface.encodeFunctionData('mintAndDepositSponsored', [
         params.networkId,
@@ -554,6 +596,7 @@ export class SponsorService {
         params.kycLevel       ?? 0,
         params.sponsorTokenId ?? 0,
         params.repayAmount    ?? 0n,
+        funderSig,
       ])
 
       // ── Build SmartEOA.initialize calldata ───────────────────────────
