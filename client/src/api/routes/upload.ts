@@ -88,6 +88,11 @@ function looksLikeImage(buf: Buffer): boolean {
 const MAX_ANIMATED_PIXELS = 24_000_000
 const MAX_ANIMATED_FRAMES = 1_000
 
+// Re-encoding one frame takes about 15 bytes of memory per pixel for a GIF, less
+// for other formats, and several jobs can run at once. The file size doesn't
+// bound this either. 16M still covers a 12 MP photo and a long screenshot.
+const MAX_FRAME_PIXELS = 16_000_000
+
 // Strip EXIF metadata and auto-orient the image (L-1: privacy leak fix).
 // .rotate() reads the EXIF Orientation tag, applies it, then re-encodes
 // WITHOUT any EXIF payload. Result: no GPS, no device serial, no timestamp.
@@ -107,8 +112,8 @@ async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
   // frame's, not the sum of all frames', so the 8000 cap means the same thing
   // for a GIF as for a JPEG.
   const { width, height, pages, orientation } = await sharp(buffer).metadata()
-  if ((width ?? 0) > 8000 || (height ?? 0) > 8000) {
-    const err = new Error('Image too large (max 8000x8000)')
+  if ((width ?? 0) > 8000 || (height ?? 0) > 8000 || (width ?? 0) * (height ?? 0) > MAX_FRAME_PIXELS) {
+    const err = new Error('Image too large (max 8000x8000 and 16 megapixels)')
     ;(err as any).statusCode = 400
     throw err
   }
