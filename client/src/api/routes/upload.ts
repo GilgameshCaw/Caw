@@ -80,6 +80,11 @@ function looksLikeImage(buf: Buffer): boolean {
   return false
 }
 
+// Re-encoding an animation costs about 2s of CPU per 24 million pixels (width ×
+// height × frames), and the file size doesn't bound that: a GIF this big can be
+// under 1 KB. 24M still covers 800×450 at 60 frames.
+const MAX_ANIMATED_PIXELS = 24_000_000
+
 // Strip EXIF metadata and auto-orient the image (L-1: privacy leak fix).
 // .rotate() reads the EXIF Orientation tag, applies it, then re-encodes
 // WITHOUT any EXIF payload. Result: no GPS, no device serial, no timestamp.
@@ -95,14 +100,24 @@ async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
     ;(err as any).statusCode = 503
     throw err
   }
-  const image = sharp(buffer)
-  const { width, height } = await image.metadata()
+  // Read without { animated: true } on purpose: width and height are then one
+  // frame's, not the sum of all frames', so the 8000 cap means the same thing
+  // for a GIF as for a JPEG.
+  const { width, height, pages, orientation } = await sharp(buffer).metadata()
   if ((width ?? 0) > 8000 || (height ?? 0) > 8000) {
     const err = new Error('Image too large (max 8000x8000)')
     ;(err as any).statusCode = 400
     throw err
   }
-  return image.rotate().toBuffer()
+  // Sharp decodes only the first frame by default, which froze animated images.
+  // Keep every frame while the file is within the budget; past it, keep the
+  // first frame so a tiny hostile file can't buy seconds of CPU. Same fallback
+  // for an EXIF orientation, which rotate() can't apply to several frames.
+  const frames = pages ?? 1
+  const animated = frames > 1
+    && (orientation ?? 1) === 1
+    && (width ?? 0) * (height ?? 0) * frames <= MAX_ANIMATED_PIXELS
+  return sharp(buffer, { animated }).rotate().toBuffer()
 }
 
 function generateFilename(mimetype: string): string {
