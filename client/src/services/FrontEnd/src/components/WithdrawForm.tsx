@@ -75,7 +75,6 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
-  const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
   const [showFeeModal, setShowFeeModal] = useState(false)
   const [recipientInput, setRecipientInput] = useState<string>('')
   const [isPending, setIsPending] = useState(false)
@@ -116,9 +115,12 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
     query: { enabled: !!tokenId && withdrawable > 0n },
   })
 
-  useEffect(() => {
-    if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
-  }, [withdrawQuote])
+  // 0 is a real quote, not "still loading": a Network may set withdrawFee to 0
+  // and updateOwnerQuote returns 0 when nothing is queued. Gate on whether the
+  // quote has arrived, not on the fee being non-zero.
+  const quotedFee = withdrawQuote?.nativeFee
+  const feeReady = quotedFee != null
+  const withdrawFee = quotedFee != null ? BigInt(quotedFee) : 0n
 
   // Fetch sponsor quote when Pop-B and confirmation panel is visible. The relayer
   // forwards the LZ fee (withdrawFee) as msg.value and is repaid gas + that value in
@@ -128,7 +130,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
   // it resolves (it loads async from withdrawQuote).
   useEffect(() => {
     if (!isPopB || !confirmVisible) return
-    if (withdrawFee === 0n) return // wait for the LZ fee before pricing the CAW leg
+    if (!feeReady) return // wait for the LZ fee before pricing the CAW leg
     let cancelled = false
     const fetchQuote = async () => {
       setQuoteLoading(true)
@@ -145,7 +147,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
     }
     fetchQuote()
     return () => { cancelled = true }
-  }, [isPopB, confirmVisible, withdrawFee])
+  }, [isPopB, confirmVisible, feeReady, withdrawFee])
 
   // Pop-A direct withdrawTo via useContractCall
   const withdrawPopA = useContractCall({
@@ -156,7 +158,7 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
     // (the L2 the stake lives on) so L1 can opportunistically flush a queued
     // owner update; lzTokenAmount=0n pays LZ fees in native ETH.
     args: [CLIENT_ID, Number(tokenId ?? 0), recipientForEncode, chains.l2.layerZero, 0n],
-    disabled: !tokenId || withdrawFee === 0n || !recipientValid || withdrawable === 0n,
+    disabled: !tokenId || !feeReady || !recipientValid || withdrawable === 0n,
     value: withdrawFee,
     onPending: () => setIsPending(true),
     onSuccess: (hash) => {
@@ -373,9 +375,9 @@ export function WithdrawForm({ tokenId, withdrawableWei, onSuccess, onSuccessRef
       {!confirmVisible ? (
         <button
           onClick={() => setConfirmVisible(true)}
-          disabled={!recipientValid || withdrawFee === 0n}
+          disabled={!recipientValid || !feeReady}
           className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
-            !recipientValid || withdrawFee === 0n
+            !recipientValid || !feeReady
               ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
               : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
           }`}
