@@ -40,9 +40,9 @@ test('onboarding happy-path: passkey → username → deposit → vault-password
   // The invite-gate is passed; UsernameStep should be visible.
   await expect(page.locator('input[type="text"]').first()).toBeVisible()
 
-  // Type a username that passes the regex (a-z0-9_, min 3 chars) and is
+  // Type a username that passes the regex (a-z0-9, 3-24 chars) and is
   // mocked as available (eth_call returns 0).
-  await page.locator('input[type="text"]').first().fill('alice_test')
+  await page.locator('input[type="text"]').first().fill('alicetest')
 
   // Wait for the debounce (500ms) + RPC check to resolve.
   // The green checkmark SVG (stroke="currentColor") appears when available.
@@ -120,7 +120,7 @@ test('onboarding mid-flow guard: revisiting /onboarding does not reset to step 1
   await page.goto(`/onboarding?code=${INVITE_CODE}`)
 
   // Fill the username and proceed to deposit step.
-  await page.locator('input[type="text"]').first().fill('midflow_test')
+  await page.locator('input[type="text"]').first().fill('midflowtest')
   await page.waitForTimeout(700)
   const nextBtn = page.locator('button', { hasText: /next/i })
   await expect(nextBtn).toBeEnabled({ timeout: 5_000 })

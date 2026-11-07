@@ -30,8 +30,10 @@ import QuickSignCard from '~/components/username/QuickSignCard'
 
 const DEBOUNCE_MS = 500
 
-// Lowercase alphanumeric + underscore; min 3, max 24 chars
-const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
+// Lowercase letters and digits only, min 3, max 24 chars. Matches
+// CawProfileMinter.isValidUsername and the /sponsor/bootstrap check, which
+// both reject "_".
+const USERNAME_REGEX = /^[a-z0-9]{3,24}$/
 
 
 // Compact CAW formatter. Keeps ONE significant decimal (dropping a trailing

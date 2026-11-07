@@ -45,7 +45,8 @@ const DEPOSIT_USD_MIN = 5
 const DEPOSIT_USD_MAX = 120
 
 const DEBOUNCE_MS = 500
-const USERNAME_REGEX = /^[a-z0-9_]{3,24}$/
+// Same rule as CawProfileMinter.isValidUsername and the Stripe route: no "_".
+const USERNAME_REGEX = /^[a-z0-9]{3,24}$/
 
 // Username burn cost schedule — canonical table (utils/cawCostSchedule).
 import { COST_SCHEDULE, DEFAULT_COST as DEFAULT_COST_CAW, cawCostForLength } from '~/utils/cawCostSchedule'
@@ -381,7 +382,7 @@ export default function CardCheckout() {
                   )}
                   {username.length > 0 && !isValidFormat && !isTyping && (
                     <p className="text-xs text-red-500 mt-0.5">
-                      3–24 characters, lowercase letters, numbers, or underscore.
+                      3–24 characters, lowercase letters or numbers.
                     </p>
                   )}
                 </div>
