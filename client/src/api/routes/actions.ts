@@ -118,6 +118,111 @@ function extractClientProvenance(req: any): { clientVersion: string | null; clie
   }
 }
 
+type PassiveAuthResult = { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number }
+
+/**
+ * Create or extend the HTTP session for `ownerAddress` after a verified action.
+ *
+ * SECURITY: an action signature is public once it lands in L2 calldata, so a
+ * verified signature alone does NOT prove the caller is the owner. Call this
+ * only after the request has enqueued a NEW action (past the dedup, cawonce
+ * collision, retry and rate-limit gates) and only when the cawonce is not
+ * already used on chain (see cawonceUnusedOnChain). Otherwise an attacker can
+ * replay a victim's past action with their own x-session-token header and get
+ * that existing session authorized as the victim, even if no cookie or `auth`
+ * field is returned to them.
+ */
+async function grantPassiveAuth(
+  sessionTokenHeader: string | undefined,
+  ownerAddress: string,
+): Promise<PassiveAuthResult | null> {
+  let authResult: PassiveAuthResult | null = null
+  let sessionToken = sessionTokenHeader
+  try {
+    let session = sessionToken ? await getSession(sessionToken) : null
+    const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
+
+    if (!alreadyAuthorized) {
+      const userTokens = await prisma.user.findMany({
+        where: { address: ownerAddress },
+        select: { tokenId: true }
+      })
+      const tokenIds = userTokens.map(u => u.tokenId)
+
+      if (!session) {
+        const created = await createSession()
+        sessionToken = created.token
+        session = created.session
+      }
+
+      const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
+      if (updated) {
+        authResult = {
+          sessionToken: sessionToken!,
+          authorizedTokenIds: updated.authorizedTokenIds,
+          authorizedAddresses: updated.authorizedAddresses,
+          expiresAt: updated.expiresAt
+        }
+      }
+    } else if (session && sessionToken) {
+      // Already authorized — but re-check DB for any new token IDs the user may have
+      // acquired since the session was created (e.g., bought/transferred a new CawProfile).
+      // This ensures the session stays in sync with on-chain ownership.
+      const userTokens = await prisma.user.findMany({
+        where: { address: ownerAddress },
+        select: { tokenId: true }
+      })
+      const currentTokenIds = userTokens.map(u => u.tokenId)
+      const hasNewTokens = currentTokenIds.some(id => !session!.authorizedTokenIds.includes(id))
+
+      if (hasNewTokens) {
+        const updated = await addAuthorization(sessionToken, ownerAddress, currentTokenIds)
+        if (updated) {
+          authResult = {
+            sessionToken,
+            authorizedTokenIds: updated.authorizedTokenIds,
+            authorizedAddresses: updated.authorizedAddresses,
+            expiresAt: updated.expiresAt
+          }
+        }
+      } else {
+        // Return existing session data so the frontend can resync its local state
+        authResult = {
+          sessionToken,
+          authorizedTokenIds: session.authorizedTokenIds,
+          authorizedAddresses: session.authorizedAddresses,
+          expiresAt: session.expiresAt
+        }
+      }
+    }
+  } catch (err: any) {
+    // Don't dump the full stack — it's a passive-auth attempt that often
+    // fails for benign reasons (no x-session-token, signature timeout
+    // races, etc.). Message + code is enough to triage. Audit fix
+    // 2026-05-13.
+    console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
+  }
+  return authResult
+}
+
+/**
+ * True only when the chain says (senderId, cawonce) has NOT been used yet.
+ * A used cawonce means this signature was already settled, so the request is
+ * a replay (possibly from another node's calldata) and must not earn a
+ * session. Fails closed: an RPC error returns false (no session; the action
+ * itself is still queued and the user keeps their existing login).
+ */
+async function cawonceUnusedOnChain(senderId: number, cawonce: number): Promise<boolean> {
+  try {
+    const contract = await getCawActionsContract()
+    const used: boolean = await contract.isCawonceUsed(senderId, cawonce)
+    return used === false
+  } catch (err: any) {
+    console.warn('[Actions] isCawonceUsed check failed; skipping passive auth:', err?.shortMessage || err?.message || String(err))
+    return false
+  }
+}
+
 // Highest cawonce this mirror has ever seen for a sender, across every
 // status (including terminal — done/failed/retried). The 409 suggestion
 // must clear ALL known-used slots on this mirror: if a row is `done`
@@ -244,6 +349,10 @@ interface SessionKeyCheck {
   /// validator credits this once per session-signed action via the batch-end
   /// implicitTip accumulator on CawActions. Whole CAW tokens.
   perActionTipRate?: bigint
+  /// True when `valid` is only a fail-open guess (the on-chain read failed),
+  /// not a verified session. Fine for queueing (the contract re-checks), but
+  /// it must never earn an HTTP session for the owner.
+  unverified?: boolean
 }
 
 /**
@@ -366,7 +475,7 @@ async function checkSessionKeyOnChain(
   } catch (err) {
     // RPC failure — allow through; contract will enforce at submission.
     console.warn('[Actions] Session key DB miss + RPC failed (allowing action):', (err as any)?.message)
-    return { valid: true }
+    return { valid: true, unverified: true }
   }
 }
 
@@ -408,6 +517,22 @@ router.post('/', async (req, res) => {
     // Validate required fields
     if (!data || !signature) {
       return res.status(400).json({ error: 'Missing required fields: data and signature' })
+    }
+
+    // EIP-712 domain binding. The signer is recovered against this client-
+    // supplied domain (below), and a verified signer is then trusted to mint
+    // a passive-auth session for the token owner. Without binding the domain
+    // to THIS contract, any ActionData-shaped signature the owner ever made
+    // for another verifyingContract/chain would recover to their address and
+    // yield a session. A legitimate action must target our CawActions on our
+    // L2 anyway (the validator submits the same sig on-chain, which would
+    // revert otherwise), so rejecting a mismatched domain here is safe.
+    if (
+      !domain || typeof domain !== 'object' ||
+      String(domain.verifyingContract).toLowerCase() !== CAW_ACTIONS_ADDRESS.toLowerCase() ||
+      Number(domain.chainId) !== L2_CHAIN_ID
+    ) {
+      return res.status(400).json({ error: 'Invalid EIP-712 domain' })
     }
 
     // On-chain CawProfile NFT tokenIds are 1-indexed (tokenId 0 does not
@@ -583,6 +708,13 @@ router.post('/', async (req, res) => {
     // AND the client provided a pendingQuickSignTxHash hint.
     let parkAsWaitingForSession = false
 
+    // Whether the signer is PROVEN to act for ownerAddress: the owner key, an
+    // ERC-1271 owner signature, or a session key the chain/DB confirmed. A
+    // parked action (session "in flight", a client-supplied hint) or a
+    // fail-open RPC result is queued for the contract to judge, but proves
+    // nothing about the caller, so it must not earn passive auth.
+    let signerVerified = isOwner
+
     if (!isOwner) {
       // Check if signer is a valid session key for this owner
       const actionType = typeof data.actionType === 'number' ? data.actionType : undefined
@@ -611,94 +743,14 @@ router.post('/', async (req, res) => {
         }
       } else {
         perActionTipRate = sessionCheck.perActionTipRate ?? 0n
+        signerVerified = sessionCheck.unverified !== true
       }
     }
     mark('sessionCheck')
 
-    // --- Passive auth accumulation ---
-    // Now that the signer is verified, create/extend the HTTP session for the token owner.
-    // Runs for both wallet-signed actions AND session-key-signed actions — in the
-    // session-key case we've just proved on-chain that the signer is a valid delegate
-    // for `ownerAddress`, so it's safe to accumulate an HTTP session for the owner.
-    // Without this, Quick-Sign-only users never get an HTTP session and see
-    // "Verify Wallet" on pages like Notifications despite actively using the app.
-    let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
-    let sessionToken = req.headers['x-session-token'] as string | undefined
-    try {
-      let session = sessionToken ? await getSession(sessionToken) : null
-      const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
-
-      if (!alreadyAuthorized) {
-        const userTokens = await prisma.user.findMany({
-          where: { address: ownerAddress },
-          select: { tokenId: true }
-        })
-        const tokenIds = userTokens.map(u => u.tokenId)
-
-        if (!session) {
-          const created = await createSession()
-          sessionToken = created.token
-          session = created.session
-        }
-
-        const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
-        if (updated) {
-          authResult = {
-            sessionToken: sessionToken!,
-            authorizedTokenIds: updated.authorizedTokenIds,
-            authorizedAddresses: updated.authorizedAddresses,
-            expiresAt: updated.expiresAt
-          }
-        }
-      } else if (session && sessionToken) {
-        // Already authorized — but re-check DB for any new token IDs the user may have
-        // acquired since the session was created (e.g., bought/transferred a new CawProfile).
-        // This ensures the session stays in sync with on-chain ownership.
-        const userTokens = await prisma.user.findMany({
-          where: { address: ownerAddress },
-          select: { tokenId: true }
-        })
-        const currentTokenIds = userTokens.map(u => u.tokenId)
-        const hasNewTokens = currentTokenIds.some(id => !session!.authorizedTokenIds.includes(id))
-
-        if (hasNewTokens) {
-          const updated = await addAuthorization(sessionToken, ownerAddress, currentTokenIds)
-          if (updated) {
-            authResult = {
-              sessionToken,
-              authorizedTokenIds: updated.authorizedTokenIds,
-              authorizedAddresses: updated.authorizedAddresses,
-              expiresAt: updated.expiresAt
-            }
-          }
-        } else {
-          // Return existing session data so the frontend can resync its local state
-          authResult = {
-            sessionToken,
-            authorizedTokenIds: session.authorizedTokenIds,
-            authorizedAddresses: session.authorizedAddresses,
-            expiresAt: session.expiresAt
-          }
-        }
-      }
-    } catch (err: any) {
-      // Don't dump the full stack — it's a passive-auth attempt that often
-      // fails for benign reasons (no x-session-token, signature timeout
-      // races, etc.). Message + code is enough to triage. Audit fix
-      // 2026-05-13.
-      console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || String(err), err?.code)
-    }
-    // Set the HttpOnly session cookie for the passive-auth session, mirroring the
-    // /api/auth/* login routes. WITHOUT this, passive auth only lived in the FE's
-    // in-memory store (sent as x-session-token) — but extractSession reads the
-    // COOKIE FIRST, so a stale cookie from an old login permanently shadowed the
-    // fresh header token: every follow-up request resolved the dead cookie session
-    // → getSession miss → 401, leaving the user "logged out" right after acting.
-    // Overwriting the cookie here makes the freshly-minted session authoritative.
-    if (authResult) {
-      res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
-    }
-    mark('passiveAuth')
+    // Passive auth (creating/extending an HTTP session for the token owner)
+    // is deliberately NOT done here. It runs only on the genuine-success path
+    // just before the 201 below (see the grantPassiveAuth helper).
 
     // Pre-flight gates that decide whether we'll create a TxQueue row at
     // all. Run them BEFORE any optimistic write so a fail-fast can't
@@ -739,10 +791,11 @@ router.post('/', async (req, res) => {
       })
       if (dup) {
         console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
-        // Still hand back the passive-auth session we just minted from the
-        // verified signature — otherwise a resubmitted (deduped) action leaves a
-        // logged-out user logged out despite having just proven ownership.
-        return res.json({ txQueueId: dup.id, status: dup.status, ...(authResult ? { auth: authResult } : {}) })
+        // No `auth` on the dedup path: the same signature can be replayed by
+        // anyone from public L2 calldata, so a duplicate submission must not
+        // mint/return a session. A legitimate resubmitter already holds their
+        // session cookie from the original submission.
+        return res.json({ txQueueId: dup.id, status: dup.status })
       }
     }
 
@@ -829,9 +882,7 @@ router.post('/', async (req, res) => {
           status: recentSameContent.status,
           deduped: true,
           reason: 'identical content recently submitted by this sender',
-          // Preserve the passive-auth session minted from the verified signature
-          // so a deduped resubmit still logs a logged-out user back in.
-          ...(authResult ? { auth: authResult } : {}),
+          // No `auth` on the dedup path — see the signedTx dedup return above.
         })
       }
     }
@@ -1757,6 +1808,17 @@ router.post('/', async (req, res) => {
     const total = Date.now() - reqStart
     if (total > 200) {
       console.log(`[Actions] POST /api/actions took ${total}ms breakdown:`, timings)
+    }
+
+    // Deliver the passive-auth session only now that a NEW action has actually
+    // been enqueued (see the passiveAuth block above). Setting the HttpOnly
+    // cookie here mirrors the /api/auth/* login routes and keeps extractSession
+    // (cookie-first) from being shadowed by a stale cookie.
+    const authResult = (signerVerified && await cawonceUnusedOnChain(data.senderId, data.cawonce))
+      ? await grantPassiveAuth(req.headers['x-session-token'] as string | undefined, ownerAddress)
+      : null
+    if (authResult) {
+      res.cookie(SESSION_COOKIE_NAME, authResult.sessionToken, sessionCookieOptions())
     }
 
     res.status(201).json({
