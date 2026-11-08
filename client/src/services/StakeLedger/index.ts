@@ -390,6 +390,33 @@ export async function recordAction(
   }
   // UNLIKE / UNFOLLOW / OTHER (excluding tip side effects via amounts):
   // no type-specific contract action. Step 2 handles validator tip/recipients.
+  //
+  // KNOWN GAP — not mirrored here: CawActions._distributeAmountsMem's
+  // fast path (no recipients, no explicit tip) still moves CAW from the
+  // sender to the validator:
+  //   - session-key actions with perActionTipRate > 0 pay an implicit tip
+  //     per action, min(networkTipCAW, session.perActionTipRate). The
+  //     per-action tips are summed and credited to validatorId at the end
+  //     of the batch. networkTipCAW is 0 while the tip oracle is dormant or
+  //     its sample is older than 24h, and the implicit tip is then 0, so the
+  //     per-action amount changes whenever the oracle goes stale or is
+  //     refreshed;
+  //   - OTHER actions that don't take that branch (wallet-signed, or a
+  //     session with perActionTipRate 0) pay a _getCost(1000, 1e11) floor
+  //     to validatorId. A session with perActionTipRate > 0 doesn't fall
+  //     back to this floor, even when its implicit tip is 0.
+  // Neither amount is in the ActionsProcessed event, and whether an action
+  // was session-signed isn't in rawAction, so the ledger skips both. When
+  // a skipped amount is positive, the sender is over-counted and the
+  // validator under-counted by that amount; a 0 implicit tip moves nothing,
+  // so skipping it leaves no drift. Both carry 0 communal, but the drift
+  // doesn't always stay per-user. A distribution's
+  // multiplier step divides by (totalCaw - sender balance), so the
+  // over-counted sender's next distributing action can move the ledger's
+  // multiplier off the chain's. verifyMultiplier compares the two exactly,
+  // so when that happens it halts (seen on one node on 2026-09-27).
+  // StakeLedgerReconciler reports the sender as MISMATCH on the runs that
+  // check them (users with a snapshot in the last 24h).
 
   // OTHER:tip — sender pays the recipient + validator tip via step 2;
   // we re-tag the spend rows below with reason=ACTION_SPEND_TIP so the

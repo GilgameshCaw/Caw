@@ -134,7 +134,8 @@ export async function runDailyReconciliation(): Promise<ReconcileResult> {
     result.mismatched++
     console.error(
       `[StakeLedger] Reconciler MISMATCH: tokenId=${tokenId} chain=${onChain} cached=${cached}. ` +
-        `Ledger over-counted this user. Investigate before reseeding.`,
+        `Ledger over-counted this user. Investigate before reseeding — a known cause is session-key ` +
+        `implicit tips / the OTHER floor, which the ledger does not mirror (see recordAction step 2).`,
     )
   }
 
