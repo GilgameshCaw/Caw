@@ -349,6 +349,10 @@ interface SessionKeyCheck {
   /// validator credits this once per session-signed action via the batch-end
   /// implicitTip accumulator on CawActions. Whole CAW tokens.
   perActionTipRate?: bigint
+  /// True when `valid` is only a fail-open guess (the on-chain read failed),
+  /// not a verified session. Fine for queueing (the contract re-checks), but
+  /// it must never earn an HTTP session for the owner.
+  unverified?: boolean
 }
 
 /**
@@ -471,7 +475,7 @@ async function checkSessionKeyOnChain(
   } catch (err) {
     // RPC failure — allow through; contract will enforce at submission.
     console.warn('[Actions] Session key DB miss + RPC failed (allowing action):', (err as any)?.message)
-    return { valid: true }
+    return { valid: true, unverified: true }
   }
 }
 
@@ -704,6 +708,13 @@ router.post('/', async (req, res) => {
     // AND the client provided a pendingQuickSignTxHash hint.
     let parkAsWaitingForSession = false
 
+    // Whether the signer is PROVEN to act for ownerAddress: the owner key, an
+    // ERC-1271 owner signature, or a session key the chain/DB confirmed. A
+    // parked action (session "in flight", a client-supplied hint) or a
+    // fail-open RPC result is queued for the contract to judge, but proves
+    // nothing about the caller, so it must not earn passive auth.
+    let signerVerified = isOwner
+
     if (!isOwner) {
       // Check if signer is a valid session key for this owner
       const actionType = typeof data.actionType === 'number' ? data.actionType : undefined
@@ -732,6 +743,7 @@ router.post('/', async (req, res) => {
         }
       } else {
         perActionTipRate = sessionCheck.perActionTipRate ?? 0n
+        signerVerified = sessionCheck.unverified !== true
       }
     }
     mark('sessionCheck')
@@ -1802,7 +1814,7 @@ router.post('/', async (req, res) => {
     // been enqueued (see the passiveAuth block above). Setting the HttpOnly
     // cookie here mirrors the /api/auth/* login routes and keeps extractSession
     // (cookie-first) from being shadowed by a stale cookie.
-    const authResult = (await cawonceUnusedOnChain(data.senderId, data.cawonce))
+    const authResult = (signerVerified && await cawonceUnusedOnChain(data.senderId, data.cawonce))
       ? await grantPassiveAuth(req.headers['x-session-token'] as string | undefined, ownerAddress)
       : null
     if (authResult) {

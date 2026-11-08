@@ -83,6 +83,19 @@ describe('POST /api/actions passive auth (replay hijack guard)', () => {
     expect(window).to.contain('cawonceUnusedOnChain(data.senderId, data.cawonce)')
   })
 
+  it('requires a verified signer (no parked or fail-open session check)', () => {
+    const grantAt = handler.indexOf('grantPassiveAuth(')
+    const window = handler.slice(Math.max(0, grantAt - 200), grantAt)
+    expect(window).to.contain('signerVerified &&')
+    // signerVerified starts as isOwner and is only set true by a non-fail-open session check.
+    expect(handler).to.contain('let signerVerified = isOwner')
+    expect(handler).to.contain('signerVerified = sessionCheck.unverified !== true')
+    const sets = handler.match(/(?<!let )signerVerified = /g) || []
+    expect(sets.length, 'no other assignments').to.equal(1)
+    // The fail-open branch of checkSessionKeyOnChain marks itself unverified.
+    expect(src).to.contain('return { valid: true, unverified: true }')
+  })
+
   it('cawonceUnusedOnChain asks CawActions.isCawonceUsed and fails closed', () => {
     const body = functionBody('cawonceUnusedOnChain')
     expect(body).to.contain('getCawActionsContract()')
