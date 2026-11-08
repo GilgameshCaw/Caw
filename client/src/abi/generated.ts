@@ -5730,6 +5730,15 @@ export const cawProfileMinterAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'permitDigest', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'sponsorFundingDigest',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'swapRouter',
     outputs: [
@@ -5811,6 +5820,7 @@ export const cawProfileMinterAbi = [
   },
   { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
   { type: 'error', inputs: [], name: 'EthSweepFailed' },
+  { type: 'error', inputs: [], name: 'FunderConsentMissing' },
   { type: 'error', inputs: [], name: 'KycNotConfigured' },
   { type: 'error', inputs: [], name: 'KycRequired' },
   { type: 'error', inputs: [], name: 'LevelAlreadySet' },
