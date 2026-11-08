@@ -175,7 +175,8 @@ function wrapDestroy<T extends { destroy?: () => any }>(provider: T): T {
   if (typeof p.destroy !== 'function') return provider
   const original = p.destroy.bind(provider)
   p.destroy = function (...args: any[]) {
-    const url = getProviderUrl(provider) || '(no-url)'
+    const rawUrl = getProviderUrl(provider)
+    const url = rawUrl ? redactRpcUrl(rawUrl) : '(no-url)'
     const stack = new Error().stack?.split('\n').slice(2, 8).join('\n  ') || '(no stack)'
     console.warn(`[rpcProvider] destroy() called on ${p.constructor?.name ?? 'Provider'} url=${url}\n  ${stack}`)
     return original(...args)
