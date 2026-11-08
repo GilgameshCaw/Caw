@@ -406,9 +406,11 @@ export async function recordAction(
   //     to validatorId. A session with perActionTipRate > 0 doesn't fall
   //     back to this floor, even when its implicit tip is 0.
   // Neither amount is in the ActionsProcessed event, and whether an action
-  // was session-signed isn't in rawAction, so the ledger skips both: the
-  // sender is over-counted, the validator under-counted. Both carry 0
-  // communal, but the drift doesn't always stay per-user. A distribution's
+  // was session-signed isn't in rawAction, so the ledger skips both. When
+  // a skipped amount is positive, the sender is over-counted and the
+  // validator under-counted by that amount; a 0 implicit tip moves nothing,
+  // so skipping it leaves no drift. Both carry 0 communal, but the drift
+  // doesn't always stay per-user. A distribution's
   // multiplier step divides by (totalCaw - sender balance), so the
   // over-counted sender's next distributing action can move the ledger's
   // multiplier off the chain's. verifyMultiplier compares the two exactly,
