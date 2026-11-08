@@ -81,9 +81,12 @@ function looksLikeImage(buf: Buffer): boolean {
 }
 
 // Re-encoding an animation costs about 2s of CPU per 24 million pixels (width ×
-// height × frames), and the file size doesn't bound that: a GIF this big can be
-// under 1 KB. 24M still covers 800×450 at 60 frames.
+// height × frames), plus a fixed cost for each frame. The file size bounds
+// neither: a GIF of 24M pixels can be under 1 KB, and a 10 MB GIF can hold
+// 450,000 frames of one pixel. 24M still covers 800×450 at 60 frames, and
+// 1,000 frames covers a long GIF.
 const MAX_ANIMATED_PIXELS = 24_000_000
+const MAX_ANIMATED_FRAMES = 1_000
 
 // Strip EXIF metadata and auto-orient the image (L-1: privacy leak fix).
 // .rotate() reads the EXIF Orientation tag, applies it, then re-encodes
@@ -110,11 +113,13 @@ async function stripExifAndCheckDimensions(buffer: Buffer): Promise<Buffer> {
     throw err
   }
   // Sharp decodes only the first frame by default, which froze animated images.
-  // Keep every frame while the file is within the budget; past it, keep the
-  // first frame so a tiny hostile file can't buy seconds of CPU. Same fallback
-  // for an EXIF orientation, which rotate() can't apply to several frames.
+  // Keep every frame while the file is within both budgets; past either, keep
+  // the first frame so a small hostile file can't make the re-encode cost
+  // seconds of CPU. Same fallback for an EXIF orientation, which rotate() can't
+  // apply to several frames.
   const frames = pages ?? 1
   const animated = frames > 1
+    && frames <= MAX_ANIMATED_FRAMES
     && (orientation ?? 1) === 1
     && (width ?? 0) * (height ?? 0) * frames <= MAX_ANIMATED_PIXELS
   return sharp(buffer, { animated }).rotate().toBuffer()
