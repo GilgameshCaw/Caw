@@ -221,6 +221,8 @@ contract SponsorRepayTest is Test {
     // =========================================================================
     // setUp
     // =========================================================================
+    address internal constant SPONSOR_EOA = address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+
     function setUp() public {
         // --- Minter side ---
         caw    = new SRMockERC20();
@@ -245,12 +247,10 @@ contract SponsorRepayTest is Test {
         caw.approve(address(minter), type(uint256).max);
         vm.deal(address(this), 10 ether);
 
-        // EIP-7702 funding fix: _burnAndAssignId uses tx.origin when msg.sender
-        // has code (contract caller). Foundry's default tx.origin is DefaultSender
-        // (0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38) when no prank is active.
-        // Fund it so existing tests that call mintAndDepositSponsored directly from
-        // the test contract (code.length > 0) pass the balance + allowance checks.
-        address defaultSender = address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+        // The sponsor server calls mintAndDepositSponsored directly from its EOA
+        // (msg.sender == tx.origin, so it pays itself and needs no funderSig).
+        // Tests model it as Foundry's DefaultSender via vm.prank(SPONSOR_EOA, SPONSOR_EOA).
+        address defaultSender = SPONSOR_EOA;
         caw.mint(defaultSender, 1_000_000_000 * 10**24);
         vm.prank(defaultSender);
         caw.approve(address(minter), type(uint256).max);
@@ -353,9 +353,10 @@ contract SponsorRepayTest is Test {
         vm.expectEmit(true, false, false, true, address(minter));
         emit CawProfileMinter.SponsorRepaySet(1, sponsorTokenId, repayAmount, depositAmount);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "uservalidrepay", depositAmount, 0, 0, nonce, ANY_SIG,
-            0, sponsorTokenId, repayAmount
+            0, sponsorTokenId, repayAmount, ""
         );
 
         // Verify MockProfile received the correct repay params.
@@ -377,9 +378,10 @@ contract SponsorRepayTest is Test {
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
         vm.expectRevert("Repay cap");
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "captest", depositAmount, 0, 0, nonce, ANY_SIG,
-            0, 1, repayAmount
+            0, 1, repayAmount, ""
         );
     }
 
@@ -393,9 +395,10 @@ contract SponsorRepayTest is Test {
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
         // Should NOT revert.
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "atcaptest", depositAmount, 0, 0, nonce, ANY_SIG,
-            0, 7, repayAmount
+            0, 7, repayAmount, ""
         );
 
         assertEq(profile.ownerOf(1), address(scwUser), "token minted at cap boundary");
@@ -411,9 +414,10 @@ contract SponsorRepayTest is Test {
         // Record logs to verify no SponsorRepaySet is emitted.
         vm.recordLogs();
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "zerorepay", depositAmount, 0, 0, nonce, ANY_SIG,
-            0, 0, 0
+            0, 0, 0, ""
         );
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -438,9 +442,10 @@ contract SponsorRepayTest is Test {
 
         uint256 tsBeforeCall = block.timestamp;
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "kyconly", depositAmount, 0, 0, nonce, ANY_SIG,
-            2 /*kycLevel*/, 0, 0
+            2 /*kycLevel*/, 0, 0, ""
         );
 
         assertGt(minter.mintedAt(1), 0, "mintedAt must be set when kycLevel > 0");
@@ -456,9 +461,10 @@ contract SponsorRepayTest is Test {
         uint256 repayAmount   = 50_000 * 10**18;
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "repayonly", depositAmount, 0, 0, nonce, ANY_SIG,
-            0 /*kycLevel*/, 5, repayAmount
+            0 /*kycLevel*/, 5, repayAmount, ""
         );
 
         assertEq(minter.mintedAt(1),          0, "mintedAt must be 0 for repay-only (no time-lock)");
@@ -478,9 +484,10 @@ contract SponsorRepayTest is Test {
         vm.expectEmit(true, false, false, true, address(minter));
         emit CawProfileMinter.SponsorRepaySet(1, sponsorTokenId, repayAmount, depositAmount);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "evtcheck", depositAmount, 0, 0, nonce, ANY_SIG,
-            0, sponsorTokenId, repayAmount
+            0, sponsorTokenId, repayAmount, ""
         );
     }
 
@@ -904,9 +911,10 @@ contract SponsorRepayTest is Test {
         uint256 depositAmount = 100_000 * 10**18;
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "timelocked", depositAmount, 0, 0, nonce, ANY_SIG,
-            1 /*kycLevel = time-lock*/, 0, 0
+            1 /*kycLevel = time-lock*/, 0, 0, ""
         );
 
         // Before 180 days: reverts
@@ -926,9 +934,10 @@ contract SponsorRepayTest is Test {
         uint256 depositAmount = 100_000 * 10**18;
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "kycgated", depositAmount, 0, 0, nonce, ANY_SIG,
-            2 /*kycLevel = KYC verifier required*/, 0, 0
+            2 /*kycLevel = KYC verifier required*/, 0, 0, ""
         );
 
         // Verifier not configured → KycNotConfigured
@@ -952,9 +961,10 @@ contract SponsorRepayTest is Test {
         uint256 depositAmount = 100_000 * 10**18;
         uint256 nonce = scwUser.nonceOf(address(minter), 1);
 
+        vm.prank(SPONSOR_EOA, SPONSOR_EOA);
         minter.mintAndDepositSponsored(
             1, address(scwUser), "kycpass", depositAmount, 0, 0, nonce, ANY_SIG,
-            2, 0, 0
+            2, 0, 0, ""
         );
 
         // Verifier returns true → no revert

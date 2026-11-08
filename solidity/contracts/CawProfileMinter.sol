@@ -117,6 +117,17 @@ contract CawProfileMinter is Context {
     "Authenticate(uint32 networkId,uint32 tokenId,uint32 lzDestId,uint256 lzTokenAmount,uint256 nonce)"
   );
 
+  /// @dev The funder's own consent for one sponsored mint. `permitDigest` is the
+  ///      full EIP-712 digest of the recipient's MintAndDeposit permit, so the
+  ///      funder approves exactly that recipient, username, depositAmount and
+  ///      nonce, once. Signed by tx.origin (the sponsor server's broadcasting EOA).
+  bytes32 internal constant SPONSOR_FUNDING_TYPEHASH = keccak256(
+    "SponsorFunding(bytes32 permitDigest)"
+  );
+
+  /// @dev tx.origin did not sign a SponsorFunding approval for this permit.
+  error FunderConsentMissing();
+
   constructor(
     address _caw,
     address _cawProfiles,
@@ -565,7 +576,8 @@ contract CawProfileMinter is Context {
   ///
   ///         SPONSOR ADDRESS SELECTION: see NatSpec below for the EIP-7702 funding
   ///         model.  Short version: EOA caller → payer = msg.sender; contract caller
-  ///         (SmartEOA 7702 path) → payer = tx.origin (the broadcaster).
+  ///         (SmartEOA 7702 path) → payer = tx.origin, only with tx.origin's
+  ///         own SponsorFunding signature (`funderSig`).
   ///
   ///         NOTE: `depositAmount = 0` is INTENTIONALLY permitted (matches the
   ///         non-sponsored `mintAndDepositFor` semantics — a user may want to
@@ -602,20 +614,23 @@ contract CawProfileMinter is Context {
   ///      tx.origin — the sponsor server that CHOSE to broadcast this tx, holds the
   ///      CAW pool, and pre-approved an unlimited allowance to this Minter.
   ///
-  ///      SECURITY: tx.origin as payer is safe here because:
-  ///        1. The sponsor pre-approved the Minter.  Without that approval the transfer
-  ///           reverts, so no address can be drained involuntarily.
-  ///        2. The sponsor broadcasts the tx — controlling tx.origin is the same as
-  ///           consenting to the spend.  No third party can set tx.origin to the sponsor.
-  ///        3. The user-signed permit already binds the mint parameters (recipient,
-  ///           username, depositAmount, etc.), so the sponsor cannot redirect the
-  ///           user's registered name or deposit to another token.
-  ///        4. This pattern is equivalent to the *For variants on CawProfile where
-  ///           msg.sender (a router) fronts the CAW on behalf of the recipient.
+  ///      SECURITY: broadcasting a tx is NOT consent to pay for whatever runs
+  ///      inside it. tx.origin is whoever signed the outer tx; a contract reached
+  ///      inside it (an address whose stale 7702 delegation points at attacker
+  ///      code, or a user-chosen call inside a relayed SmartEOA.executeBatch)
+  ///      could otherwise call this function with any depositAmount and spend
+  ///      tx.origin's standing allowance. So on the contract-caller path
+  ///      tx.origin must ALSO sign `sponsorFundingDigest(permitDigest)` and pass
+  ///      it as `funderSig`. That binds the funder to exactly this recipient,
+  ///      username, depositAmount and permit nonce, once (the nonce is consumed).
   ///
-  ///      For non-7702 direct callers the tx.origin == msg.sender, so existing Population-A
-  ///      sponsor flows that call mintAndDepositSponsored directly (not through a 7702 EOA)
-  ///      continue to work without change.
+  ///      For direct callers (msg.sender is an EOA, or msg.sender == tx.origin)
+  ///      the caller pays itself and `funderSig` is ignored, so Population-A
+  ///      sponsor flows that call this directly keep working.
+  ///
+  /// @param funderSig       65-byte ECDSA sig by tx.origin over
+  ///                        sponsorFundingDigest(permit digest). Required only
+  ///                        when msg.sender is a contract other than tx.origin.
   function mintAndDepositSponsored(
     uint32 networkId,
     address recipient,
@@ -627,7 +642,8 @@ contract CawProfileMinter is Context {
     bytes calldata sig,
     uint8 kycLevel,
     uint32 sponsorTokenId,
-    uint256 repayAmount
+    uint256 repayAmount,
+    bytes calldata funderSig
   ) external payable sweepResidualEth {
     require(recipient.code.length > 0, "Direct submit required");
     require(repayAmount == 0 || repayAmount <= depositAmount * 2, "Repay cap");
@@ -650,16 +666,17 @@ contract CawProfileMinter is Context {
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     _checkPermit(recipient, ACTION_MINT_DEPOSIT, permitNonce, digest, sig);
-    // EIP-7702 fix: derive the CAW funder address.
-    //   - If msg.sender is an EOA (code.length == 0): payer = msg.sender.
-    //     This is the direct Population-A path: sponsor server calls the Minter
-    //     directly as an EOA, so msg.sender == tx.origin == sponsor.
-    //   - If msg.sender is a contract (code.length > 0): payer = tx.origin.
-    //     This is the Population-B 7702 path: SmartEOA.initialize calls the
-    //     Minter, making msg.sender = SmartEOA (0 CAW). tx.origin = the sponsor
-    //     server EOA that broadcast the type-0x04 tx, holds the CAW pool, and
-    //     pre-approved this Minter. See NatSpec above for full security rationale.
-    address sponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    // CAW funder:
+    //   - Direct call (msg.sender is an EOA, or a 7702-delegated EOA sending its
+    //     own tx so msg.sender == tx.origin): the caller pays. funderSig unused.
+    //   - Call through a contract (the 7702 bootstrap: SmartEOA.initialize ->
+    //     Minter, msg.sender = the user's SmartEOA with 0 CAW): tx.origin pays,
+    //     but ONLY if tx.origin signed a SponsorFunding approval for exactly
+    //     this permit. Broadcasting a tx is not consent: tx.origin is whoever
+    //     sent the outer tx, and any contract reached inside it (a stale 7702
+    //     delegation, or a user-chosen call in a relayed executeBatch) could
+    //     otherwise pick any depositAmount and spend tx.origin's allowance.
+    address sponsor = _sponsoredFunder(digest, funderSig);
     uint32 newId = _burnAndAssignId(username, depositAmount, sponsor);
     if (depositAmount > 0) {
       CAW.transferFrom(sponsor, address(this), depositAmount);
@@ -702,7 +719,7 @@ contract CawProfileMinter is Context {
   ///         `depositFor` is permissionless on CawProfile, but this entry point adds
   ///         sig-gating so the sponsor is sure the owner authorised the deposit.
   ///
-  ///         FUNDING MODEL: the sponsor (msg.sender — typically a sponsor server) holds the
+  ///         FUNDING MODEL: the sponsor (always msg.sender, never tx.origin — typically a sponsor server) holds the
   ///         user's CAW balance and has pre-approved this Minter for at least `amount`.
   ///         The Minter pulls `amount` from the sponsor, approves CawProfile to pull it
   ///         back, then delegates to CawProfile.depositFor. The deposit credit goes to
@@ -749,11 +766,11 @@ contract CawProfileMinter is Context {
     // approve pattern used by mintAndDepositFor. The sponsor server must hold the
     // user's CAW and have pre-approved the Minter for at least `amount`.
     //
-    // EIP-7702 fix: derive the CAW funder the same way as mintAndDepositSponsored:
-    //   msg.sender.code.length == 0  →  funder = msg.sender  (direct EOA call)
-    //   msg.sender.code.length > 0   →  funder = tx.origin   (7702/SmartEOA path)
-    // See mintAndDepositSponsored NatSpec for full security rationale.
-    address depositSponsor = _msgSender().code.length == 0 ? _msgSender() : tx.origin;
+    // The funder is always the direct caller. The sponsor server calls this
+    // directly from its EOA. There is no tx.origin fallback: a contract that
+    // reaches this function inside someone else's tx (e.g. a call in a relayed
+    // SmartEOA.executeBatch) must not be able to spend tx.origin's allowance.
+    address depositSponsor = _msgSender();
     CAW.transferFrom(depositSponsor, address(this), amount);
     CAW.approve(address(CawProfile), amount);
     // Route LZ fee refund to the token owner (the user), not tx.origin (sponsor server).
@@ -808,6 +825,38 @@ contract CawProfileMinter is Context {
     CawProfile.setLzRefundTo(payable(owner));
     CawProfile.authenticateForMinter{value: msg.value}(networkId, tokenId, lzDestId, owner, lzTokenAmount);
     CawProfile.setLzRefundTo(payable(address(0)));
+  }
+
+  /// @notice EIP-712 digest a funder signs to approve paying for one sponsored
+  ///         mint whose recipient permit has digest `permitDigest`.
+  function sponsorFundingDigest(bytes32 permitDigest) public view returns (bytes32) {
+    return keccak256(abi.encodePacked(
+      "\x19\x01",
+      DOMAIN_SEPARATOR,
+      keccak256(abi.encode(SPONSOR_FUNDING_TYPEHASH, permitDigest))
+    ));
+  }
+
+  /// @dev CAW funder for mintAndDepositSponsored. See the comment at the call site.
+  function _sponsoredFunder(bytes32 permitDigest, bytes calldata funderSig) internal view returns (address) {
+    address caller = _msgSender();
+    if (caller.code.length == 0 || caller == tx.origin) return caller;
+    if (_recoverFunder(sponsorFundingDigest(permitDigest), funderSig) != tx.origin) revert FunderConsentMissing();
+    return tx.origin;
+  }
+
+  /// @dev Plain 65-byte (r, s, v) ECDSA recover with the usual malleability
+  ///      guards (low s, v in {27, 28}). Returns address(0) on any malformed sig.
+  ///      Inlined instead of importing OZ ECDSA so the compiled source set (and
+  ///      the AST ids in the storage-layout goldens) stay unchanged.
+  function _recoverFunder(bytes32 digest, bytes calldata sig) internal pure returns (address) {
+    if (sig.length != 65) return address(0);
+    bytes32 r = bytes32(sig[0:32]);
+    bytes32 s = bytes32(sig[32:64]);
+    uint8 v = uint8(sig[64]);
+    if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) return address(0);
+    if (v != 27 && v != 28) return address(0);
+    return ecrecover(digest, v, r, s);
   }
 
   /// @dev Shared permit-verification logic for all three sponsor entry points.

@@ -5682,6 +5682,7 @@ export const cawProfileMinterAbi = [
       { name: 'kycLevel', internalType: 'uint8', type: 'uint8' },
       { name: 'sponsorTokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'repayAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'funderSig', internalType: 'bytes', type: 'bytes' },
     ],
     name: 'mintAndDepositSponsored',
     outputs: [],
@@ -5725,6 +5726,15 @@ export const cawProfileMinterAbi = [
     inputs: [],
     name: 'pathwayExpander',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'permitDigest', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'sponsorFundingDigest',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
@@ -5810,6 +5820,7 @@ export const cawProfileMinterAbi = [
   },
   { type: 'error', inputs: [], name: 'AlreadyUnlocked' },
   { type: 'error', inputs: [], name: 'EthSweepFailed' },
+  { type: 'error', inputs: [], name: 'FunderConsentMissing' },
   { type: 'error', inputs: [], name: 'KycNotConfigured' },
   { type: 'error', inputs: [], name: 'KycRequired' },
   { type: 'error', inputs: [], name: 'LevelAlreadySet' },

@@ -344,7 +344,7 @@ contract PopBBootstrapE2ETest is Test {
     // setUp
     // =========================================================================
 
-    function setUp() public {
+    function setUp() public virtual {
         // --- P-256 mock ---
         p256Registry = new E2EP256Registry();
         E2EMockP256Precompile mockP256 = new E2EMockP256Precompile(address(p256Registry));
@@ -432,6 +432,12 @@ contract PopBBootstrapE2ETest is Test {
             uint256(0)        // repayAmount
         ));
         return keccak256(abi.encodePacked("\x19\x01", minter.DOMAIN_SEPARATOR(), structHash));
+    }
+
+    /// @dev The funder's (tx.origin's) SponsorFunding signature for one permit.
+    function _funderSig(uint256 funderPk, bytes32 permitDigest) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(funderPk, minter.sponsorFundingDigest(permitDigest));
+        return abi.encodePacked(r, s, v);
     }
 
     /// @dev Register a P-256 vector in the mock so isValidSignature accepts it.
@@ -544,7 +550,8 @@ contract PopBBootstrapE2ETest is Test {
             webAuthnSig,
             uint8(0),             // kycLevel = no gate
             uint32(0),            // sponsorTokenId
-            uint256(0)            // repayAmount
+            uint256(0),           // repayAmount
+            _funderSig(SPONSOR_PK, mintDigest) // tx.origin consents to this exact permit
         );
 
         // -------------------------------------------------------
@@ -728,7 +735,8 @@ contract PopBBootstrapE2ETest is Test {
             hex"abcd",             // any non-empty sig accepted by SimpleSmartEOAMock
             uint8(0),
             uint32(0),
-            uint256(0)
+            uint256(0),
+            _funderSig(SPONSOR_PK, _buildMintAndDepositDigest(address(userMock), "txorigtest", DEPOSIT_AMOUNT, permitNonce, uint32(0)))
         );
 
         // Precondition: callerProxy has 0 CAW.
@@ -791,7 +799,8 @@ contract PopBBootstrapE2ETest is Test {
             uint256(0),
             permitNonce,
             webAuthnSig,
-            uint8(0), uint32(0), uint256(0)
+            uint8(0), uint32(0), uint256(0),
+            _funderSig(0xdeadbeef002, mintDigest)
         );
 
         // Fund a fresh sponsor (avoids balance contention with other tests).
@@ -863,7 +872,7 @@ contract PopBBootstrapE2ETest is Test {
             0, 0,
             1 /* wrong nonce */,
             wrongNonceSig,
-            0, 0, 0
+            0, 0, 0, ""
         );
 
         // Nonce must NOT have been consumed (the revert was pre-sig, not post-sig).
@@ -883,7 +892,7 @@ contract PopBBootstrapE2ETest is Test {
             0, 0,
             0 /* correct nonce */,
             correctSig,
-            0, 0, 0
+            0, 0, 0, ""
         );
 
         // Nonce now = 1.
@@ -921,7 +930,8 @@ contract PopBBootstrapE2ETest is Test {
             uint256(0),
             permitNonce,
             webAuthnSig,
-            uint8(0), uint32(0), uint256(0)
+            uint8(0), uint32(0), uint256(0),
+            _funderSig(SPONSOR_PK, mintDigest)
         );
 
         uint256 profileEthBefore = address(profile).balance;
@@ -983,7 +993,8 @@ contract PopBBootstrapE2ETest is Test {
         bytes memory mintCalldata = abi.encodeWithSelector(
             CawProfileMinter.mintAndDepositSponsored.selector,
             uint32(NETWORK_ID), freshEOA2, un, DEPOSIT_AMOUNT,
-            uint32(0), uint256(0), permitNonce, sig, uint8(0), uint32(0), uint256(0)
+            uint32(0), uint256(0), permitNonce, sig, uint8(0), uint32(0), uint256(0),
+            _funderSig(0xbeef002, digest)
         );
 
         address freshSponsor2 = vm.addr(0xbeef002);
@@ -1040,7 +1051,7 @@ contract PopBBootstrapE2ETest is Test {
         vm.prank(sponsor, sponsor);
         minter.mintAndDepositSponsored(
             NETWORK_ID, userEOA, "replaytest", DEPOSIT_AMOUNT,
-            0, 0, 0, sig, 0, 0, 0
+            0, 0, 0, sig, 0, 0, 0, ""
         );
         assertEq(profile.ownerOf(1), userEOA, "first mint: NFT minted to userEOA");
         assertEq(SmartEOA(userEOA).nonceOf(address(minter), 1), 1, "nonce is now 1");
@@ -1050,7 +1061,7 @@ contract PopBBootstrapE2ETest is Test {
         vm.prank(sponsor, sponsor);
         minter.mintAndDepositSponsored(
             NETWORK_ID, userEOA, "replaytest2", DEPOSIT_AMOUNT,
-            0, 0, 0, sig, 0, 0, 0
+            0, 0, 0, sig, 0, 0, 0, ""
         );
     }
 
@@ -1082,7 +1093,7 @@ contract PopBBootstrapE2ETest is Test {
         vm.prank(sponsor, sponsor);
         minter.mintAndDepositSponsored(
             NETWORK_ID, userEOA, "badsigtest", DEPOSIT_AMOUNT,
-            0, 0, 0, fakeSig, 0, 0, 0
+            0, 0, 0, fakeSig, 0, 0, 0, ""
         );
     }
 
@@ -1101,7 +1112,7 @@ contract PopBBootstrapE2ETest is Test {
         vm.prank(sponsor, sponsor);
         minter.mintAndDepositSponsored(
             NETWORK_ID, plainEOA /* plain EOA */, "planeoa", DEPOSIT_AMOUNT,
-            0, 0, 0, hex"abcd", 0, 0, 0
+            0, 0, 0, hex"abcd", 0, 0, 0, ""
         );
     }
 
