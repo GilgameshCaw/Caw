@@ -42,6 +42,18 @@ import { useSignInModalStore } from '~/store/signInModalStore'
 import { useAuthStore } from '~/store/authStore'
 import ProfileEditForm from '~/components/ProfileEditForm'
 import ImageLightbox from '~/components/ImageLightbox'
+import { formatEther, formatUnits } from 'viem'
+
+// Same as ViewOffersModal's fmtPrice: offer.amount is in the token's base
+// units (6 decimals for USDC/USDT, 18 for CAW/ETH/WETH).
+const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
+function fmtPrice(raw: string, token: string): string {
+  const dec = DECIMALS[token] ?? 18
+  const num = parseFloat(dec === 18 ? formatEther(BigInt(raw)) : formatUnits(BigInt(raw), dec))
+  if (token === 'CAW') return num.toLocaleString(undefined, { maximumFractionDigits: 0 })
+  if (token === 'USDC' || token === 'USDT') return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -283,12 +295,22 @@ export const Profile: React.FC = () => {
   // Fallback only applies when the URL had no username segment at all —
   // an explicit but invalid URL (e.g. /users/!@#) should not silently
   // redirect the viewer to their own profile.
-  const displayUsername = username || (rawUsername === undefined ? (activeToken?.username || 'user') : 'user')
+  //
+  // lookupUsername is the name to load, or undefined when there is none.
+  // It is kept apart from the 'user' display placeholder: "user" is a
+  // valid on-chain name, so the placeholder can't double as "nothing to load".
+  const lookupUsername = username || (rawUsername === undefined ? activeToken?.username || undefined : undefined)
+  const displayUsername = lookupUsername || 'user'
 
   // Fetch profile data
   useEffect(() => {
+    // Moving from one profile to another reuses this component, so a slow
+    // response for the previous name must not land after the new one.
+    let cancelled = false
     const fetchProfile = async () => {
-      if (!displayUsername || displayUsername === 'user') {
+      if (!lookupUsername) {
+        setProfileData(null)
+        setDbNotFound(false)
         setLoading(false)
         return
       }
@@ -298,11 +320,13 @@ export const Profile: React.FC = () => {
       setDbNotFound(false)
 
       try {
-        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        const data = await apiFetch<ProfileData>(`/api/users/${lookupUsername}`)
+        if (cancelled) return
         setProfileData(data)
         setHasTipped(data.hasTipped || false)
         setTipPending(data.tipPending || false)
       } catch (err: any) {
+        if (cancelled) return
         if (err.message?.includes('404')) {
           setDbNotFound(true)
           return
@@ -310,12 +334,13 @@ export const Profile: React.FC = () => {
         console.error('Failed to fetch profile:', err)
         setError(t('profile.error.failed_to_load'))
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
     fetchProfile()
-  }, [displayUsername, activeToken?.tokenId])
+    return () => { cancelled = true }
+  }, [lookupUsername, activeToken?.tokenId])
 
   // If the DB doesn't have the user, check on-chain availability directly
   // via the L1 minter contract (O(1) reverse lookup). Doing this on the
@@ -325,8 +350,8 @@ export const Profile: React.FC = () => {
     abi: cawProfileMinterAbi,
     chainId: chains.l1.chainId,
     functionName: 'idByUsername',
-    args: [displayUsername || ''],
-    query: { enabled: dbNotFound && !!displayUsername && displayUsername !== 'user' },
+    args: [lookupUsername || ''],
+    query: { enabled: dbNotFound && !!lookupUsername },
   })
   const onChainTokenId = onChainTokenIdRaw ? Number(onChainTokenIdRaw) : 0
   const availableOnChain = dbNotFound && !checkingOnChain && onChainTokenId === 0
@@ -365,11 +390,11 @@ export const Profile: React.FC = () => {
 
   // Poll for tip confirmation
   useEffect(() => {
-    if (!tipPending || !displayUsername || displayUsername === 'user') return
+    if (!tipPending || !lookupUsername) return
 
     const interval = setInterval(async () => {
       try {
-        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        const data = await apiFetch<ProfileData>(`/api/users/${lookupUsername}`)
         setProfileData(data)
         setHasTipped(data.hasTipped || false)
         setTipPending(data.tipPending || false)
@@ -379,17 +404,17 @@ export const Profile: React.FC = () => {
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [tipPending, displayUsername])
+  }, [tipPending, lookupUsername])
 
   // Poll for profile update completion when localProfileUpdatePending is true
   const setAvatar = useTokenDataStore(s => s.setAvatar)
   const optimisticAvatar = useTokenDataStore(s => profileData?.tokenId ? s.avatarsByTokenId[profileData.tokenId] : undefined)
   useEffect(() => {
-    if (!localProfileUpdatePending || !displayUsername || displayUsername === 'user') return
+    if (!localProfileUpdatePending || !lookupUsername) return
 
     const interval = setInterval(async () => {
       try {
-        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        const data = await apiFetch<ProfileData>(`/api/users/${lookupUsername}`)
         setProfileData(data)
         if (!data.profileUpdatePending) {
           setLocalProfileUpdatePending(false)
@@ -404,7 +429,7 @@ export const Profile: React.FC = () => {
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [localProfileUpdatePending, displayUsername])
+  }, [localProfileUpdatePending, lookupUsername])
 
   // Form state - Initialize with current profile data
   const [formData, setFormData] = useState({
@@ -1089,10 +1114,7 @@ export const Profile: React.FC = () => {
                           : 'bg-blue-50 text-blue-700'
                       }`}
                     >
-                      <span>Your offer: {offer.paymentToken === 'ETH' || offer.paymentToken === 'WETH'
-                        ? `${parseFloat((Number(BigInt(offer.amount)) / 1e18).toFixed(6))} ${offer.paymentToken}`
-                        : `${offer.amount} ${offer.paymentToken}`
-                      }</span>
+                      <span>Your offer: {fmtPrice(offer.amount, offer.paymentToken)} {offer.paymentToken}</span>
                       <button
                         onClick={() => {
                           ensureWallet({ chainId: chains.l1.chainId }, async () => {
