@@ -2,13 +2,14 @@
  * Notifications.poll.test.tsx
  *
  * The notifications page polls /api/notifications/unread-count every 30 s.
- * These tests cover when that poll runs: not while the tab is hidden, and
- * once right away when the tab becomes visible again.
+ * These tests cover when that poll runs (not while the browser tab is hidden,
+ * and once right away when it becomes visible again) and which list it
+ * reloads after the user switches between the All and Mentions tabs.
  */
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, act, cleanup } from '@testing-library/react'
+import { render, act, cleanup, screen, fireEvent } from '@testing-library/react'
 
 // ─── Mock external dependencies ──────────────────────────────────────────────
 
@@ -70,8 +71,10 @@ vi.mock('~/components/PollMiniResults', () => ({ default: () => null }))
 const UNREAD_COUNT_URL = '/api/notifications/unread-count'
 const LIST_URL = '/api/notifications?'
 
-const callsTo = (prefix: string) =>
-  apiFetch.mock.calls.filter(([url]) => String(url).startsWith(prefix)).length
+const urlsTo = (prefix: string) =>
+  apiFetch.mock.calls.map(([url]) => String(url)).filter(url => url.startsWith(prefix))
+
+const callsTo = (prefix: string) => urlsTo(prefix).length
 
 const setHidden = (hidden: boolean) => {
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden })
@@ -164,6 +167,21 @@ describe('Notifications unread-count poll', () => {
 
     await changeVisibility(false)
     expect(callsTo(LIST_URL)).toBe(listCallsAfterLoad + 1)
+  })
+
+  it('reloads the Mentions list when the poll fires after switching to that tab', async () => {
+    await renderPage()
+    await act(async () => {
+      fireEvent.click(screen.getByText('notifications.tab.mentions'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    const listCallsAfterSwitch = callsTo(LIST_URL)
+    expect(urlsTo(LIST_URL).at(-1)).toContain('type=mentions')
+
+    serverUnread = 1
+    await advance(30_000)
+    expect(callsTo(LIST_URL)).toBe(listCallsAfterSwitch + 1)
+    expect(urlsTo(LIST_URL).at(-1)).toContain('type=mentions')
   })
 
   it('stops listening for visibility changes after unmount', async () => {

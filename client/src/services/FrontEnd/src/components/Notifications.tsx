@@ -954,7 +954,7 @@ const Notifications: React.FC = () => {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', checkForNew)
     }
-  }, [activeToken, unreadCount])
+  }, [activeToken, unreadCount, fetchNotifications])
 
   if (!activeToken) {
     return (
