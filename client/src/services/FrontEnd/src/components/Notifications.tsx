@@ -931,21 +931,29 @@ const Notifications: React.FC = () => {
   }, [activeTab, activeToken?.tokenId])
 
   useEffect(() => {
-    // Set up polling for new notifications
-    const interval = setInterval(() => {
-      if (activeToken) {
-        apiFetch<{ unreadCount: number }>(
-          `/api/notifications/unread-count?userId=${activeToken.tokenId}`
-        ).then(data => {
-          if (data.unreadCount > unreadCount) {
-            // New notifications available, refresh
-            fetchNotifications(true)
-          }
-        }).catch(console.error)
-      }
-    }, 30000) // Poll every 30 seconds
+    if (!activeToken) return
 
-    return () => clearInterval(interval)
+    // Poll for new notifications. A hidden tab does not poll; when it
+    // becomes visible again it checks once right away.
+    const checkForNew = () => {
+      if (document.hidden) return
+      apiFetch<{ unreadCount: number }>(
+        `/api/notifications/unread-count?userId=${activeToken.tokenId}`
+      ).then(data => {
+        if (data.unreadCount > unreadCount) {
+          // New notifications available, refresh
+          fetchNotifications(true)
+        }
+      }).catch(console.error)
+    }
+
+    const interval = setInterval(checkForNew, 30000) // Poll every 30 seconds
+    document.addEventListener('visibilitychange', checkForNew)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', checkForNew)
+    }
   }, [activeToken, unreadCount])
 
   if (!activeToken) {
