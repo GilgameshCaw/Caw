@@ -96,7 +96,7 @@ export async function deriveKeyPair(
     cachedPrivateKey = null
     cachedPublicKey = null
     cachedTokenId = null
-    sharedSecretByPeer.clear() // keyed by `${peerUserId}:${kdfVersion}`
+    sharedSecretByPeer.clear() // keyed by `${peerUserId}:${publicKey}:${kdfVersion}`
   }
 
   // Try restoring from localStorage before requesting a signature
@@ -305,7 +305,9 @@ export async function computeSharedSecretForPeer(
   theirPublicKeyHex: string,
   kdfVersion: typeof KDF_VERSION_V1 | typeof KDF_VERSION_V2 = KDF_VERSION_V2,
 ): Promise<CryptoKey> {
-  const cacheKey = `${peerUserId}:${kdfVersion}`
+  // Keyed on the peer's public key too: a name that changes hands gets a
+  // new key under the same userId, and a cached secret must not outlive it.
+  const cacheKey = `${peerUserId}:${theirPublicKeyHex}:${kdfVersion}`
   const cached = sharedSecretByPeer.get(cacheKey)
   if (cached) return cached
 

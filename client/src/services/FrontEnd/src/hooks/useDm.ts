@@ -210,8 +210,11 @@ export function useDmClient(tokenId?: number, username?: string) {
       // can find the peer without re-fetching the conversation list.
       for (const conv of data.conversations || []) {
         for (const p of conv.participants || []) {
-          if (p.userId != null && p.identity?.publicKey) {
-            peerPublicKeyCache.set(p.userId, p.identity.publicKey)
+          if (p.userId != null) {
+            // Drop a key the server no longer has (a name that changed hands)
+            // so this tab stops encrypting to it.
+            if (p.identity?.publicKey) peerPublicKeyCache.set(p.userId, p.identity.publicKey)
+            else peerPublicKeyCache.delete(p.userId)
           }
           if (p.userId != null && p.userId !== tokenId) {
             conversationPeerCache.set(conv.id, p.userId)
@@ -881,10 +884,12 @@ export function useDmClient(tokenId?: number, username?: string) {
     conversationPeerCache.set(conversation.id, peerUserId)
     if (peerData.publicKey) {
       peerPublicKeyCache.set(peerUserId, peerData.publicKey)
+    } else {
+      peerPublicKeyCache.delete(peerUserId)
     }
     // Compute shared secret for this peer if we have the private key.
-    // The cache key is peerUserId (per-pair ECDH) so the same key serves
-    // any future DM-or-group conversation with this peer.
+    // The cache key is the peer and their publicKey (per-pair ECDH), so the
+    // same key serves any future DM-or-group conversation with this peer.
     if (privateKeyRef && peerData.publicKey) {
       await computeSharedSecret(privateKeyRef, peerData.publicKey, peerUserId, conversation.id)
     }
@@ -1376,6 +1381,13 @@ export function useDmMessages(
       const msg = await res.json()
 
       if (!res.ok) {
+        if (msg.code === 'PEER_NO_DM_KEY') {
+          // The server has no DM key for the peer now. Drop the one this tab
+          // cached so the next attempt looks the key up again instead of
+          // encrypting to the same stale key.
+          const stalePeerId = peerUserId ?? conversationPeerCache.get(conversationId)
+          if (stalePeerId !== undefined) peerPublicKeyCache.delete(stalePeerId)
+        }
         if (msg.error === 'DM_PRIVACY') {
           const privacyErr = new Error(msg.message) as any
           privacyErr.code = 'DM_PRIVACY'
