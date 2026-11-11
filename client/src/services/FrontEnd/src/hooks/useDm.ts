@@ -1381,6 +1381,13 @@ export function useDmMessages(
       const msg = await res.json()
 
       if (!res.ok) {
+        if (msg.code === 'PEER_NO_DM_KEY') {
+          // The server has no DM key for the peer now. Drop the one this tab
+          // cached so the next attempt looks the key up again instead of
+          // encrypting to the same stale key.
+          const stalePeerId = peerUserId ?? conversationPeerCache.get(conversationId)
+          if (stalePeerId !== undefined) peerPublicKeyCache.delete(stalePeerId)
+        }
         if (msg.error === 'DM_PRIVACY') {
           const privacyErr = new Error(msg.message) as any
           privacyErr.code = 'DM_PRIVACY'
