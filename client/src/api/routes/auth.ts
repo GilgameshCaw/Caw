@@ -143,8 +143,8 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    // Look up all tokenIds owned by this address (case-insensitive —
-    // DB may store checksummed addresses while recovery returns lowercase).
+    // Look up all tokenIds owned by this address. User.address is stored in
+    // lowercase, so an exact match on the lowercased address uses User_address_idx.
     //
     // Tier 3: when DB shows no matches we no longer fall back to L1
     // (syncTokensOwnedByWallet). NftTransferWatcher will reflect any recent
@@ -161,7 +161,7 @@ router.post('/verify', async (req, res) => {
     // the same closure with the same (message, signature), so consuming on
     // the first attempt poisons every retry → "Signature already used" 400.
     const users = await prisma.user.findMany({
-      where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
+      where: { address: recoveredAddress },
       select: { tokenId: true },
       // Newest tokenId first so recoveredTokenIds[0] is deterministically the
       // most-recently-minted profile for this owner (the FE reads the freshly
@@ -335,7 +335,7 @@ router.post('/verify-dm', async (req, res) => {
 
     // Look up all tokenIds owned by this address
     const users = await prisma.user.findMany({
-      where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
+      where: { address: recoveredAddress },
       select: { tokenId: true }
     })
     const tokenIds = users.map(u => u.tokenId)
@@ -419,10 +419,10 @@ router.post('/refresh', async (req, res) => {
     // extractSession populates req.sessionToken from cookie-or-header.
     const sessionToken = req.sessionToken as string
 
-    // For each authorized address, look up all tokenIds (case-insensitive)
+    // For each authorized address, look up all tokenIds (User.address is lowercase)
     for (const addr of req.sessionData.authorizedAddresses) {
       const users = await prisma.user.findMany({
-        where: { address: { equals: addr, mode: 'insensitive' } },
+        where: { address: addr.toLowerCase() },
         select: { tokenId: true }
       })
       const tokenIds = users.map(u => u.tokenId)

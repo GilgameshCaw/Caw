@@ -186,84 +186,60 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       return res.status(400).json({ error: 'userId required' })
     }
 
-    // Run all three queries in parallel
-    const blockedIdsPromise = getBlockedUserIds(userId)
-    const userPromise = prisma.user.findUnique({
-      where: { tokenId: userId },
-      select: { address: true },
-    })
-    const dmConversationsPromise = prisma.conversation.findMany({
-      where: { participants: { some: { userId } } },
-      select: {
-        id: true,
-        participants: { where: { userId }, select: { unreadCount: true } },
-      },
-    })
-
-    const [blockedIds, user, dmConversations] = await Promise.all([
-      blockedIdsPromise,
-      userPromise,
-      dmConversationsPromise,
-    ])
-
-    // Bell-badge count = unread GROUPS, matching /api/notifications and
-    // /api/notifications/unread-count. Counting raw Notification rows here
-    // produced badges (99+) that didn't match the rolled-up group count
-    // the user actually sees in the notification list.
-    const notifications = await prisma.notificationGroup.count({
-      where: { userId, isRead: false },
-    })
-
-    // Marketplace sales (tab-scoped subset of notifications, cleared on tab view)
-    const salesWhere: any = {
-      userId,
-      isRead: false,
-      hidden: false,
-      type: { in: ['SALE_SOLD', 'SALE_BOUGHT'] },
-    }
-    if (blockedIds.length > 0) {
-      salesWhere.actorId = { notIn: blockedIds }
-    }
-    const sales = await prisma.notification.count({ where: salesWhere })
-
-    // Marketplace offers (need to look up all tokens owned by the user's address)
-    let offers = 0
-    if (user?.address) {
-      const ownedUsers = await prisma.user.findMany({
-        where: { address: { equals: user.address, mode: 'insensitive' } },
-        select: { tokenId: true },
-      })
-      const tokenIds = ownedUsers.map(u => u.tokenId)
-      if (tokenIds.length > 0) {
-        // Badge counts every ACTIVE offer, minus ones the recipient has
-        // dismissed via POST /api/marketplace/offers/:id/dismiss. The count
-        // drops when the offer is accepted/cancelled (status changes) OR when
-        // the user explicitly dismisses it. Stay in lockstep with the
-        // /offers/received list so the badge can never show non-zero while
-        // the list is empty.
-        const dismissals = await prisma.marketplaceOfferDismissal.findMany({
-          where: { userId: { in: tokenIds } },
-          select: { offerId: true },
-        })
-        const dismissedOfferIds = dismissals.map(d => d.offerId)
-        offers = await prisma.marketplaceOffer.count({
-          where: {
-            tokenId: { in: tokenIds },
-            status: 'ACTIVE',
-            ...(dismissedOfferIds.length > 0 ? { id: { notIn: dismissedOfferIds } } : {}),
-          },
-        })
-      }
-    }
+    // One round-trip to Postgres for every count and the DM list. Each piece
+    // mirrors the Prisma query it replaced:
+    //   notifications  unread NotificationGroup rows, not raw Notification rows:
+    //                  the bell badge must match the rolled-up list the user sees
+    //                  (/api/notifications and /api/notifications/unread-count)
+    //   sales          unread, visible SALE_* notifications (a tab-scoped subset of
+    //                  notifications) from actors the user has not blocked
+    //   offers         ACTIVE offers on every token the user's address owns, minus
+    //                  the ones dismissed via POST /api/marketplace/offers/:id/dismiss
+    //                  by any of those tokens; stays in lockstep with /offers/received
+    //   dm             one entry per conversation the user participates in
+    // `owned` is empty for a missing or empty address, so offers stay 0 as before.
+    const [row] = await prisma.$queryRaw<Array<{
+      notifications: number
+      sales: number
+      offers: number
+      dm: Array<{ id: string; unreadCount: number }>
+    }>>`
+      WITH me AS (
+        SELECT address FROM "User" WHERE "tokenId" = ${userId}
+      ),
+      owned AS (
+        SELECT u."tokenId" FROM "User" u
+        WHERE (SELECT address FROM me) <> ''
+          AND u.address = lower((SELECT address FROM me))
+      )
+      SELECT
+        (SELECT count(*) FROM "NotificationGroup"
+          WHERE "userId" = ${userId} AND "isRead" = false)::int AS notifications,
+        (SELECT count(*) FROM "Notification" n
+          WHERE n."userId" = ${userId} AND n."isRead" = false AND n.hidden = false
+            AND n.type IN ('SALE_SOLD', 'SALE_BOUGHT')
+            AND NOT EXISTS (
+              SELECT 1 FROM "Block" b
+              WHERE b."blockerId" = ${userId} AND b."blockedId" = n."actorId"
+            ))::int AS sales,
+        (SELECT count(*) FROM "MarketplaceOffer" o
+          WHERE o."tokenId" IN (SELECT "tokenId" FROM owned)
+            AND o.status = 'ACTIVE'
+            AND NOT EXISTS (
+              SELECT 1 FROM "MarketplaceOfferDismissal" d
+              WHERE d."offerId" = o.id AND d."userId" IN (SELECT "tokenId" FROM owned)
+            ))::int AS offers,
+        COALESCE((
+          SELECT json_agg(json_build_object('id', c."conversationId", 'unreadCount', c."unreadCount"))
+          FROM "ConversationParticipant" c WHERE c."userId" = ${userId}
+        ), '[]'::json) AS dm
+    `
 
     res.json({
-      notifications,
-      offers,
-      sales,
-      dmConversations: dmConversations.map((c: { id: string; participants: { unreadCount: number }[] }) => ({
-        id: c.id,
-        unreadCount: c.participants[0]?.unreadCount || 0,
-      })),
+      notifications: row.notifications,
+      offers: row.offers,
+      sales: row.sales,
+      dmConversations: row.dm,
     })
   } catch (err: any) {
     console.error('[users/badges] error:', err.message)
