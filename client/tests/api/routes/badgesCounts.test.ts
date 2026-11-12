@@ -34,7 +34,9 @@ const BLOCKER = BASE + 4     // this user blocked VIEWER
 const STRANGER = BASE + 5    // owns its own token, different address
 const EMPTY_A = BASE + 6     // address ''
 const EMPTY_B = BASE + 7     // address '' as well
-const ALL_IDS = [VIEWER, VIEWER_ALT, ACTOR, BLOCKED, BLOCKER, STRANGER, EMPTY_A, EMPTY_B]
+const BLOCKED_BY_OTHER = BASE + 8  // STRANGER blocked this user; VIEWER did not
+const BLOCKED_BY_ALT = BASE + 9    // VIEWER_ALT blocked this user (same address as VIEWER, another token)
+const ALL_IDS = [VIEWER, VIEWER_ALT, ACTOR, BLOCKED, BLOCKER, STRANGER, EMPTY_A, EMPTY_B, BLOCKED_BY_OTHER, BLOCKED_BY_ALT]
 
 const addr = (n: number) => '0x' + n.toString(16).padStart(40, '0')
 const ADDRESS: Record<number, string> = {
@@ -46,12 +48,17 @@ const ADDRESS: Record<number, string> = {
   [STRANGER]: addr(STRANGER),
   [EMPTY_A]: '',
   [EMPTY_B]: '',
+  [BLOCKED_BY_OTHER]: addr(BLOCKED_BY_OTHER),
+  [BLOCKED_BY_ALT]: addr(BLOCKED_BY_ALT),
 }
 
 const CONV_UNREAD = `badges-test-${BASE}-unread`
 const CONV_READ = `badges-test-${BASE}-read`
 const CONV_OTHERS = `badges-test-${BASE}-others`
-const CONVERSATIONS = [CONV_UNREAD, CONV_READ, CONV_OTHERS]
+const CONV_LEFT = `badges-test-${BASE}-left`        // VIEWER has left (leftAt set)
+const CONV_REQUEST = `badges-test-${BASE}-request`  // VIEWER's participation is a REQUEST
+const CONV_BLOCKED = `badges-test-${BASE}-blocked`  // VIEWER's participation is BLOCKED
+const CONVERSATIONS = [CONV_UNREAD, CONV_READ, CONV_OTHERS, CONV_LEFT, CONV_REQUEST, CONV_BLOCKED]
 
 // MarketplaceOffer.offerId (unique). `counted` says whether VIEWER's badge
 // should include the offer.
@@ -76,6 +83,9 @@ const SALES = [
   // wrong direction gives a different total.
   { userId: VIEWER,   actorId: BLOCKED, type: 'SALE_SOLD',   isRead: false, hidden: false, counted: false, name: 'sale from a user the viewer blocked' },
   { userId: VIEWER,   actorId: BLOCKED, type: 'SALE_BOUGHT', isRead: false, hidden: false, counted: false, name: 'purchase from a user the viewer blocked' },
+  // A block only counts when the viewer's own token is the blocker.
+  { userId: VIEWER,   actorId: BLOCKED_BY_OTHER, type: 'SALE_SOLD', isRead: false, hidden: false, counted: true, name: 'unread sale from a user someone else blocked' },
+  { userId: VIEWER,   actorId: BLOCKED_BY_ALT,   type: 'SALE_SOLD', isRead: false, hidden: false, counted: true, name: 'unread sale from a user another token of the same address blocked' },
   { userId: VIEWER,   actorId: ACTOR,   type: 'SALE_SOLD',   isRead: true,  hidden: false, counted: false, name: 'read sale' },
   { userId: VIEWER,   actorId: ACTOR,   type: 'SALE_SOLD',   isRead: false, hidden: true,  counted: false, name: 'hidden sale' },
   { userId: VIEWER,   actorId: ACTOR,   type: 'LIKE',        isRead: false, hidden: false, counted: false, name: 'unread notification of another type' },
@@ -143,6 +153,8 @@ const count = (rows: ReadonlyArray<{ counted: boolean }>) => rows.filter(r => r.
       data: [
         { blockerId: VIEWER, blockedId: BLOCKED },
         { blockerId: BLOCKER, blockedId: VIEWER },
+        { blockerId: STRANGER, blockedId: BLOCKED_BY_OTHER },
+        { blockerId: VIEWER_ALT, blockedId: BLOCKED_BY_ALT },
       ],
     })
 
@@ -186,6 +198,10 @@ const count = (rows: ReadonlyArray<{ counted: boolean }>) => rows.filter(r => r.
         { conversationId: CONV_READ, userId: ACTOR, unreadCount: 5 },
         { conversationId: CONV_OTHERS, userId: ACTOR, unreadCount: 2 },
         { conversationId: CONV_OTHERS, userId: STRANGER, unreadCount: 4 },
+        // How a participation ends up does not change what the badge lists.
+        { conversationId: CONV_LEFT, userId: VIEWER, unreadCount: 2, leftAt: new Date() },
+        { conversationId: CONV_REQUEST, userId: VIEWER, unreadCount: 1, status: 'REQUEST' },
+        { conversationId: CONV_BLOCKED, userId: VIEWER, unreadCount: 4, status: 'BLOCKED' },
       ],
     })
 
@@ -226,9 +242,9 @@ const count = (rows: ReadonlyArray<{ counted: boolean }>) => rows.filter(r => r.
     expect(viewer.notifications).to.equal(3)
   })
 
-  it('sales: counts unread, visible SALE_* notifications, except from users the viewer blocked', () => {
+  it('sales: counts unread, visible SALE_* notifications, except from users the viewer blocked (a block by anyone else does not count)', () => {
     expect(viewer.sales).to.equal(count(SALES))
-    expect(viewer.sales).to.equal(3)
+    expect(viewer.sales).to.equal(5)
   })
 
   it('offers: counts active offers on every token of the address, minus the ones those tokens dismissed', () => {
@@ -236,12 +252,19 @@ const count = (rows: ReadonlyArray<{ counted: boolean }>) => rows.filter(r => r.
     expect(viewer.offers).to.equal(3)
   })
 
-  it('dmConversations: lists each conversation of this user with its own unread count', () => {
-    const sorted = [...viewer.dmConversations].sort((a: any, b: any) => a.id.localeCompare(b.id))
-    expect(sorted).to.deep.equal([
+  it('dmConversations: lists each conversation of this user with its own unread count, whether or not the user left it and whatever its status', () => {
+    // A conversation the user has left is listed today, as before this PR.
+    // GilgameshCaw/Caw#164 and #371 change that; whichever lands after this
+    // PR also changes this expectation, together with the `leftAt` condition
+    // in the SQL.
+    const byId = (a: any, b: any) => a.id.localeCompare(b.id)
+    expect([...viewer.dmConversations].sort(byId)).to.deep.equal([
       { id: CONV_READ, unreadCount: 0 },
       { id: CONV_UNREAD, unreadCount: 3 },
-    ])
+      { id: CONV_LEFT, unreadCount: 2 },
+      { id: CONV_REQUEST, unreadCount: 1 },
+      { id: CONV_BLOCKED, unreadCount: 4 },
+    ].sort(byId))
   })
 
   it('a user with an empty address gets zero offers, and empty results elsewhere', () => {
