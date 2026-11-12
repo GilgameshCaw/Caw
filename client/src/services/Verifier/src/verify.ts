@@ -51,34 +51,115 @@ export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
 export function normalizeMirrorUrl(input: string): string {
   let s = input.trim();
   if (!s) throw new Error('Empty URL');
-  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
+  if (scheme && !/^https?$/i.test(scheme[1])) throw new Error(`Unsupported protocol: ${scheme[1].toLowerCase()}:`);
+  if (!scheme) s = `https://${s}`;
   // Strip trailing slash so we don't double them when joining paths.
   s = s.replace(/\/+$/, '');
   // Validate.
   const u = new URL(s);
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-    throw new Error(`Unsupported protocol: ${u.protocol}`);
+  // Files read over plain http could be rewritten on the way, which would make
+  // the check worthless. Only https, except for localhost (to try the tool).
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]';
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) {
+    throw new Error('Only https:// mirrors can be verified (http:// is allowed for localhost only)');
   }
   return `${u.protocol}//${u.host}`;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+// The largest answer read for one file, and for one JSON document. The mirror
+// under audit is not trusted: without a limit it could stream data until the
+// visitor's browser runs out of memory.
+export const MAX_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_JSON_BYTES = 2 * 1024 * 1024;
+
+// The limit as shown in an error: "32 MiB" rather than "33554432 bytes", so the
+// message stays short enough to be read in a table cell.
+function describeLimit(bytes: number): string {
+  const MiB = 1024 * 1024;
+  if (bytes >= MiB && bytes % MiB === 0) return `${bytes / MiB} MiB`;
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024} KiB`;
+  return `${bytes} bytes`;
+}
+
+// Reads a response body, giving up as soon as it is larger than maxBytes.
+async function readLimited(res: Response, maxBytes: number): Promise<ArrayBuffer> {
+  const tooLarge = () => new Error(`response is too large (over ${describeLimit(maxBytes)})`);
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    // Do not leave the body unread: it would keep the connection busy.
+    await res.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  if (!res.body) {
+    const whole = await res.arrayBuffer();
+    if (whole.byteLength > maxBytes) throw tooLarge();
+    return whole;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer as ArrayBuffer;
+}
+
+// A mirror has to answer at the address that was entered. fetch follows
+// redirects by default, so a mirror that normalizeMirrorUrl accepted could send
+// a request on to an address that would have been refused if typed (plain
+// http:// on another host, say), and matching bytes would still count. Requests
+// to the mirror therefore use redirect: 'manual' and treat any redirect as an
+// error. A browser hides where a manual redirect leads (an "opaqueredirect"
+// answer), so it can be refused but not inspected.
+function isRedirect(res: Response): boolean {
+  return res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400);
+}
+
+async function refuseRedirect(res: Response, url: string): Promise<void> {
+  if (!isRedirect(res)) return;
+  // Do not leave the body unread: it would keep the connection busy.
+  await res.body?.cancel().catch(() => {});
+  throw new Error(`${url} → redirected (enter the address the mirror answers at)`);
+}
+
+// `redirect` is 'manual' for everything read from the mirror. The reference
+// manifest is a fixed address chosen by the verifier, not by the mirror, and
+// keeps the default.
+async function fetchJson<T>(url: string, redirect: 'follow' | 'manual' = 'follow'): Promise<T> {
   const res = await fetch(url, {
     // No credentials — we're a stranger inspecting a third-party host.
     credentials: 'omit',
     cache: 'no-store',
+    redirect,
   });
+  if (redirect === 'manual') await refuseRedirect(res, url);
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
-  return await res.json() as T;
+  return JSON.parse(new TextDecoder().decode(await readLimited(res, MAX_JSON_BYTES))) as T;
 }
 
-async function fetchBytes(url: string): Promise<ArrayBuffer> {
+async function fetchBytes(url: string, maxBytes: number): Promise<ArrayBuffer> {
   const res = await fetch(url, {
     credentials: 'omit',
     cache: 'no-store',
+    redirect: 'manual',
   });
+  await refuseRedirect(res, url);
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
-  return await res.arrayBuffer();
+  return await readLimited(res, maxBytes);
 }
 
 function isManifest(x: unknown): x is ManifestV1 {
@@ -99,10 +180,11 @@ function isManifest(x: unknown): x is ManifestV1 {
 export async function verifyFrontend(
   mirrorUrl: string,
   referenceManifest: ManifestV1,
-  opts?: { onProgress?: (done: number, total: number, path: string) => void; concurrency?: number },
+  opts?: { onProgress?: (done: number, total: number, path: string) => void; concurrency?: number; maxFileBytes?: number },
 ): Promise<FrontendReport> {
   const mirror = normalizeMirrorUrl(mirrorUrl);
   const concurrency = Math.max(1, Math.min(16, opts?.concurrency ?? 6));
+  const maxFileBytes = opts?.maxFileBytes ?? MAX_FILE_BYTES;
 
   // First, fetch the mirror's *own* manifest. We don't trust it for hashes,
   // but it tells us which files the mirror claims to ship + its clientVersion,
@@ -110,7 +192,7 @@ export async function verifyFrontend(
   // commit than the reference, which explains some hash mismatches").
   let mirrorManifest: ManifestV1 | null = null;
   try {
-    const raw = await fetchJson<unknown>(`${mirror}/build-manifest.json`);
+    const raw = await fetchJson<unknown>(`${mirror}/build-manifest.json`, 'manual');
     if (isManifest(raw)) mirrorManifest = raw;
   } catch {
     // Mirror without a manifest is still verifiable — we hash the files
@@ -130,7 +212,7 @@ export async function verifyFrontend(
       const p = queue.shift()!;
       const expected = referenceManifest.files[p];
       try {
-        const bytes = await fetchBytes(`${mirror}/${p}`);
+        const bytes = await fetchBytes(`${mirror}/${p}`, maxFileBytes);
         const actual = await sha256Hex(bytes);
         if (actual === expected) {
           results.push({ path: p, status: 'match', expectedHash: expected, actualHash: actual });
