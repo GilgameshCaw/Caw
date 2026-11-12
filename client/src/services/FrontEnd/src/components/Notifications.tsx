@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
@@ -261,6 +261,14 @@ const Notifications: React.FC = () => {
       setLoading(false)
     }
   }, [activeToken, activeTab, offset])
+
+  // The poll below reloads through the latest `fetchNotifications` (the
+  // current tab), but must not restart its 30 s timer each time that
+  // function changes, which it does on every "Load more" (new offset).
+  const fetchNotificationsRef = useRef(fetchNotifications)
+  useEffect(() => {
+    fetchNotificationsRef.current = fetchNotifications
+  })
 
   const markAsRead = async (notificationIds?: number[]) => {
     if (!activeToken) return
@@ -931,21 +939,29 @@ const Notifications: React.FC = () => {
   }, [activeTab, activeToken?.tokenId])
 
   useEffect(() => {
-    // Set up polling for new notifications
-    const interval = setInterval(() => {
-      if (activeToken) {
-        apiFetch<{ unreadCount: number }>(
-          `/api/notifications/unread-count?userId=${activeToken.tokenId}`
-        ).then(data => {
-          if (data.unreadCount > unreadCount) {
-            // New notifications available, refresh
-            fetchNotifications(true)
-          }
-        }).catch(console.error)
-      }
-    }, 30000) // Poll every 30 seconds
+    if (!activeToken) return
 
-    return () => clearInterval(interval)
+    // Poll for new notifications. A hidden tab does not poll; when it
+    // becomes visible again it checks once right away.
+    const checkForNew = () => {
+      if (document.hidden) return
+      apiFetch<{ unreadCount: number }>(
+        `/api/notifications/unread-count?userId=${activeToken.tokenId}`
+      ).then(data => {
+        if (data.unreadCount > unreadCount) {
+          // New notifications available, refresh
+          fetchNotificationsRef.current(true)
+        }
+      }).catch(console.error)
+    }
+
+    const interval = setInterval(checkForNew, 30000) // Poll every 30 seconds
+    document.addEventListener('visibilitychange', checkForNew)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', checkForNew)
+    }
   }, [activeToken, unreadCount])
 
   if (!activeToken) {
