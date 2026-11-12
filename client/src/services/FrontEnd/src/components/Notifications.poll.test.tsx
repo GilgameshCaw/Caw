@@ -184,6 +184,34 @@ describe('Notifications unread-count poll', () => {
     expect(urlsTo(LIST_URL).at(-1)).toContain('type=mentions')
   })
 
+  it('keeps its 30 s schedule while the user presses Load more', async () => {
+    const row = {
+      id: 1,
+      type: 'FOLLOW',
+      actor: { tokenId: 2, username: 'someone' },
+      isRead: true,
+      createdAt: new Date().toISOString(),
+      notificationIds: [1],
+    }
+    apiFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith(UNREAD_COUNT_URL)) return { unreadCount: serverUnread }
+      if (url.startsWith(LIST_URL)) return { notifications: [row], unreadCount: 0, hasMore: true }
+      return {}
+    })
+    await renderPage()
+
+    // A press every 20 s moves the page's offset each time. The poll is
+    // due at 30 s and 60 s whatever the presses do.
+    for (let i = 0; i < 4; i++) {
+      await advance(20_000)
+      await act(async () => {
+        fireEvent.click(screen.getByText('Load more'))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+    }
+    expect(callsTo(UNREAD_COUNT_URL)).toBe(2)
+  })
+
   it('stops listening for visibility changes after unmount', async () => {
     const view = await renderPage()
     view.unmount()

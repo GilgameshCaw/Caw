@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
@@ -261,6 +261,14 @@ const Notifications: React.FC = () => {
       setLoading(false)
     }
   }, [activeToken, activeTab, offset])
+
+  // The poll below reloads through the latest `fetchNotifications` (the
+  // current tab), but must not restart its 30 s timer each time that
+  // function changes, which it does on every "Load more" (new offset).
+  const fetchNotificationsRef = useRef(fetchNotifications)
+  useEffect(() => {
+    fetchNotificationsRef.current = fetchNotifications
+  })
 
   const markAsRead = async (notificationIds?: number[]) => {
     if (!activeToken) return
@@ -942,7 +950,7 @@ const Notifications: React.FC = () => {
       ).then(data => {
         if (data.unreadCount > unreadCount) {
           // New notifications available, refresh
-          fetchNotifications(true)
+          fetchNotificationsRef.current(true)
         }
       }).catch(console.error)
     }
@@ -954,7 +962,7 @@ const Notifications: React.FC = () => {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', checkForNew)
     }
-  }, [activeToken, unreadCount, fetchNotifications])
+  }, [activeToken, unreadCount])
 
   if (!activeToken) {
     return (
