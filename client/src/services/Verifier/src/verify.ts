@@ -177,7 +177,9 @@ export async function verifyFrontend(
   // The mirror passes iff every reference file matched. Missing/mismatched/
   // errored counts ALL count as failure — a hostile mirror could 404 the
   // file we want to hash and our verifier would otherwise call that a pass.
-  const ok = summary.mismatched === 0
+  // A reference with no files has nothing to compare, which is not a pass.
+  const ok = expectedPaths.length > 0
+    && summary.mismatched === 0
     && summary.missing === 0
     && summary.errored === 0
     && summary.matched === expectedPaths.length;
@@ -198,5 +200,8 @@ export async function verifyFrontend(
 export async function fetchReferenceManifest(url: string): Promise<ManifestV1> {
   const raw = await fetchJson<unknown>(url);
   if (!isManifest(raw)) throw new Error('Reference manifest schema mismatch (expected version 1)');
+  // An empty reference would "match" every mirror: there would be no file to
+  // find different.
+  if (Object.keys(raw.files).length === 0) throw new Error('Reference manifest lists no files');
   return raw;
 }
