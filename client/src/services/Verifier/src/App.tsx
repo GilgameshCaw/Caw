@@ -133,17 +133,40 @@ function ReportView({ report, reference }: { report: FrontendReport; reference: 
   const failing = report.files.filter(f => f.status !== 'match' && f.status !== 'extra');
   const extra = report.files.filter(f => f.status === 'extra');
   const visible = showAll ? report.files : failing;
+  const sum = report.summary;
+  // No difference was found, but some files could not be read (errored > 0
+  // already means report.ok is false). That is not evidence that the mirror
+  // differs from the reference, so the banner does not say it does:
+  //  - nothing could be read at all: nothing was compared;
+  //  - some files could not be read: the others matched, the rest are unknown.
+  // A real difference (mismatched or missing) keeps the red banner.
+  // report.ok and the counts are not affected.
+  const noDifferenceFound = sum.errored > 0 && sum.mismatched === 0 && sum.missing === 0;
+  const unreadable = noDifferenceFound && sum.matched === 0;
+  const partlyUnread = noDifferenceFound && sum.matched > 0;
+  const tone = report.ok
+    ? { bg: '#dcfce7', fg: '#14532d', border: '#86efac' }
+    : noDifferenceFound
+      ? { bg: '#fef3c7', fg: '#78350f', border: '#fcd34d' }
+      : { bg: '#fee2e2', fg: '#7f1d1d', border: '#fca5a5' };
+  const title = report.ok
+    ? '✓ Frontend bundle matches reference'
+    : unreadable
+      ? '⚠ Not verified: the mirror\'s files could not be read'
+      : partlyUnread
+        ? '⚠ Not fully verified: some of the mirror\'s files could not be read'
+        : '✗ Frontend bundle differs from reference';
 
   return (
     <section style={styles.section}>
       <div style={{
         ...styles.verdict,
-        background: report.ok ? '#dcfce7' : '#fee2e2',
-        color: report.ok ? '#14532d' : '#7f1d1d',
-        borderColor: report.ok ? '#86efac' : '#fca5a5',
+        background: tone.bg,
+        color: tone.fg,
+        borderColor: tone.border,
       }}>
         <div style={styles.verdictTitle}>
-          {report.ok ? '✓ Frontend bundle matches reference' : '✗ Frontend bundle differs from reference'}
+          {title}
         </div>
         <div style={styles.verdictMeta}>
           <span>Mirror: <code style={styles.code}>{report.mirrorUrl}</code></span>
@@ -166,6 +189,23 @@ function ReportView({ report, reference }: { report: FrontendReport; reference: 
         <Stat label="Errored"     value={report.summary.errored}    color="#b45309" />
         <Stat label="Extra"       value={report.summary.extra}      color="#6b7280" />
       </div>
+
+      {unreadable && (
+        <p style={styles.note}>
+          ⓘ Every file request failed, so nothing was compared. The result says nothing either way, and the
+          mirror stays unverified. Common causes: the mirror does not allow cross-origin reads (it needs an{' '}
+          <code style={styles.code}>Access-Control-Allow-Origin</code> header on <code style={styles.code}>/assets/*</code>{' '}
+          and <code style={styles.code}>/build-manifest.json</code>), the mirror is unreachable, or the requests
+          are blocked or rate limited.
+        </p>
+      )}
+
+      {!unreadable && sum.errored > 0 && (
+        <p style={styles.note}>
+          ⓘ {sum.errored} file(s) could not be read. They are not counted as matches, and they are not evidence
+          that those files differ.
+        </p>
+      )}
 
       {report.mirrorClientVersion && report.referenceClientVersion
         && report.mirrorClientVersion !== report.referenceClientVersion && (
@@ -202,7 +242,13 @@ function ReportView({ report, reference }: { report: FrontendReport; reference: 
                   <td style={styles.td}><StatusBadge status={f.status} /></td>
                   <td style={styles.tdPath}>{f.path}</td>
                   <td style={styles.tdHash}>{'expectedHash' in f ? shorten(f.expectedHash) : '—'}</td>
-                  <td style={styles.tdHash}>{'actualHash' in f ? shorten(f.actualHash) : '—'}</td>
+                  <td style={styles.tdHash}>
+                    {'actualHash' in f
+                      ? shorten(f.actualHash)
+                      : f.status === 'error'
+                        ? <span title={f.error}>{errorReason(f.error).slice(0, 40)}</span>
+                        : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -237,6 +283,14 @@ function StatusBadge({ status }: { status: string }) {
       padding: '2px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600,
     }}>{p.label}</span>
   );
+}
+
+// verify.ts writes HTTP failures as "<full url> → HTTP 500". Cutting that at the
+// first 40 characters would show only the start of the URL and hide the reason,
+// so the table shows what follows the arrow (the full text stays in the tooltip).
+function errorReason(error: string): string {
+  const i = error.lastIndexOf(' → ');
+  return i === -1 ? error : error.slice(i + 3);
 }
 
 function shorten(hash: string | undefined): string {
