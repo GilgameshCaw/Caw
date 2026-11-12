@@ -45,10 +45,18 @@ process.env.VITE_CLIENT_VERSION = CLIENT_VERSION;
 // about file content without also lying about the manifest, and the verifier
 // reads the canonical manifest from a host you control, not from the mirror.
 function buildManifestPlugin(clientVersion: string): Plugin {
+  // closeBundle also runs when the build failed. Reading dist then throws ENOENT
+  // (nothing was written) and that error replaces the real one, so the person
+  // building only sees "no such file or directory, scandir .../dist".
+  let buildFailed = false;
   return {
     name: 'caw-build-manifest',
     apply: 'build',
+    buildEnd(error) {
+      buildFailed = !!error;
+    },
     async closeBundle() {
+      if (buildFailed) return;
       const fs = await import('fs/promises');
       const crypto = await import('crypto');
       const distDir = path.resolve(__dirname, 'dist');
