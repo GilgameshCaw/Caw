@@ -118,12 +118,35 @@ async function readLimited(res: Response, maxBytes: number): Promise<ArrayBuffer
   return bytes.buffer as ArrayBuffer;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+// A mirror has to answer at the address that was entered. fetch follows
+// redirects by default, so a mirror that normalizeMirrorUrl accepted could send
+// a request on to an address that would have been refused if typed (plain
+// http:// on another host, say), and matching bytes would still count. Requests
+// to the mirror therefore use redirect: 'manual' and treat any redirect as an
+// error. A browser hides where a manual redirect leads (an "opaqueredirect"
+// answer), so it can be refused but not inspected.
+function isRedirect(res: Response): boolean {
+  return res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400);
+}
+
+async function refuseRedirect(res: Response, url: string): Promise<void> {
+  if (!isRedirect(res)) return;
+  // Do not leave the body unread: it would keep the connection busy.
+  await res.body?.cancel().catch(() => {});
+  throw new Error(`${url} → redirected (enter the address the mirror answers at)`);
+}
+
+// `redirect` is 'manual' for everything read from the mirror. The reference
+// manifest is a fixed address chosen by the verifier, not by the mirror, and
+// keeps the default.
+async function fetchJson<T>(url: string, redirect: 'follow' | 'manual' = 'follow'): Promise<T> {
   const res = await fetch(url, {
     // No credentials — we're a stranger inspecting a third-party host.
     credentials: 'omit',
     cache: 'no-store',
+    redirect,
   });
+  if (redirect === 'manual') await refuseRedirect(res, url);
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
   return JSON.parse(new TextDecoder().decode(await readLimited(res, MAX_JSON_BYTES))) as T;
 }
@@ -132,7 +155,9 @@ async function fetchBytes(url: string, maxBytes: number): Promise<ArrayBuffer> {
   const res = await fetch(url, {
     credentials: 'omit',
     cache: 'no-store',
+    redirect: 'manual',
   });
+  await refuseRedirect(res, url);
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
   return await readLimited(res, maxBytes);
 }
@@ -167,7 +192,7 @@ export async function verifyFrontend(
   // commit than the reference, which explains some hash mismatches").
   let mirrorManifest: ManifestV1 | null = null;
   try {
-    const raw = await fetchJson<unknown>(`${mirror}/build-manifest.json`);
+    const raw = await fetchJson<unknown>(`${mirror}/build-manifest.json`, 'manual');
     if (isManifest(raw)) mirrorManifest = raw;
   } catch {
     // Mirror without a manifest is still verifiable — we hash the files

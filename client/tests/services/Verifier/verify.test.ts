@@ -206,9 +206,78 @@ describe('Verifier verify.ts', () => {
         await m.close()
       }
     })
+
+    it('does not follow a redirect: a file that redirects is an error, even to a copy with the right bytes', async () => {
+      // The target serves the exact bytes, so following the redirect would give a match.
+      let targetHits = 0
+      const target = await mirror(FILES, () => {
+        targetHits++
+        return false
+      })
+      const m = await mirror(FILES, (path, res) => {
+        if (path === 'assets/a.js') {
+          res.writeHead(302, { location: `${target.url}/assets/a.js` })
+          res.end()
+          return true
+        }
+        if (path === 'assets/b.js') {
+          res.writeHead(301, { location: '/index.html' }) // the same address, another path
+          res.end()
+          return true
+        }
+        return false
+      })
+      try {
+        const report = await verifyFrontend(m.url, manifestOf(FILES))
+        expect(report.ok).to.equal(false)
+        const errored = report.files.filter((f) => f.status === 'error')
+        expect(errored.map((f) => f.path).sort()).to.deep.equal(['assets/a.js', 'assets/b.js'])
+        for (const f of errored) expect((f as { error: string }).error).to.match(/redirected/)
+        expect(report.files.find((f) => f.path === 'index.html')?.status).to.equal('match')
+        expect(targetHits).to.equal(0) // the redirect was not followed
+      } finally {
+        await m.close()
+        await target.close()
+      }
+    })
+
+    it('ignores a build-manifest.json that redirects, like a missing one, and still checks the files', async () => {
+      const m = await mirror(FILES, (path, res) => {
+        if (path === 'build-manifest.json') {
+          res.writeHead(302, { location: '/index.html' })
+          res.end()
+          return true
+        }
+        return false
+      })
+      try {
+        const report = await verifyFrontend(m.url, manifestOf(FILES))
+        expect(report.ok).to.equal(true)
+        expect(report.mirrorClientVersion).to.equal(undefined)
+      } finally {
+        await m.close()
+      }
+    })
   })
 
   describe('fetchReferenceManifest', () => {
+    it('still follows a redirect for the reference manifest (a fixed address chosen by the verifier)', async () => {
+      const m = await mirror({ 'real.json': JSON.stringify(manifestOf(FILES)) }, (path, res) => {
+        if (path === 'reference.json') {
+          res.writeHead(301, { location: '/real.json' })
+          res.end()
+          return true
+        }
+        return false
+      })
+      try {
+        const reference = await fetchReferenceManifest(`${m.url}/reference.json`)
+        expect(Object.keys(reference.files)).to.have.length(3)
+      } finally {
+        await m.close()
+      }
+    })
+
     it('reads a valid reference manifest', async () => {
       const m = await mirror({ 'reference.json': JSON.stringify(manifestOf(FILES)) })
       try {
