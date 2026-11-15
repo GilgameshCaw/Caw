@@ -16,6 +16,7 @@ import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { walkLogsBackward, WalkLimitError } from '../../utils/walkLogsBackward'
+import { txsFromIndex, prismaIndexReader, type ReplicationTxIndex } from '../../utils/replicationTxIndex'
 import { ScanBackoff } from '../../utils/scanBackoff'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
@@ -4528,8 +4529,33 @@ console.log("succeededKeys", succeededKeys)
      * the existing replicationLoop.
      *
      * Returns null if reconstruction fails (caller should skip/retry).
+     *
+     * The transactions to read are taken from the node's own index first
+     * (see replicationTxIndex): on a quiet network the actions of the first
+     * unsubmitted checkpoint can be millions of blocks behind the head, and
+     * the eth_getLogs walk back to them does not finish inside this loop's
+     * watchdog timeout. The index only says which transactions to read; the
+     * action bytes come from their calldata and the result is checked against
+     * networkHashAtCheckpoint on the chain either way. When the index does
+     * not hold the range, or what it gives does not pass that check, the
+     * eth_getLogs walk runs as before.
      */
     async function reconstructCheckpointData(
+      networkId: number,
+      startCheckpointId: number,
+      endCheckpointId: number,
+    ) {
+      const viaIndex = await reconstructCheckpointDataFrom('index', networkId, startCheckpointId, endCheckpointId)
+        .catch(err => {
+          console.warn(`[Reconstruct] local index not used for network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: ${err instanceof Error ? err.message : String(err)}`)
+          return null
+        })
+      if (viaIndex) return viaIndex
+      return reconstructCheckpointDataFrom('chain', networkId, startCheckpointId, endCheckpointId)
+    }
+
+    async function reconstructCheckpointDataFrom(
+      source: 'index' | 'chain',
       networkId: number,
       startCheckpointId: number,
       endCheckpointId: number,
@@ -4580,7 +4606,22 @@ console.log("succeededKeys", succeededKeys)
       // days at 0.2 s per block (Base Sepolia since 2026-10-21).
       const envMaxBlocks = Number(process.env.L2_LOG_SCAN_MAX_BLOCKS)
       const maxScanBlocks = Number.isInteger(envMaxBlocks) && envMaxBlocks > 0 ? envMaxBlocks : 20_000_000
-      const heldMs = scanLimitBackoff.remaining(String(networkId), maxScanBlocks)
+      let indexed: ReplicationTxIndex | null = null
+      if (source === 'index') {
+        indexed = await txsFromIndex(
+          prismaIndexReader(
+            prisma,
+            await resolveChainIdFromProvider(httpProvider),
+            networkId,
+            [CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS ?? ''],
+          ),
+          rangeStartPos,
+          totalActionsNeeded,
+        )
+        if (!indexed) return null
+        console.log(`[Reconstruct] network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: reading ${indexed.txs.length} transaction(s) from block ${indexed.fromBlock} on, listed by the local index`)
+      }
+      const heldMs = indexed ? 0 : scanLimitBackoff.remaining(String(networkId), maxScanBlocks)
       if (heldMs > 0) {
         throw new Error(
           `skipped: the last scan reached its ${maxScanBlocks}-block limit without finding the actions needed; ` +
@@ -4592,7 +4633,9 @@ console.log("succeededKeys", succeededKeys)
       let processedEvents: any[] = []
       let scannedActions = 0
 
-      if (actionsNeededFromEnd > 0) {
+      if (indexed) {
+        processedEvents = indexed.txs
+      } else if (actionsNeededFromEnd > 0) {
         const walked = await walkLogsBackward<any>({
           latest: latestL2,
           chunk: rememberedChunk ?? startChunk,
@@ -4814,7 +4857,9 @@ console.log("succeededKeys", succeededKeys)
         return a.calldataPos - b.calldataPos
       })
 
-      const firstGlobalPos = actionCount - orderedEntries.length
+      // The index's transactions end at the newest action it holds, which can
+      // be a moment behind the chain's count.
+      const firstGlobalPos = (indexed ? indexed.endCount : actionCount) - orderedEntries.length
       const localStart = rangeStartPos - firstGlobalPos
       const rangeEntries = orderedEntries.slice(localStart, localStart + totalActionsNeeded)
 
