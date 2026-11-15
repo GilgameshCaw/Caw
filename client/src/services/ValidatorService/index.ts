@@ -4608,16 +4608,23 @@ console.log("succeededKeys", succeededKeys)
       const maxScanBlocks = Number.isInteger(envMaxBlocks) && envMaxBlocks > 0 ? envMaxBlocks : 20_000_000
       let indexed: ReplicationTxIndex | null = null
       if (source === 'index') {
-        indexed = await txsFromIndex(
-          prismaIndexReader(
-            prisma,
-            await resolveChainIdFromProvider(httpProvider),
-            networkId,
-            [CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS ?? ''],
-          ),
-          rangeStartPos,
-          totalActionsNeeded,
+        // The three index reads run in one REPEATABLE READ transaction, so the
+        // action count, the range start block and the transaction list come
+        // from one snapshot even if the indexer writes meanwhile.
+        const indexChainId = await resolveChainIdFromProvider(httpProvider)
+        const contracts = [CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS ?? '']
+        indexed = await prisma.$transaction(
+          tx => txsFromIndex(prismaIndexReader(tx as any, indexChainId, networkId, contracts), rangeStartPos, totalActionsNeeded),
+          { isolationLevel: 'RepeatableRead' },
         )
+        // RawEvent rows are written before the Action rows that follow them,
+        // so the index can be a few actions behind the chain, with a
+        // transaction only partly processed. Use it only when it holds exactly
+        // the chain's count (read after the snapshot); otherwise fall back.
+        if (indexed && indexed.endCount !== Number(await cawActionsView.networkActionCount(networkId))) {
+          console.log(`[Reconstruct] local index holds ${indexed.endCount} actions, not the chain's count; reading from the chain instead`)
+          return null
+        }
         if (!indexed) return null
         console.log(`[Reconstruct] network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: reading ${indexed.txs.length} transaction(s) from block ${indexed.fromBlock} on, listed by the local index`)
       }
