@@ -120,3 +120,24 @@ export function prismaIndexReader(
     },
   }
 }
+
+/**
+ * Runs the index-based reconstruction first and the eth_getLogs one when the
+ * first gives nothing: it returned null (the index did not hold the range, did
+ * not match the chain, or the rebuilt hash chain failed the on-chain check) or
+ * it threw. A failure of the chain-based one is not caught: it behaves as it
+ * did before the index existed.
+ */
+export async function indexThenChain<T>(
+  viaIndex: () => Promise<T | null>,
+  viaChain: () => Promise<T | null>,
+  onIndexError?: (err: unknown) => void,
+): Promise<T | null> {
+  try {
+    const got = await viaIndex()
+    if (got) return got
+  } catch (err) {
+    onIndexError?.(err)
+  }
+  return viaChain()
+}

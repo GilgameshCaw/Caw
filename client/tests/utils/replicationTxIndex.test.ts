@@ -1,6 +1,6 @@
 import { describe, it } from "mocha"
 import { expect } from "chai"
-import { txsFromIndex, prismaIndexReader, type IndexReader } from "../../src/utils/replicationTxIndex"
+import { txsFromIndex, prismaIndexReader, indexThenChain, type IndexReader } from "../../src/utils/replicationTxIndex"
 
 // An index of executed actions, oldest first: one entry per action with the
 // block and transaction it landed in. Mirrors what RawEvent / Action hold.
@@ -114,5 +114,62 @@ describe("prismaIndexReader", () => {
     const db = { async $queryRawUnsafe() { n++; return [] as any } }
     expect(await prismaIndexReader(db, 1, 1, ["0x1"]).blockOfNthNewest(0)).to.equal(null)
     expect(n).to.equal(0)
+  })
+})
+
+describe("indexThenChain", () => {
+  const rebuilt = { source: "chain" }
+
+  it("returns the index result and never touches the chain", async () => {
+    const calls: string[] = []
+    const got = await indexThenChain(
+      async () => { calls.push("index"); return { source: "index" } },
+      async () => { calls.push("chain"); return rebuilt },
+    )
+    expect(got).to.deep.equal({ source: "index" })
+    expect(calls).to.deep.equal(["index"])
+  })
+
+  it("falls back to the chain when the index result fails the hash check (null)", async () => {
+    // reconstructCheckpointData returns null after "Hash chain mismatch": the
+    // index listed the wrong transactions. The chain walk then rebuilds.
+    const calls: string[] = []
+    const got = await indexThenChain(
+      async () => { calls.push("index"); return null },
+      async () => { calls.push("chain"); return rebuilt },
+    )
+    expect(got).to.equal(rebuilt)
+    expect(calls).to.deep.equal(["index", "chain"])
+  })
+
+  it("falls back when the index path throws, and reports why", async () => {
+    const seen: unknown[] = []
+    const got = await indexThenChain(
+      async () => { throw new Error("db down") },
+      async () => rebuilt,
+      err => seen.push(err),
+    )
+    expect(got).to.equal(rebuilt)
+    expect(seen.length).to.equal(1)
+    expect((seen[0] as Error).message).to.equal("db down")
+  })
+
+  it("returns null when both give nothing", async () => {
+    expect(await indexThenChain(async () => null, async () => null)).to.equal(null)
+  })
+
+  it("does not hide a failure of the chain walk", async () => {
+    let thrown = ""
+    await indexThenChain(async () => null, async () => { throw new Error("rpc failed") }).catch(e => { thrown = e.message })
+    expect(thrown).to.equal("rpc failed")
+  })
+
+  it("runs the chain walk once and only after the index path has finished", async () => {
+    const order: string[] = []
+    await indexThenChain(
+      async () => { order.push("index-start"); await new Promise(r => setTimeout(r, 20)); order.push("index-end"); return null },
+      async () => { order.push("chain"); return rebuilt },
+    )
+    expect(order).to.deep.equal(["index-start", "index-end", "chain"])
   })
 })

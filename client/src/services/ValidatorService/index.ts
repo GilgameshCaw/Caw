@@ -16,7 +16,7 @@ import { withWalletLock } from '../../utils/walletQueue'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { scanLogsForward, scanLogsBackward } from '../../utils/chunkedLogs'
 import { walkLogsBackward, WalkLimitError } from '../../utils/walkLogsBackward'
-import { txsFromIndex, prismaIndexReader, type ReplicationTxIndex } from '../../utils/replicationTxIndex'
+import { txsFromIndex, prismaIndexReader, indexThenChain, type ReplicationTxIndex } from '../../utils/replicationTxIndex'
 import { ScanBackoff } from '../../utils/scanBackoff'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl, redactRpcUrl } from '../../utils/rpcProvider'
@@ -4545,13 +4545,11 @@ console.log("succeededKeys", succeededKeys)
       startCheckpointId: number,
       endCheckpointId: number,
     ) {
-      const viaIndex = await reconstructCheckpointDataFrom('index', networkId, startCheckpointId, endCheckpointId)
-        .catch(err => {
-          console.warn(`[Reconstruct] local index not used for network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: ${err instanceof Error ? err.message : String(err)}`)
-          return null
-        })
-      if (viaIndex) return viaIndex
-      return reconstructCheckpointDataFrom('chain', networkId, startCheckpointId, endCheckpointId)
+      return indexThenChain(
+        () => reconstructCheckpointDataFrom('index', networkId, startCheckpointId, endCheckpointId),
+        () => reconstructCheckpointDataFrom('chain', networkId, startCheckpointId, endCheckpointId),
+        err => console.warn(`[Reconstruct] local index not used for network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: ${err instanceof Error ? err.message : String(err)}`),
+      )
     }
 
     async function reconstructCheckpointDataFrom(
