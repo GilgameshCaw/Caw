@@ -4998,6 +4998,11 @@ console.log("succeededKeys", succeededKeys)
             let startCheckpointId = 0
             for (let cp = 1; cp <= totalCheckpoints; cp++) {
               const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              // One archive read per checkpoint, from the first one, on every
+              // iteration: this alone grows past the loop timeout as
+              // checkpoints accumulate. Report the progress (see the note in
+              // reconstructCheckpointData).
+              ctx.heartbeatDegraded('optimisticReplication', `network ${client.id}: looking for the first unclaimed checkpoint (${cp} of ${totalCheckpoints})`)
               if (claimed === 0) {
                 startCheckpointId = cp
                 break
@@ -5011,6 +5016,7 @@ console.log("succeededKeys", succeededKeys)
             const maxEnd = Math.min(totalCheckpoints, startCheckpointId + 255)
             for (let cp = startCheckpointId + 1; cp <= maxEnd; cp++) {
               const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              ctx.heartbeatDegraded('optimisticReplication', `network ${client.id}: sizing the unclaimed range (${cp} of ${maxEnd})`)
               if (claimed !== 0) break
               endCheckpointId = cp
             }
