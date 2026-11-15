@@ -4583,6 +4583,13 @@ console.log("succeededKeys", succeededKeys)
           scannedActions += cnt
         }
         processedEvents = [...combined, ...processedEvents]
+        // One window read: the walk is alive. On a quiet network it can be
+        // thousands of windows long, and the loop only heartbeats when the
+        // whole iteration ends, so without this the watchdog restarts the
+        // Validator (the poll loop too) mid-walk and the walk starts over.
+        // Reported as degraded, so a walk that never ends is still restarted
+        // after 10x the loop timeout; a read that hangs reports nothing.
+        ctx.heartbeatDegraded('optimisticReplication', `reconstructing checkpoints ${startCheckpointId}..${endCheckpointId} for network ${networkId}: scanned back to block ${fromBlock}`)
         if (fromBlock === 0) break
         toBlock = fromBlock - 1
       }
@@ -4614,6 +4621,7 @@ console.log("succeededKeys", succeededKeys)
           console.error(`[Reconstruct] Could not fetch tx ${txHash}`)
           return null
         }
+        ctx.heartbeatDegraded('optimisticReplication', `reconstructing checkpoints ${startCheckpointId}..${endCheckpointId} for network ${networkId}: reading transactions`)
 
         const emitter = txEmitter.get(txHash)!
         // ERC1271 address is `undefined` until that contract variant is
@@ -4990,6 +4998,11 @@ console.log("succeededKeys", succeededKeys)
             let startCheckpointId = 0
             for (let cp = 1; cp <= totalCheckpoints; cp++) {
               const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              // One archive read per checkpoint, from the first one, on every
+              // iteration: this alone grows past the loop timeout as
+              // checkpoints accumulate. Report the progress (see the note in
+              // reconstructCheckpointData).
+              ctx.heartbeatDegraded('optimisticReplication', `network ${client.id}: looking for the first unclaimed checkpoint (${cp} of ${totalCheckpoints})`)
               if (claimed === 0) {
                 startCheckpointId = cp
                 break
@@ -5003,6 +5016,7 @@ console.log("succeededKeys", succeededKeys)
             const maxEnd = Math.min(totalCheckpoints, startCheckpointId + 255)
             for (let cp = startCheckpointId + 1; cp <= maxEnd; cp++) {
               const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              ctx.heartbeatDegraded('optimisticReplication', `network ${client.id}: sizing the unclaimed range (${cp} of ${maxEnd})`)
               if (claimed !== 0) break
               endCheckpointId = cp
             }
