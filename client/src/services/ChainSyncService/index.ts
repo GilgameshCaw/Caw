@@ -6,6 +6,7 @@ import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder, dataSlice, id as 
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi, cawProfileAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
+import { runBeat, type LoopBeats } from '../../utils/loopHeartbeat'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
 const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
@@ -1282,19 +1283,24 @@ function registerTask(task: SyncTask) {
   syncTasks.set(task.name, task)
 }
 
-function startTask(task: SyncTask, heartbeat: (loopName?: string) => void) {
+function startTask(task: SyncTask, beats: LoopBeats) {
   const loopName = `ChainSync:${task.name}`
 
+  // A sync that throws (the RPC answering 402 or 429, a read timing out) is
+  // reported as degraded, not left silent: the task ran and will run again on
+  // its interval, and restarting the service does not fix the upstream. The
+  // watchdog still restarts it if this goes on for 10x the loop timeout.
+
   // Run immediately
-  task.sync().then(() => heartbeat(loopName)).catch(err => {
-    console.error(`[ChainSync:${task.name}] Initial sync failed:`, err.message)
+  void runBeat(loopName, beats, () => task.sync(), (err: any) => {
+    console.error(`[ChainSync:${task.name}] Initial sync failed:`, err?.message)
   })
 
   // Then run on interval
   task.timerId = setInterval(() => {
     task.lastRun = Date.now()
-    task.sync().then(() => heartbeat(loopName)).catch(err => {
-      console.error(`[ChainSync:${task.name}] Sync failed:`, err.message)
+    void runBeat(loopName, beats, () => task.sync(), (err: any) => {
+      console.error(`[ChainSync:${task.name}] Sync failed:`, err?.message)
     })
   }, task.interval)
 }
@@ -1410,7 +1416,7 @@ export const chainSyncService = {
     }
 
     // Start all tasks
-    syncTasks.forEach(task => startTask(task, ctx.heartbeat))
+    syncTasks.forEach(task => startTask(task, ctx))
 
     return {
       started: providersReady,
