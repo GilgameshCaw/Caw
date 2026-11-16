@@ -4548,7 +4548,9 @@ console.log("succeededKeys", succeededKeys)
       return indexThenChain(
         () => reconstructCheckpointDataFrom('index', networkId, startCheckpointId, endCheckpointId),
         () => reconstructCheckpointDataFrom('chain', networkId, startCheckpointId, endCheckpointId),
-        err => console.warn(`[Reconstruct] local index not used for network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: ${err instanceof Error ? err.message : String(err)}`),
+        // Log the error's kind, not its message: ethers copies the full RPC request
+        // URL (which can carry an API key) into err.message for HTTP errors.
+        err => console.warn(`[Reconstruct] local index not used for network ${networkId} checkpoints ${startCheckpointId}..${endCheckpointId}: ${(err as any)?.code ?? (err instanceof Error ? err.name : 'unknown error')}`),
       )
     }
 
