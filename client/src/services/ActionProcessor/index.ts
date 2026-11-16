@@ -12,6 +12,7 @@ import { CawNotFoundError } from './actionHandlers'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { span } from '../../utils/trace'
 import getActionType from '../../abi/getActionType'
+import { backlogWhere } from './backlogQuery'
 // Static imports — were previously dynamic (`await import('../StakeLedger')`)
 // inside hot-path try/catches. The dynamic form trips
 // ERR_UNSUPPORTED_DIR_IMPORT under Node 22 + tsx/cjs because Node's runtime
@@ -63,10 +64,7 @@ export const actionProcessorService: Service = {
       const BACKLOG_CHUNK = 1000
       while (!stopRequested) {
         const backlog = await prisma.rawEvent.findMany({
-          where: {
-            id: { gt: lastId },
-            contractAddress: CAW_ACTIONS_ADDRESS
-          },
+          where: backlogWhere(lastId),
           orderBy: { id: 'asc' },
           take: BACKLOG_CHUNK,
         })
