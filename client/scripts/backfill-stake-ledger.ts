@@ -15,7 +15,7 @@
 // safe.
 //
 // What we DO instead:
-//   1. Walk every RawEvent for CAW_ACTIONS_ADDRESS in chronological
+//   1. Walk every RawEvent from the CawActions and ERC-1271 contracts in chronological
 //      order. For each action, write a CawOwnershipSnapshot row per
 //      touched user (sender + recipient + validator), tagged with
 //      the right reason. Deltas come from the static cost map and
@@ -40,7 +40,7 @@
 //   npx tsx scripts/backfill-stake-ledger.ts [--reset]
 
 import { prisma } from '../src/prismaClient'
-import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
+import { backlogWhere } from '../src/services/ActionProcessor/backlogQuery'
 import { ACTION_TYPE_NUM_TO_NAME, ACTION_COST, type FixedCostActionType } from '../src/utils/cawActionCosts'
 import { PRECISION } from '../src/services/StakeLedger/contractMath'
 import { getCawProfileLedger } from '../src/services/StakeLedger/cawProfileLedger'
@@ -219,7 +219,7 @@ async function backfillRows() {
 
   for (;;) {
     const rows = await prisma.rawEvent.findMany({
-      where: { id: { gt: cursorId }, contractAddress: CAW_ACTIONS_ADDRESS },
+      where: backlogWhere(cursorId),
       orderBy: { id: 'asc' },
       take: PAGE,
     })

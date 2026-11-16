@@ -1,6 +1,6 @@
 // scripts/rescan-orphan-raw-events.ts
 //
-// Finds RawEvent rows from the CawActions contract that have no matching
+// Finds RawEvent rows from the CawActions and ERC-1271 contracts that have no matching
 // Action row, and reprocesses them through the same code path the live
 // ActionProcessor uses. Mirrors handleRawAction in
 // src/services/ActionProcessor/index.ts so behaviour is identical to a
@@ -24,7 +24,7 @@
 //   tsx scripts/rescan-orphan-raw-events.ts --apply --sender 78  # one user
 
 import { prisma } from '../src/prismaClient'
-import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
+import { backlogContractAddresses } from '../src/services/ActionProcessor/backlogQuery'
 import { createOrFindAction, ensureActionExists } from '../src/services/ActionProcessor/actionCreation'
 import { processDomainEffects, resolveActionUsers } from '../src/services/ActionProcessor/domainProcessor'
 import { StaleTokenError } from '../src/services/UserService'
@@ -46,11 +46,12 @@ async function findOrphans(): Promise<OrphanRow[]> {
   // Use $queryRaw tagged template so all interpolations are parameterised.
   // Prisma does not support optional WHERE clauses in a single template, so
   // we branch on SENDER_FILTER presence and let Postgres handle the int cast.
+  const contracts = backlogContractAddresses()
   if (SENDER_FILTER !== null) {
     return prisma.$queryRaw<OrphanRow[]>`
       SELECT re.id, re."chainId", re.data
       FROM "RawEvent" re
-      WHERE re."contractAddress" = ${CAW_ACTIONS_ADDRESS}
+      WHERE re."contractAddress" = ANY(${contracts}::text[])
         AND NOT EXISTS (SELECT 1 FROM "Action" a WHERE a."rawEventId" = re.id)
         AND (re.data->>'senderId')::int = ${SENDER_FILTER}
       ORDER BY re.id ASC
@@ -59,7 +60,7 @@ async function findOrphans(): Promise<OrphanRow[]> {
   return prisma.$queryRaw<OrphanRow[]>`
     SELECT re.id, re."chainId", re.data
     FROM "RawEvent" re
-    WHERE re."contractAddress" = ${CAW_ACTIONS_ADDRESS}
+    WHERE re."contractAddress" = ANY(${contracts}::text[])
       AND NOT EXISTS (SELECT 1 FROM "Action" a WHERE a."rawEventId" = re.id)
     ORDER BY re.id ASC
   `
