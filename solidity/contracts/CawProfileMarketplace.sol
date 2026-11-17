@@ -280,7 +280,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         // MP-4: pull buyer's ERC20 into the contract and credit
         // the seller's pull ledger, rather than pushing directly to the seller. A
         // blocklisted seller can no longer make the listing permanently unsellable.
-        IERC20(listing.paymentToken).safeTransferFrom(msg.sender, address(this), price);
+        _collectExact(IERC20(listing.paymentToken), price);
         pendingTokenPayouts[listing.seller][listing.paymentToken] += price;
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
@@ -354,7 +354,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(amount >= minBid, "Bid too low");
 
         // Transfer tokens from bidder to contract (escrow)
-        IERC20(listing.paymentToken).safeTransferFrom(msg.sender, address(this), amount);
+        _collectExact(IERC20(listing.paymentToken), amount);
 
         // Queue refund for previous high bidder
         if (listing.highestBidder != address(0)) {
@@ -581,7 +581,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(allowedPaymentTokens[paymentToken], "Payment token not allowed");
 
         // Escrow the tokens
-        IERC20(paymentToken).safeTransferFrom(msg.sender, address(this), amount);
+        _collectExact(IERC20(paymentToken), amount);
 
         offerId = nextOfferId++;
         offers[offerId] = Offer({
@@ -594,6 +594,16 @@ contract CawProfileMarketplace is ReentrancyGuard {
         });
 
         emit OfferCreated(offerId, tokenId, msg.sender, paymentToken, amount, uint64(block.timestamp) + duration);
+    }
+
+    /// @dev Pull exactly the requested amount of the token into escrow. A token that delivers
+    ///      less than it is asked to move (a transfer fee) would leave the
+    ///      marketplace holding less than it records, so it is refused.
+    function _collectExact(IERC20 token, uint256 amount) private {
+        uint256 beforeBalance = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 afterBalance = token.balanceOf(address(this));
+        require(afterBalance >= beforeBalance && afterBalance - beforeBalance == amount, "Unexpected token receipt");
     }
 
     /**
