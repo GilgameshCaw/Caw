@@ -2,8 +2,36 @@ import { Router } from 'express'
 import { randomBytes } from 'crypto'
 import { prisma } from '../../prismaClient'
 import { requireAuth } from '../middleware/auth'
+import { checkScheduledSession, type SessionConflict } from '../util/scheduledSessionExpiry'
 
 const router = Router()
+
+/**
+ * The session that signed a pre-signed post has been revoked, or lapses before
+ * the post is due: the chain would reject it at publish time. Refused now so the
+ * user can sign again. A DB error here does not block the post (fail open; the
+ * contract still enforces the session at submission).
+ */
+async function conflictFor(signedAction: any, scheduledDate: Date): Promise<SessionConflict | null> {
+  try {
+    return await checkScheduledSession(signedAction, scheduledDate)
+  } catch (err: any) {
+    console.warn('[Scheduled] session expiry check failed; allowing the post:', err?.message)
+    return null
+  }
+}
+
+function conflictBody(conflict: SessionConflict, scheduledDate: Date) {
+  return {
+    error: conflict.reason === 'revoked'
+      ? 'The session key that signed this post has been revoked. Sign it again with an active session.'
+      : 'The session key that signed this post expires before its scheduled time. Sign it again with a session that lasts past that time.',
+    reason: conflict.reason,
+    sessionAddress: conflict.sessionAddress,
+    sessionExpiresAt: conflict.expiresAt,
+    scheduledAt: Math.floor(scheduledDate.getTime() / 1000),
+  }
+}
 
 /**
  * GET /api/scheduled
@@ -85,6 +113,10 @@ router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.heade
           return res.status(400).json({ error: `Chunk ${i} missing cawonce` })
         }
       }
+      for (const ch of chunks) {
+        const conflict = await conflictFor(ch.signedAction, scheduledDate)
+        if (conflict) return res.status(400).json(conflictBody(conflict, scheduledDate))
+      }
       // Generate a thread id once; reuse for every chunk so the processor and UI can group them.
       // Use crypto.randomBytes for the random suffix so threadIds aren't enumerable from
       // userId + timestamp (which an attacker could guess for a target's recent posts).
@@ -126,6 +158,9 @@ router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.heade
     if (cawonce === undefined || cawonce === null) {
       return res.status(400).json({ error: 'Signed action must include cawonce' })
     }
+
+    const conflict = await conflictFor(signedAction, scheduledDate)
+    if (conflict) return res.status(400).json(conflictBody(conflict, scheduledDate))
 
     const scheduled = await prisma.scheduledCaw.create({
       data: {
