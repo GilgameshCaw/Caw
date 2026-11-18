@@ -51,6 +51,22 @@ contract MarketplaceTokenRefundTest is Test {
         assertEq(token.balanceOf(address(marketplace)), 0, "marketplace holds nothing");
     }
 
+    /// cancelOfferTo refunds to a recipient the offerer chooses.
+    function test_cancelOfferTo_noReturnToken_refundsRecipient() public {
+        NoReturnToken token = new NoReturnToken();
+        _deploy(address(token));
+        uint256 offerId = _openOffer(token);
+
+        address recipient = address(0xF8E54);
+        vm.prank(offerer);
+        marketplace.cancelOfferTo(offerId, recipient);
+
+        assertFalse(_isActive(offerId), "offer closed");
+        assertEq(token.balanceOf(recipient), AMOUNT, "recipient refunded");
+        assertEq(token.balanceOf(offerer), 0, "offerer holds nothing");
+        assertEq(token.balanceOf(address(marketplace)), 0, "marketplace holds nothing");
+    }
+
     /// A blocklisted offerer: anyone can still close the expired offer, and the
     /// refund is queued for the offerer to pull to another address.
     function test_cancelOffer_noReturnToken_blockedOfferer_queuesRefund() public {
