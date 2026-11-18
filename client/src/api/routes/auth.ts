@@ -506,7 +506,7 @@ router.post('/verify-passkey/challenge', passkeyChallengeLimit, async (req, res)
       res.status(400).json({ error: 'Invalid tokenId' })
       return
     }
-    const challenge = await issuePasskeyChallenge(id)
+    const challenge = await issuePasskeyChallenge(id, 'signin')
     res.json({ challenge })
   } catch (error) {
     console.error('POST /api/auth/verify-passkey/challenge error:', error)
@@ -557,7 +557,7 @@ router.post('/verify-passkey', passkeyVerifyLimit, async (req, res) => {
 
     // Consume the challenge BEFORE the on-chain call so a single challenge
     // can't drive multiple verification attempts (atomic DEL — one shot).
-    const freshChallenge = await consumePasskeyChallenge(id, challenge)
+    const freshChallenge = await consumePasskeyChallenge(id, challenge, 'signin')
     if (!freshChallenge) {
       res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
       return

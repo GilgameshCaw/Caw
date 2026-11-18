@@ -60,9 +60,14 @@ function challengeStore(): ChallengeStore {
   return _storeOverride ?? redis
 }
 
-// One key per issued challenge: the key carries the tokenId and the challenge.
-function challengeKey(tokenId: number, challengeHex: string): string {
-  return `${CHALLENGE_PREFIX}${tokenId}:${challengeHex.toLowerCase()}`
+// What a challenge was issued for. The routes that issue and the routes that
+// consume are paired: sign-in issues and consumes 'signin'; the backup routes
+// issue and consume 'backup'. A challenge from one is refused by the other.
+export type PasskeyChallengePurpose = 'signin' | 'backup'
+
+// One key per issued challenge: the key carries the purpose, the tokenId and the challenge.
+function challengeKey(tokenId: number, purpose: PasskeyChallengePurpose, challengeHex: string): string {
+  return `${CHALLENGE_PREFIX}${purpose}:${tokenId}:${challengeHex.toLowerCase()}`
 }
 
 /**
@@ -80,10 +85,12 @@ function challengeKey(tokenId: number, challengeHex: string): string {
  * so with one slot per tokenId anyone could cancel another person's ceremony
  * in progress, and two tabs of one person cancelled each other. An earlier
  * challenge stays valid until it is used or its TTL ends.
+ *
+ * A challenge is issued for one purpose and consumed only for that purpose.
  */
-export async function issuePasskeyChallenge(tokenId: number): Promise<`0x${string}`> {
+export async function issuePasskeyChallenge(tokenId: number, purpose: PasskeyChallengePurpose): Promise<`0x${string}`> {
   const challenge = ('0x' + randomBytes(32).toString('hex')) as `0x${string}`
-  const saved = await challengeStore().set(challengeKey(tokenId, challenge), '1', 'EX', CHALLENGE_TTL_SECONDS, 'NX')
+  const saved = await challengeStore().set(challengeKey(tokenId, purpose, challenge), '1', 'EX', CHALLENGE_TTL_SECONDS, 'NX')
   if (saved !== 'OK') throw new Error('Could not issue a passkey challenge')
   return challenge
 }
@@ -94,11 +101,11 @@ export async function issuePasskeyChallenge(tokenId: number): Promise<`0x${strin
  * reports how many keys it removed, so two concurrent verify calls can't both
  * pass (no GET-then-DEL TOCTOU).
  */
-export async function consumePasskeyChallenge(tokenId: number, challengeHex: string): Promise<boolean> {
+export async function consumePasskeyChallenge(tokenId: number, challengeHex: string, purpose: PasskeyChallengePurpose): Promise<boolean> {
   // The presented string becomes part of a Redis key: accept only the shape
   // issuePasskeyChallenge produces.
   if (typeof challengeHex !== 'string' || !CHALLENGE_PATTERN.test(challengeHex)) return false
-  return (await challengeStore().del(challengeKey(tokenId, challengeHex))) === 1
+  return (await challengeStore().del(challengeKey(tokenId, purpose, challengeHex))) === 1
 }
 
 /**

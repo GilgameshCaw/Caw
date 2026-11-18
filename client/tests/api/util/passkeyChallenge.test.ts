@@ -45,48 +45,48 @@ describe("passkey challenges: one per ceremony", () => {
   after(() => mod._setChallengeStoreForTest(null))
 
   it("issues a 32-byte 0x challenge, stored with a 5 minute expiry and only if the key is new", async () => {
-    const c = await mod.issuePasskeyChallenge(7)
+    const c = await mod.issuePasskeyChallenge(7, "signin")
     expect(c).to.match(/^0x[0-9a-f]{64}$/)
     expect(store.setCalls).to.have.length(1)
     const [key, , ...flags] = store.setCalls[0]
-    expect(key).to.equal(`passkey-challenge:7:${c}`)
+    expect(key).to.equal(`passkey-challenge:signin:7:${c}`)
     expect(flags).to.deep.equal(["EX", 300, "NX"])
   })
 
   it("a challenge can be used once", async () => {
-    const c = await mod.issuePasskeyChallenge(7)
-    expect(await mod.consumePasskeyChallenge(7, c)).to.equal(true)
-    expect(await mod.consumePasskeyChallenge(7, c)).to.equal(false)
+    const c = await mod.issuePasskeyChallenge(7, "signin")
+    expect(await mod.consumePasskeyChallenge(7, c, "signin")).to.equal(true)
+    expect(await mod.consumePasskeyChallenge(7, c, "signin")).to.equal(false)
   })
 
   it("two concurrent uses of one challenge: exactly one passes", async () => {
-    const c = await mod.issuePasskeyChallenge(7)
-    const results = await Promise.all([mod.consumePasskeyChallenge(7, c), mod.consumePasskeyChallenge(7, c)])
+    const c = await mod.issuePasskeyChallenge(7, "signin")
+    const results = await Promise.all([mod.consumePasskeyChallenge(7, c, "signin"), mod.consumePasskeyChallenge(7, c, "signin")])
     expect(results.filter(Boolean)).to.have.length(1)
   })
 
   it("a new challenge for the same tokenId does not cancel an earlier one", async () => {
-    const first = await mod.issuePasskeyChallenge(7)
-    const second = await mod.issuePasskeyChallenge(7) // e.g. another tab, or a request from someone else
+    const first = await mod.issuePasskeyChallenge(7, "signin")
+    const second = await mod.issuePasskeyChallenge(7, "signin") // e.g. another tab, or a request from someone else
     expect(second).to.not.equal(first)
-    expect(await mod.consumePasskeyChallenge(7, first)).to.equal(true)
-    expect(await mod.consumePasskeyChallenge(7, second)).to.equal(true)
+    expect(await mod.consumePasskeyChallenge(7, first, "signin")).to.equal(true)
+    expect(await mod.consumePasskeyChallenge(7, second, "signin")).to.equal(true)
   })
 
   it("a challenge issued for one tokenId is not accepted for another", async () => {
-    const c = await mod.issuePasskeyChallenge(7)
-    expect(await mod.consumePasskeyChallenge(8, c)).to.equal(false)
-    expect(await mod.consumePasskeyChallenge(7, c)).to.equal(true)
+    const c = await mod.issuePasskeyChallenge(7, "signin")
+    expect(await mod.consumePasskeyChallenge(8, c, "signin")).to.equal(false)
+    expect(await mod.consumePasskeyChallenge(7, c, "signin")).to.equal(true)
   })
 
   it("the hex digits may be upper case, as before", async () => {
-    const c = await mod.issuePasskeyChallenge(7)
-    expect(await mod.consumePasskeyChallenge(7, "0x" + c.slice(2).toUpperCase())).to.equal(true)
+    const c = await mod.issuePasskeyChallenge(7, "signin")
+    expect(await mod.consumePasskeyChallenge(7, "0x" + c.slice(2).toUpperCase(), "signin")).to.equal(true)
   })
 
   it("a string that is not a challenge is refused without touching the store", async () => {
     for (const bad of ["", "0x1234", "x".repeat(10_000), "0x" + "g".repeat(64), "0x" + "a".repeat(63), "0x" + "a".repeat(65), 5 as any, undefined as any]) {
-      expect(await mod.consumePasskeyChallenge(7, bad)).to.equal(false)
+      expect(await mod.consumePasskeyChallenge(7, bad, "signin")).to.equal(false)
     }
     expect(store.delCalls).to.have.length(0)
   })
@@ -94,7 +94,7 @@ describe("passkey challenges: one per ceremony", () => {
   it("a challenge kept under the old one-slot key is not accepted (what a deploy leaves behind for one TTL)", async () => {
     const c = "0x" + "ab".repeat(32)
     store.data.set("passkey-challenge:7", c)
-    expect(await mod.consumePasskeyChallenge(7, c)).to.equal(false)
+    expect(await mod.consumePasskeyChallenge(7, c, "signin")).to.equal(false)
   })
 
   it("fails loudly if the key already exists (a collision of 32 random bytes cannot happen in practice)", async () => {
@@ -102,11 +102,25 @@ describe("passkey challenges: one per ceremony", () => {
     store.set = async () => null // NX refused
     let threw = false
     try {
-      await mod.issuePasskeyChallenge(7)
+      await mod.issuePasskeyChallenge(7, "signin")
     } catch {
       threw = true
     }
     store.set = original
     expect(threw).to.equal(true)
+  })
+
+  it("a challenge is refused for another purpose, and the refusal does not consume it", async () => {
+    const c = await mod.issuePasskeyChallenge(7, "signin")
+    expect(await mod.consumePasskeyChallenge(7, c, "backup")).to.equal(false)
+    expect(await mod.consumePasskeyChallenge(7, c, "signin")).to.equal(true)
+    const b = await mod.issuePasskeyChallenge(7, "backup")
+    expect(await mod.consumePasskeyChallenge(7, b, "signin")).to.equal(false)
+    expect(await mod.consumePasskeyChallenge(7, b, "backup")).to.equal(true)
+  })
+
+  it("the key carries the purpose", async () => {
+    const b = await mod.issuePasskeyChallenge(7, "backup")
+    expect(store.setCalls[0][0]).to.equal(`passkey-challenge:backup:7:${b}`)
   })
 })
