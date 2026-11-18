@@ -686,6 +686,13 @@ contract CawProfileMarketplace is ReentrancyGuard {
         emit OfferCancelled(offerId);
     }
 
+    /// @dev Isolates the token transfer of an offer refund so _refundOffer can
+    ///      catch a failure. Callable only by this contract.
+    function sendOfferRefund(IERC20 token, address recipient, uint256 amount) external {
+        require(msg.sender == address(this), "Only marketplace");
+        token.safeTransfer(recipient, amount);
+    }
+
     function _refundOffer(Offer storage offer, address recipient) internal {
         offer.active = false;
         if (offer.paymentToken == address(0)) {
@@ -703,13 +710,15 @@ contract CawProfileMarketplace is ReentrancyGuard {
         } else {
             // MP-3: ERC20 mirror of the ETH pull fallback.
             // cancelOffer is permissionless post-expiry, so a blocklisted offerer
-            // must not be able to keep the offer active forever. Try a raw
-            // transfer; on revert/false, queue to the token pull ledger.
-            try IERC20(offer.paymentToken).transfer(recipient, offer.amount) returns (bool ok) {
-                if (!ok) {
-                    pendingTokenPayouts[recipient][offer.paymentToken] += offer.amount;
-                    emit TokenPayoutQueued(recipient, offer.paymentToken, offer.amount);
-                }
+            // must not be able to keep the offer active forever. Try the transfer
+            // through sendOfferRefund; on revert, queue to the token pull ledger.
+            // The transfer goes through SafeERC20 inside an external self-call:
+            // a token that returns no data (Ethereum USDT) would otherwise fail
+            // to decode its bool in THIS frame, where a try/catch cannot catch
+            // it and the whole cancellation would revert. A token that returns
+            // false makes safeTransfer revert, so it is queued like any failure.
+            try this.sendOfferRefund(IERC20(offer.paymentToken), recipient, offer.amount) {
+                // The token accepted the transfer.
             } catch {
                 pendingTokenPayouts[recipient][offer.paymentToken] += offer.amount;
                 emit TokenPayoutQueued(recipient, offer.paymentToken, offer.amount);
