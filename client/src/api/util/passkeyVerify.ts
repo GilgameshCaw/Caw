@@ -18,7 +18,9 @@
 //
 // SECURITY (post-review 2026-06-12): the challenge is SERVER-GENERATED (never
 // client-supplied — that would let an attacker pre-seed a captured assertion's
-// challenge and replay it). It is single-use via an atomic GETDEL. See the
+// challenge and replay it). It is single-use via an atomic DEL of its own
+// key; each ceremony has its own key, so two ceremonies never cancel each
+// other. See the
 // security findings addressed in the verify-passkey route.
 
 import { Contract } from 'ethers'
@@ -33,6 +35,7 @@ const redis = process.env.REDIS_URL
 
 const CHALLENGE_PREFIX = 'passkey-challenge:'
 const CHALLENGE_TTL_SECONDS = 300 // 5 minutes
+const CHALLENGE_PATTERN = /^0x[0-9a-fA-F]{64}$/
 const ERC1271_MAGIC = '0x1626ba7e'
 
 const L1_CHAIN_ID = process.env.L1_CHAIN_ID ? Number(process.env.L1_CHAIN_ID) : 11155111
@@ -46,6 +49,22 @@ function getL1Provider() {
   return _provider
 }
 
+// The part of the Redis client these helpers use, so a test can swap in an
+// in-memory stub (the other route and util tests do the same).
+type ChallengeStore = Pick<Redis, 'set' | 'del'>
+let _storeOverride: ChallengeStore | null = null
+export function _setChallengeStoreForTest(store: ChallengeStore | null): void {
+  _storeOverride = store
+}
+function challengeStore(): ChallengeStore {
+  return _storeOverride ?? redis
+}
+
+// One key per issued challenge: the key carries the tokenId and the challenge.
+function challengeKey(tokenId: number, challengeHex: string): string {
+  return `${CHALLENGE_PREFIX}${tokenId}:${challengeHex.toLowerCase()}`
+}
+
 /**
  * Generate a fresh 32-byte challenge SERVER-SIDE for a passkey sign-in attempt,
  * bound to the tokenId. The client passes the returned challenge verbatim into
@@ -55,28 +74,31 @@ function getL1Provider() {
  * The challenge MUST be server-generated: a client-chosen challenge lets an
  * attacker who captured a victim's prior (challenge, assertion) pair pre-seed
  * that challenge and replay the assertion. Returns the 0x-prefixed hex.
+ *
+ * Each call gets its own key and leaves earlier challenges of the same tokenId
+ * alone. The issuing routes take only a tokenId or an address, with no login,
+ * so with one slot per tokenId anyone could cancel another person's ceremony
+ * in progress, and two tabs of one person cancelled each other. An earlier
+ * challenge stays valid until it is used or its TTL ends.
  */
 export async function issuePasskeyChallenge(tokenId: number): Promise<`0x${string}`> {
   const challenge = ('0x' + randomBytes(32).toString('hex')) as `0x${string}`
-  // Overwrite any prior in-flight challenge for this tokenId — the latest
-  // ceremony wins. (We don't use NX: a user re-initiating their own sign-in
-  // should get a fresh challenge, not be blocked by a stale one. Single-use is
-  // enforced atomically at consume time via GETDEL.)
-  await redis.set(CHALLENGE_PREFIX + tokenId, challenge, 'EX', CHALLENGE_TTL_SECONDS)
+  const saved = await challengeStore().set(challengeKey(tokenId, challenge), '1', 'EX', CHALLENGE_TTL_SECONDS, 'NX')
+  if (saved !== 'OK') throw new Error('Could not issue a passkey challenge')
   return challenge
 }
 
 /**
- * Atomically consume the challenge for a tokenId. Returns true only if the
- * presented challenge matches the live one. Uses GETDEL so two concurrent
- * verify calls can't both pass (no GET-then-DEL TOCTOU).
+ * Atomically consume a challenge issued for a tokenId. Returns true only if
+ * this exact challenge is live for this tokenId, and then removes it: DEL
+ * reports how many keys it removed, so two concurrent verify calls can't both
+ * pass (no GET-then-DEL TOCTOU).
  */
 export async function consumePasskeyChallenge(tokenId: number, challengeHex: string): Promise<boolean> {
-  const key = CHALLENGE_PREFIX + tokenId
-  // GETDEL (Redis 6.2+) returns the value AND deletes it in one atomic op.
-  const stored = await redis.getdel(key)
-  if (!stored) return false
-  return stored.toLowerCase() === challengeHex.toLowerCase()
+  // The presented string becomes part of a Redis key: accept only the shape
+  // issuePasskeyChallenge produces.
+  if (typeof challengeHex !== 'string' || !CHALLENGE_PATTERN.test(challengeHex)) return false
+  return (await challengeStore().del(challengeKey(tokenId, challengeHex))) === 1
 }
 
 /**
