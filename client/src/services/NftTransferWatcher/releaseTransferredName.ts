@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../prismaClient'
 import groupService, { GroupServiceError } from '../DmService/groupService'
 
@@ -45,7 +46,9 @@ export async function transferTime(
  *   are deleted: bookmarks, scheduled posts, blocks they made, notifications
  *   and dismissed offers. The routes that list them check the current owner,
  *   which the next owner passes. A scheduled post already being submitted is
- *   left to ScheduledPostProcessor; its signature no longer matches the owner.
+ *   left to ScheduledPostProcessor, which has already read it; its content,
+ *   image and signed action are cleared here, so the row it later marks
+ *   failed or published no longer holds them.
  *
  * The block time is read only when there is something to release.
  *
@@ -101,9 +104,13 @@ export async function releaseTransferredName(tokenId: number, transferAt: () => 
   }
 
   if (hasPrivate) {
-    const [bookmarks, scheduled, blocks, notifications, notifGroups, dismissals] = await prisma.$transaction(async tx => [
+    const [bookmarks, scheduled, cleared, blocks, notifications, notifGroups, dismissals] = await prisma.$transaction(async tx => [
       await tx.bookmark.deleteMany({ where: { userId: tokenId, createdAt: { lt: cutoff } } }),
       await tx.scheduledCaw.deleteMany({ where: { userId: tokenId, createdAt: { lt: cutoff }, status: { not: 'processing' } } }),
+      await tx.scheduledCaw.updateMany({
+        where: { userId: tokenId, createdAt: { lt: cutoff }, status: 'processing' },
+        data: { content: '', imageData: null, hasImage: false, signedAction: Prisma.DbNull },
+      }),
       await tx.block.deleteMany({ where: { blockerId: tokenId, createdAt: { lt: cutoff } } }),
       // Notifications before their groups: a group last touched before the
       // cutoff is only referenced by notifications from before it.
@@ -112,8 +119,8 @@ export async function releaseTransferredName(tokenId: number, transferAt: () => 
       await tx.marketplaceOfferDismissal.deleteMany({ where: { userId: tokenId, createdAt: { lt: cutoff } } }),
     ])
     const n = bookmarks.count + scheduled.count + blocks.count + notifications.count + notifGroups.count + dismissals.count
-    if (n > 0) {
-      console.warn(`[NftTransferWatcher] tokenId=${tokenId}: deleted ${n} row(s) kept by the previous owner (bookmarks ${bookmarks.count}, scheduled ${scheduled.count}, blocks ${blocks.count}, notifications ${notifications.count}+${notifGroups.count} groups, offer dismissals ${dismissals.count})`)
+    if (n + cleared.count > 0) {
+      console.warn(`[NftTransferWatcher] tokenId=${tokenId}: deleted ${n} row(s) kept by the previous owner (bookmarks ${bookmarks.count}, scheduled ${scheduled.count}, blocks ${blocks.count}, notifications ${notifications.count}+${notifGroups.count} groups, offer dismissals ${dismissals.count}); cleared ${cleared.count} scheduled post(s) already being submitted`)
     }
   }
 
