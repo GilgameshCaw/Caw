@@ -496,7 +496,7 @@ const passkeyVerifyLimit = rateLimit({
  * The SERVER generates a random 32-byte challenge (security finding #2 — a
  * client-chosen challenge would let an attacker pre-seed a captured assertion's
  * challenge and replay it) and returns it. The client passes it verbatim into
- * navigator.credentials.get. Single live challenge per tokenId, short TTL,
+ * navigator.credentials.get. Each request gets its own challenge, short TTL,
  * single-use on verify.
  */
 router.post('/verify-passkey/challenge', passkeyChallengeLimit, async (req, res) => {
@@ -506,7 +506,7 @@ router.post('/verify-passkey/challenge', passkeyChallengeLimit, async (req, res)
       res.status(400).json({ error: 'Invalid tokenId' })
       return
     }
-    const challenge = await issuePasskeyChallenge(id)
+    const challenge = await issuePasskeyChallenge(id, 'signin')
     res.json({ challenge })
   } catch (error) {
     console.error('POST /api/auth/verify-passkey/challenge error:', error)
@@ -556,8 +556,8 @@ router.post('/verify-passkey', passkeyVerifyLimit, async (req, res) => {
     const ownerAddress = user.address
 
     // Consume the challenge BEFORE the on-chain call so a single challenge
-    // can't drive multiple verification attempts (atomic GETDEL — one shot).
-    const freshChallenge = await consumePasskeyChallenge(id, challenge)
+    // can't drive multiple verification attempts (atomic DEL — one shot).
+    const freshChallenge = await consumePasskeyChallenge(id, challenge, 'signin')
     if (!freshChallenge) {
       res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
       return

@@ -261,7 +261,7 @@ router.post('/blob/prf', blobWriteLimit, async (req, res) => {
       return
     }
     // Consume the challenge atomically (one-shot) before the on-chain verify.
-    const fresh = await consumePasskeyChallenge(user.tokenId, challenge)
+    const fresh = await consumePasskeyChallenge(user.tokenId, challenge, 'backup')
     if (!fresh) {
       res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
       return
@@ -319,7 +319,7 @@ router.post('/blob/challenge', blobReadLimit, async (req, res) => {
       res.status(404).json({ error: 'No profile for that address' })
       return
     }
-    const challenge = await issuePasskeyChallenge(user.tokenId)
+    const challenge = await issuePasskeyChallenge(user.tokenId, 'backup')
     res.json({ challenge })
   } catch (error) {
     console.error('POST /api/wallet/blob/challenge error:', error)
@@ -381,7 +381,7 @@ router.post('/blob/retrieve', blobReadLimit, async (req, res) => {
         return
       }
       // Consume the challenge atomically (one-shot) before the on-chain call.
-      const fresh = await consumePasskeyChallenge(user.tokenId, challenge)
+      const fresh = await consumePasskeyChallenge(user.tokenId, challenge, 'backup')
       if (!fresh) {
         res.status(400).json({ error: 'Challenge expired or not found. Request a new one.' })
         return
