@@ -12,6 +12,7 @@ import { sendSerialized } from '../../utils/walletQueue'
 // reads ownership from the DB only; on a miss we return 202 and let the
 // frontend retry while NftTransferWatcher catches up.
 import Redis from 'ioredis'
+import { isErc1271Valid } from '../util/erc1271'
 
 const router = Router()
 // Honor REDIS_URL — see sessionStore.ts for the same pattern + reasoning.
@@ -114,8 +115,6 @@ function getL1ReadProvider(): JsonRpcProvider {
   return _l1Provider
 }
 
-const ERC1271_MAGIC = '0x1626ba7e'
-
 /**
  * Verify a WebAuthn / ERC-1271 signature against the claimed SmartEOA address
  * on L1. digest is the EIP-191 personal_sign hash (ethers.hashMessage(message)).
@@ -125,14 +124,7 @@ const ERC1271_MAGIC = '0x1626ba7e'
  */
 async function verifyErc1271OnL1(smartEoaAddress: string, digest: string, sigBlob: string): Promise<boolean> {
   const contract = new Contract(smartEoaAddress, smartEoaAbi as any, getL1ReadProvider())
-  try {
-    const magic: string = await contract.isValidSignature(digest, sigBlob)
-    return typeof magic === 'string' && magic.toLowerCase() === ERC1271_MAGIC
-  } catch {
-    // SmartEOA reverts (or returns the wrong value) for an invalid assertion —
-    // treat as "not valid", not an infrastructure error.
-    return false
-  }
+  return isErc1271Valid(contract, digest, sigBlob)
 }
 
 // requestCounter removed — using crypto.randomUUID()
