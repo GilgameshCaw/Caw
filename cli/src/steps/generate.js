@@ -28,6 +28,13 @@ export async function generateConfig(nodeType, config, installDir) {
   section('Generating Configuration')
 
   const clientDir = path.join(installDir, 'client')
+  const envPath = path.join(clientDir, '.env')
+  if (config.useDocker === 'docker' && !config.dbUrl) {
+    const saved = fs.existsSync(envPath) ? parseDotenv(fs.readFileSync(envPath, 'utf8')).DATABASE_URL : null
+    config = { ...config, dbUrl: saved || `postgresql://postgres:${crypto.randomBytes(24).toString('hex')}@127.0.0.1:5432/caw` }
+  }
+  const envVars = buildEnvVars(nodeType, config)
+  const dockerCompose = config.useDocker === 'docker' ? buildDockerCompose(envVars.DATABASE_URL) : null
 
   // Build config.json (services to run)
   const services = buildServiceList(nodeType, config)
@@ -42,8 +49,6 @@ export async function generateConfig(nodeType, config, installDir) {
   // initial write covers fresh installs; existing files we explicitly
   // chmod afterward (writeFileSync's mode option is ignored for files
   // that already exist — Node's documented behavior).
-  const envVars = buildEnvVars(nodeType, config)
-  const envPath = path.join(clientDir, '.env')
   const envContent = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n') + '\n'
@@ -81,10 +86,19 @@ export async function generateConfig(nodeType, config, installDir) {
   }
 
   // Build docker-compose.yml if needed
-  if (config.useDocker === 'docker') {
+  if (dockerCompose) {
     const dockerComposePath = path.join(installDir, 'docker-compose.yml')
-    fs.writeFileSync(dockerComposePath, buildDockerCompose(config))
-    console.log(success(`  Created ${dim(dockerComposePath)}`))
+    // Replace old files atomically so even a previously shared file is never
+    // readable with the new credentials. Stage it on the same filesystem.
+    const privateDir = fs.mkdtempSync(path.join(installDir, '.caw-compose-'))
+    try {
+      const staged = path.join(privateDir, 'docker-compose.yml')
+      fs.writeFileSync(staged, dockerCompose, { mode: 0o600 })
+      fs.renameSync(staged, dockerComposePath)
+    } finally {
+      fs.rmSync(privateDir, { recursive: true, force: true })
+    }
+    console.log(success(`  Created ${dim(dockerComposePath)} (mode 600)`))
   }
 
   // Build pm2 ecosystem file
@@ -845,24 +859,56 @@ function verifyBackendEnv(envPath) {
   console.log(success(`  Verified ${dim('NETWORK_ID=' + check.value)}`))
 }
 
-function buildDockerCompose(config) {
-  const dbPassword = config.dbUrl?.match(/:([^@]+)@/)?.[1] || 'postgres'
+// JSON quoting is valid YAML. Compose interpolates dollar signs in values
+// even when they are quoted, so escape each literal dollar separately.
+function composeCredential(encoded) {
+  let value
+  try {
+    value = decodeURIComponent(encoded)
+  } catch {
+    throw new Error('Invalid percent encoding in the Docker PostgreSQL credentials.')
+  }
+  if (value.includes('\0')) throw new Error('Docker PostgreSQL credentials cannot contain a NUL byte.')
+  return JSON.stringify(value.replaceAll('$', () => '$$'))
+}
 
-  return `version: '3.8'
+function buildDockerCompose(dbUrl) {
+  let database
+  try {
+    database = new URL(dbUrl)
+  } catch {
+    throw new Error('Invalid PostgreSQL connection URL for Docker setup.')
+  }
+  if (!['postgres:', 'postgresql:'].includes(database.protocol)) {
+    throw new Error('Docker setup requires a PostgreSQL connection URL.')
+  }
+  const localPostgres = ['127.0.0.1', 'localhost', '[::1]'].includes(database.hostname) &&
+    (!database.port || database.port === '5432') && !database.searchParams.has('host')
 
-services:
-  postgres:
+  // A managed database override can coexist with Docker Redis. Its credentials
+  // belong only in the backend .env, never in a local Postgres container.
+  let postgres = ''
+  if (localPostgres) {
+    if (!database.password) throw new Error('A password is required for Docker PostgreSQL.')
+    postgres = `  postgres:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_PASSWORD: ${dbPassword}
+      POSTGRES_USER: ${composeCredential(database.username || 'postgres')}
+      POSTGRES_PASSWORD: ${composeCredential(database.password)}
       POSTGRES_DB: caw
     ports:
       - "5432:5432"
     volumes:
       - caw_pgdata:/var/lib/postgresql/data
 
-  redis:
+`
+  }
+
+  return `version: '3.8'
+
+services:
+${postgres}  redis:
     image: redis:7-alpine
     restart: always
     ports:

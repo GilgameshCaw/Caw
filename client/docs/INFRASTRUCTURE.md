@@ -24,6 +24,18 @@ All services including Elasticsearch are started automatically via `concurrently
 
 ## PostgreSQL
 
+In CLI Docker mode, enter the password literally at the prompt. If supplying
+`CAW_DB_URL`, percent-encode reserved characters in the username and password.
+The installer writes `docker-compose.yml` with owner-only permissions on Unix.
+For a managed database on a different host or port, the generated Compose file
+keeps Redis and omits PostgreSQL. Review any old local PostgreSQL container
+separately when switching an existing install to a managed database.
+
+PostgreSQL applies the generated credentials when it initializes an empty data
+volume. Regenerating the configuration does not rotate a role's password in an
+existing database. For an existing volume, use its current credentials or change
+the role's password through your usual database administration procedure.
+
 ### macOS (Native)
 ```bash
 # Install

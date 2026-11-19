@@ -1,5 +1,6 @@
 import inquirer from 'inquirer'
 import { execSync, spawnSync } from 'child_process'
+import { randomBytes } from 'node:crypto'
 import fs from 'fs'
 import net from 'net'
 import os from 'os'
@@ -305,17 +306,7 @@ export async function collectInfraLate(nodeType) {
   let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
   if (infraMode === 'docker' && !process.env.CAW_DB_URL) {
-    section('Database password')
-    const { dbPassword } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'dbPassword',
-        message: `PostgreSQL password ${dim('(for the Docker container)')}:`,
-        default: 'caw_' + Math.random().toString(36).slice(2, 10),
-        mask: '*',
-      },
-    ])
-    dbUrl = `postgresql://postgres:${dbPassword}@127.0.0.1:5432/${defaultDbName}`
+    dbUrl = await promptDockerDatabaseUrl(defaultDbName)
   } else if (infraMode === 'existing') {
     section('Existing services')
     tipBlock([
@@ -368,6 +359,18 @@ export async function collectInfraLate(nodeType) {
     elasticsearchNode,
     apiPort,
   }
+}
+
+export async function promptDockerDatabaseUrl(dbName) {
+  section('Database password')
+  const { dbPassword } = await inquirer.prompt([{
+    type: 'password',
+    name: 'dbPassword',
+    message: `PostgreSQL password ${dim('(for the Docker container)')}:`,
+    default: 'caw_' + randomBytes(24).toString('hex'),
+    mask: '*',
+  }])
+  return `postgresql://postgres:${encodeURIComponent(dbPassword)}@127.0.0.1:5432/${dbName}`
 }
 
 /**
