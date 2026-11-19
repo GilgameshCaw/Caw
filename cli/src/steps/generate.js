@@ -858,7 +858,7 @@ services:
       POSTGRES_PASSWORD: ${dbPassword}
       POSTGRES_DB: caw
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - caw_pgdata:/var/lib/postgresql/data
 
@@ -866,7 +866,7 @@ services:
     image: redis:7-alpine
     restart: always
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - caw_redis:/data
 

@@ -28,13 +28,13 @@ docker run --rm -d \
   -e POSTGRES_USER=caw \
   -e POSTGRES_PASSWORD=caw \
   -e POSTGRES_DB=caw \
-  -p 5432:5432 \
+  -p 127.0.0.1:5432:5432 \
   postgres:15-alpine
 
 # Launch Redis
 docker run --rm -d \
   --name caw-redis \
-  -p 6379:6379 \
+  -p 127.0.0.1:6379:6379 \
   redis:7-alpine
 
 # Set your DATABASE_URL

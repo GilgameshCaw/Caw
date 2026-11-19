@@ -22,6 +22,8 @@ npm start
 
 All services including Elasticsearch are started automatically via `concurrently`.
 
+The CLI's Docker setup runs the CAW client on the host and publishes PostgreSQL and Redis on IPv4 loopback. For an existing CLI Docker install, edit the two port mappings in the installation directory's `docker-compose.yml` to `127.0.0.1:5432:5432` and `127.0.0.1:6379:6379`. Run `docker compose up -d postgres redis` from that same directory during a maintenance window. Compose recreates the two containers with their existing named volumes. Use the installer's existing-services mode to connect to separately managed databases.
+
 ## PostgreSQL
 
 ### macOS (Native)
@@ -39,7 +41,7 @@ createdb caw_dev
 docker run -d --name postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=caw_dev \
-  -p 5432:5432 \
+  -p 127.0.0.1:5432:5432 \
   postgres:15
 ```
 
@@ -57,7 +59,7 @@ redis-server
 
 ### Docker
 ```bash
-docker run -d --name redis -p 6379:6379 redis:7-alpine
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7-alpine
 ```
 
 ## Elasticsearch
