@@ -5,7 +5,7 @@ import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
 import { ensureCliSymlink, userHome, assertSafeUsername } from './update.js'
-import { ensureManualSqlIndexes } from './ensureManualSql.js'
+import { ensureManualSqlIndexes, ensurePostgresDatabase } from './ensureManualSql.js'
 
 /**
  * Run a long command without freezing the spinner. execSync blocks the
@@ -327,24 +327,14 @@ export async function runInstall(nodeType, config, installDir) {
     // Ensure the Postgres database exists. prisma db push only creates
     // schema, not the database. With multi-install we derive a per-domain
     // DB name (caw_test1_caw_social, etc.) — first install creates it,
-    // subsequent installs find it. We connect to the default 'postgres'
-    // database to issue CREATE DATABASE IF NOT EXISTS.
+    // subsequent installs find it.
     const spinnerDb = ora('Ensuring database exists...').start()
     try {
-      const dbName = config.dbUrl?.split('/').pop()?.split('?')[0]
-      if (dbName && dbName !== 'postgres') {
-        // psql -tc returns "1" if the DB exists, blank otherwise.
-        const adminUrl = config.dbUrl.replace(/\/[^/?]+(\?|$)/, '/postgres$1')
-        const exists = execSync(
-          `psql "${adminUrl}" -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`,
-          { stdio: 'pipe' }
-        ).toString().trim()
-        if (!exists) {
-          execSync(`psql "${adminUrl}" -c "CREATE DATABASE \\"${dbName}\\""`, { stdio: 'pipe' })
-          spinnerDb.succeed(`Created database "${dbName}"`)
-        } else {
-          spinnerDb.succeed(`Database "${dbName}" already exists`)
-        }
+      const { status, database } = ensurePostgresDatabase(config.dbUrl)
+      if (status === 'created') {
+        spinnerDb.succeed(`Created database "${database}"`)
+      } else if (status === 'present') {
+        spinnerDb.succeed(`Database "${database}" already exists`)
       } else {
         spinnerDb.succeed('Database check skipped (default postgres DB)')
       }

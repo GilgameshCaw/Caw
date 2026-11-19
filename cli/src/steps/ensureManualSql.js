@@ -95,12 +95,51 @@ const PRISMA_ONLY_PARAMS = new Set([
 
 function stripPrismaOnlyParams(dbUrl) {
   if (!dbUrl || !dbUrl.includes('?')) return dbUrl
-  const [base, query] = dbUrl.split('?')
+  const start = dbUrl.indexOf('?')
+  const base = dbUrl.slice(0, start)
+  const query = dbUrl.slice(start + 1)
   const kept = query
     .split('&')
     .filter(Boolean)
     .filter((kv) => !PRISMA_ONLY_PARAMS.has(kv.split('=')[0].toLowerCase()))
   return kept.length ? `${base}?${kept.join('&')}` : base
+}
+
+// Create the database before Prisma provisions its schema. Preserve the host
+// list even on libpq multi-host URLs, which the standard URL parser rejects.
+export function ensurePostgresDatabase(dbUrl, run = execFileSync) {
+  if (!dbUrl) return { status: 'skipped' }
+  const parts = /^(postgres(?:ql)?:\/\/)(?:([^/?#@]*)@)?([^/?#@]*)(?:\/([^?#]*))?(?:\?([^#]*))?$/.exec(stripPrismaOnlyParams(dbUrl))
+  if (!parts) throw new Error('Expected a PostgreSQL connection URI')
+  const [, scheme, userInfo = '', hosts, path = '', query = ''] = parts
+  const separator = userInfo.indexOf(':')
+  const user = separator < 0 ? userInfo : userInfo.slice(0, separator)
+  let password = separator < 0 ? undefined : decodeURIComponent(userInfo.slice(separator + 1))
+  let database = decodeURIComponent(path)
+  const adminOptions = []
+  for (const option of query.split('&').filter(Boolean)) {
+    const split = option.indexOf('=')
+    const key = split < 0 ? '' : decodeURIComponent(option.slice(0, split))
+    // libpq applies query options after credentials and the database path.
+    if (key === 'dbname') database = decodeURIComponent(option.slice(split + 1))
+    else if (key === 'password') password = decodeURIComponent(option.slice(split + 1))
+    else adminOptions.push(option)
+  }
+  if (!database || database === 'postgres') return { status: 'skipped' }
+
+  const adminQuery = adminOptions.length ? `?${adminOptions.join('&')}` : ''
+  const adminUrl = `${scheme}${user ? user + '@' : ''}${hosts}/postgres${adminQuery}`
+  const env = password === undefined ? process.env : { ...process.env, PGPASSWORD: password }
+  const args = ['-X', '-w', '-tA', '-v', 'ON_ERROR_STOP=1', '-v', `target_db=${database}`,
+    '--dbname', adminUrl]
+  // psql expands quoted variables in scripts read from stdin. Its literal
+  // and identifier forms supply the appropriate quoting for each statement.
+  const execute = input => run('psql', args, { env, input, encoding: 'utf8', stdio: 'pipe' })
+  const exists = execute("SELECT 1 FROM pg_database WHERE datname = :'target_db';\n").trim()
+  if (exists === '1') return { status: 'present', database }
+  if (exists !== '') throw new Error('Unexpected database existence result')
+  execute('CREATE DATABASE :"target_db";\n')
+  return { status: 'created', database }
 }
 
 function runPsql(dbUrl, sql) {
