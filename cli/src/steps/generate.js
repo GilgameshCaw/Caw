@@ -882,8 +882,12 @@ function buildDockerCompose(dbUrl) {
   if (!['postgres:', 'postgresql:'].includes(database.protocol)) {
     throw new Error('Docker setup requires a PostgreSQL connection URL.')
   }
+  // libpq URI options can override the authority; a named service can also
+  // supply the address or port independently of the displayed hostname.
+  const port = database.searchParams.getAll('port').at(-1) ?? (database.port || '5432')
+  const customRoute = ['host', 'hostaddr', 'service'].some(key => database.searchParams.has(key))
   const localPostgres = ['127.0.0.1', 'localhost', '[::1]'].includes(database.hostname) &&
-    (!database.port || database.port === '5432') && !database.searchParams.has('host')
+    port === '5432' && !customRoute
 
   // A managed database override can coexist with Docker Redis. Its credentials
   // belong only in the backend .env, never in a local Postgres container.

@@ -22,9 +22,11 @@ async function generate(dir, dbUrl) {
 }
 
 test('a normal PostgreSQL URL supplies exactly its credentials to Docker', async t => {
-  const services = await generate(installDirectory(t), 'postgresql://builder:sample@localhost:5432/caw')
-  assert.equal(services.postgres.environment.POSTGRES_USER, 'builder')
-  assert.equal(services.postgres.environment.POSTGRES_PASSWORD, 'sample')
+  for (const query of ['', '?port=5432']) {
+    const services = await generate(installDirectory(t), `postgresql://builder:sample@localhost:5432/caw${query}`)
+    assert.equal(services.postgres.environment.POSTGRES_USER, 'builder')
+    assert.equal(services.postgres.environment.POSTGRES_PASSWORD, 'sample')
+  }
 })
 
 const punctuation = 'demo@:/?# %25 "é" $HOME ${CAW_SAMPLE} $$'
@@ -62,11 +64,19 @@ test('Docker Compose resolves the synthetic password literally', { skip: !proces
 
 test('a managed database URL stays in the backend configuration when Docker runs Redis', async t => {
   const dir = installDirectory(t)
-  const dbUrl = 'postgresql://reader:remote-sample@db.example:5432/caw?sslmode=require'
-  const services = await generate(dir, dbUrl)
-  assert.deepEqual(Object.keys(services), ['redis'])
-  assert.ok(fs.readFileSync(path.join(dir, 'client/.env'), 'utf8').includes(dbUrl))
-  assert.ok(!fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8').includes('remote-sample'))
+  for (const endpoint of [
+    'db.example:5432/caw?sslmode=require',
+    'localhost/caw?host=db.example',
+    'localhost/caw?hostaddr=192.0.2.10',
+    'localhost/caw?service=managed',
+    '127.0.0.1:5432/caw?port=5432&port=6432',
+  ]) {
+    const dbUrl = `postgresql://reader:remote-sample@${endpoint}`
+    const services = await generate(dir, dbUrl)
+    assert.deepEqual(Object.keys(services), ['redis'])
+    assert.ok(fs.readFileSync(path.join(dir, 'client/.env'), 'utf8').includes(dbUrl))
+    assert.ok(!fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8').includes('remote-sample'))
+  }
 })
 
 test('fresh and rewritten Compose files are private on POSIX', { skip: process.platform === 'win32' }, async t => {
