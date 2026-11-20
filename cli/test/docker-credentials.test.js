@@ -17,6 +17,22 @@ function installDirectory(t) {
   return dir
 }
 
+test('invalid recovery data preserves both current files and the marker', t => {
+  const dir = installDirectory(t)
+  const env = path.join(dir, 'client/.env'), compose = path.join(dir, 'docker-compose.yml')
+  const marker = path.join(dir, '.caw-db-pending')
+  fs.writeFileSync(env, 'current env')
+  fs.writeFileSync(compose, 'current compose')
+  for (const pair of [[null, '!'], ['!', null], ['b2xk', 'Zh==']]) {
+    const original = JSON.stringify(pair)
+    fs.writeFileSync(marker, original)
+    assert.throws(() => updatePair(dir), /Invalid database configuration recovery file/)
+    assert.equal(fs.readFileSync(marker, 'utf8'), original)
+    assert.equal(fs.readFileSync(env, 'utf8'), 'current env')
+    assert.equal(fs.readFileSync(compose, 'utf8'), 'current compose')
+  }
+})
+
 async function generate(dir, dbUrl) {
   await generateConfig('api-only', { useDocker: 'docker', networkId: 1, dbUrl }, dir)
   return parse(fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8')).services

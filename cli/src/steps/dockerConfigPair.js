@@ -29,7 +29,13 @@ export function updatePair(dir, values) {
     const previous = JSON.parse(fs.readFileSync(pending, 'utf8'))
     if (!Array.isArray(previous) || previous.length !== 2 ||
         !previous.every(v => v === null || typeof v === 'string')) throw Error('Invalid database configuration recovery file.')
-    files.forEach((name, i) => replace(name, previous[i] === null ? null : Buffer.from(previous[i], 'base64')))
+    const decoded = previous.map(value => {
+      if (value === null) return null
+      const bytes = Buffer.from(value, 'base64')
+      if (bytes.toString('base64') !== value) throw Error('Invalid database configuration recovery file.')
+      return bytes
+    })
+    files.forEach((name, i) => replace(name, decoded[i]))
     fs.unlinkSync(pending)
   }
   restore()
