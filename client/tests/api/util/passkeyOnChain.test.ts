@@ -16,8 +16,10 @@ import { expect } from 'chai'
 import http from 'node:http'
 import { inspect } from 'node:util'
 import type { AddressInfo } from 'node:net'
+import { isErc1271Valid } from '../../../src/api/util/erc1271'
 
 const API_KEY = 'SECRETKEY123'
+const MARKER = 'R01_UPSTREAM_TEXT_MARKER'
 const MAGIC = '0x1626ba7e' + '00'.repeat(28)
 const REVERT_REASON_BAD =
   '0x08c379a0' + '00'.repeat(31) + '20' + '00'.repeat(31) + '03' + '626164' + '00'.repeat(29)
@@ -52,6 +54,12 @@ describe('verifyPasskeyAssertionOnChain', () => {
           case 'revert-32000': return send({ error: { code: -32000, message: 'execution reverted' } })
           case 'node-error': return send({ error: { code: -32000, message: 'header not found' } })
           case 'rate-limit': return send({ error: { code: -32005, message: 'rate limit exceeded' } })
+          case 'node-wording': return send({ error: { code: -32603, message: 'upstream request unavailable; prior check execution reverted' } })
+          case 'node-text-data': return send({ error: { code: -32603, message: 'upstream reverted the diagnostic request', data: '0x12345678' } })
+          case 'node-data': return send({ error: { code: -32603, message: 'header not found', data: '0x12345678' } })
+          case 'node-data-object': return send({ error: { code: -32603, message: 'upstream unavailable', data: { detail: 'maintenance' } } })
+          case 'unseen-revert': return send({ error: { code: -32015, message: 'VM Exception while processing transaction: revert' } })
+          case 'marker-message': return send({ error: { code: -32000, message: 'header not found ' + MARKER, data: '0x' + '12'.repeat(4) } })
           default: return send({ error: { code: -32603, message: 'unexpected mode ' + mode } })
         }
       })
@@ -98,6 +106,12 @@ describe('verifyPasskeyAssertionOnChain', () => {
       ['http500', 'an HTTP 500'],
       ['html', 'a body that is not JSON'],
       ['drop', 'a connection closed without an answer'],
+      ['node-wording', 'a node error whose text contains "execution reverted" in the middle'],
+      ['node-text-data', 'a node error with revert-like text and hex data'],
+      ['node-data', 'a node error (header not found) with hex data'],
+      ['node-data-object', 'a node error with object data'],
+      ['unseen-revert', 'a revert in a format that is not recognised'],
+      ['marker-message', 'a node error whose text carries a marker'],
     ] as const) {
       it(`throws on ${what}`, async () => {
         let thrown: any = null
@@ -105,7 +119,42 @@ describe('verifyPasskeyAssertionOnChain', () => {
         expect(thrown, `${m} must not be reported as an invalid signature`).to.not.equal(null)
         // The callers log what they catch: it must not carry the provider URL.
         expect(inspect(thrown, { depth: 5 })).to.not.include(API_KEY)
+        expect(inspect(thrown, { depth: 5 })).to.not.include(MARKER)
       })
     }
+  })
+})
+
+describe('isErc1271Valid: what an error has to show to count as the contract saying no', () => {
+  const failing = (err: object) => ({ isValidSignature: async () => { throw err } }) as any
+  const ask = (err: object) => isErc1271Valid(failing(err), '0x' + '71'.repeat(32), '0x83')
+  const rejects = async (err: object) => { try { await ask(err) } catch (e) { return e as any } throw new Error('expected an error') }
+
+  it('a decoded revert reason counts', async () => {
+    expect(await ask({ code: 'CALL_EXCEPTION', revert: { name: 'Error', args: ['no'] } })).to.equal(false)
+  })
+
+  it('hex data alone does not count', async () => {
+    const e = await rejects({ code: 'CALL_EXCEPTION', data: '0x12345678', shortMessage: MARKER })
+    expect(e.code).to.equal('CALL_EXCEPTION')
+  })
+
+  it('a BAD_DATA that did not come from decoding this call does not count', async () => {
+    const e = await rejects({ code: 'BAD_DATA', shortMessage: MARKER })
+    expect(e.code).to.equal('BAD_DATA')
+    expect(await ask({ code: 'BAD_DATA', info: { method: 'isValidSignature' }, value: '0x' })).to.equal(false)
+  })
+
+  it('the thrown error carries a fixed message and an allow-listed code only', async () => {
+    for (const err of [
+      { code: MARKER, shortMessage: MARKER, message: MARKER },
+      { code: 'SERVER_ERROR', shortMessage: MARKER, message: MARKER, info: { requestUrl: 'http://x/' + MARKER } },
+      { code: 'CALL_EXCEPTION', shortMessage: MARKER, info: { error: { code: -32000, message: MARKER } } },
+    ]) {
+      const e = await rejects(err)
+      expect(inspect(e, { depth: 5 })).to.not.include(MARKER)
+      expect(e.message).to.match(/^L1 RPC call failed \([A-Z_]+\)$/)
+    }
+    expect((await rejects({ code: MARKER })).code).to.equal('UNKNOWN')
   })
 })
