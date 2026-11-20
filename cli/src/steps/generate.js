@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { dockerConfigPair } from './dockerConfigPair.js'
 import fs from 'fs'
 import path from 'path'
 import { section, success, dim, brand, warn } from '../utils/ui.js'
@@ -29,6 +30,7 @@ export async function generateConfig(nodeType, config, installDir) {
 
   const clientDir = path.join(installDir, 'client')
   const envPath = path.join(clientDir, '.env')
+  if (config.useDocker === 'docker') dockerConfigPair(installDir)
   if (config.useDocker === 'docker' && !config.dbUrl) {
     const saved = fs.existsSync(envPath) ? parseDotenv(fs.readFileSync(envPath, 'utf8')).DATABASE_URL : null
     config = { ...config, dbUrl: saved || `postgresql://postgres:${crypto.randomBytes(24).toString('hex')}@127.0.0.1:5432/caw` }
@@ -52,8 +54,11 @@ export async function generateConfig(nodeType, config, installDir) {
   const envContent = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n') + '\n'
-  fs.writeFileSync(envPath, envContent, { mode: 0o600 })
-  fs.chmodSync(envPath, 0o600)
+  if (dockerCompose) dockerConfigPair(installDir, [envContent, dockerCompose])
+  else {
+    fs.writeFileSync(envPath, envContent, { mode: 0o600 })
+    fs.chmodSync(envPath, 0o600)
+  }
   console.log(success(`  Created ${dim(envPath)} (mode 600)`))
 
   // Same NaN/address-as-number trap as VITE_NETWORK_ID, but for the backend.
@@ -83,22 +88,6 @@ export async function generateConfig(nodeType, config, installDir) {
     // mode that pulls operators (and their AIs) into hours of debugging the
     // wrong layer. Fail the install instead.
     verifyFrontendEnv(frontendEnvPath)
-  }
-
-  // Build docker-compose.yml if needed
-  if (dockerCompose) {
-    const dockerComposePath = path.join(installDir, 'docker-compose.yml')
-    // Replace old files atomically so even a previously shared file is never
-    // readable with the new credentials. Stage it on the same filesystem.
-    const privateDir = fs.mkdtempSync(path.join(installDir, '.caw-compose-'))
-    try {
-      const staged = path.join(privateDir, 'docker-compose.yml')
-      fs.writeFileSync(staged, dockerCompose, { mode: 0o600 })
-      fs.renameSync(staged, dockerComposePath)
-    } finally {
-      fs.rmSync(privateDir, { recursive: true, force: true })
-    }
-    console.log(success(`  Created ${dim(dockerComposePath)} (mode 600)`))
   }
 
   // Build pm2 ecosystem file

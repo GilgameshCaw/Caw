@@ -1,4 +1,5 @@
 import inquirer from 'inquirer'
+import { dockerConfigPair } from './dockerConfigPair.js'
 import { execSync, spawnSync } from 'child_process'
 import { randomBytes } from 'node:crypto'
 import fs from 'fs'
@@ -269,7 +270,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
  * docker mode. Runs AFTER the L2 RPC step. None of these depend on chain
  * state, so we can collect them once we're past the on-chain bits.
  */
-export async function collectInfraLate(nodeType) {
+export async function collectInfraLate(nodeType, installDir) {
   if (nodeType === 'frontend-only') {
     // Frontend-only's infra was fully collected in collectInfraEarly via
     // collectFrontendOnlyConfig. Nothing else to do.
@@ -306,7 +307,7 @@ export async function collectInfraLate(nodeType) {
   let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
   if (infraMode === 'docker' && !process.env.CAW_DB_URL) {
-    dbUrl = await promptDockerDatabaseUrl(defaultDbName)
+    dbUrl = await dockerDatabaseUrl(defaultDbName, installDir)
   } else if (infraMode === 'existing') {
     section('Existing services')
     tipBlock([
@@ -361,6 +362,19 @@ export async function collectInfraLate(nodeType) {
   }
 }
 
+export async function dockerDatabaseUrl(dbName, dir) {
+  if (dir) {
+    dockerConfigPair(dir)
+    const file = path.join(dir, 'client/.env')
+    if (fs.existsSync(file)) {
+      const match = /^DATABASE_URL=(.+)$/m.exec(fs.readFileSync(file, 'utf8'))
+      if (!match) throw Error('Existing backend configuration has no DATABASE_URL. Supply CAW_DB_URL to continue.')
+      return match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
+    }
+  }
+  return promptDockerDatabaseUrl(dbName)
+}
+
 export async function promptDockerDatabaseUrl(dbName) {
   section('Database password')
   const { dbPassword } = await inquirer.prompt([{
@@ -382,7 +396,7 @@ export async function promptDockerDatabaseUrl(dbName) {
  */
 export async function collectInfraConfig(nodeType, ctx = {}) {
   const early = await collectInfraEarly(nodeType, ctx)
-  const late = await collectInfraLate(nodeType)
+  const late = await collectInfraLate(nodeType, ctx.installDir)
   return { ...early, ...late }
 }
 

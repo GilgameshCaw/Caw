@@ -36,6 +36,15 @@ volume. Regenerating the configuration does not rotate a role's password in an
 existing database. For an existing volume, use its current credentials or change
 the role's password through your usual database administration procedure.
 
+On a Docker reinstall, the installer recovers any interrupted credential-file
+update and reads the saved backend URL before asking for a new password.
+An explicit `CAW_DB_URL` takes precedence. During an update, the installer
+keeps a private rollback file in the installation directory. Rerun the
+installer in that same directory to recover after a process stop. Linux uses
+the util-linux `flock` command to serialize the credential-file writes.
+The rollback covers the backend environment and Compose file. It does not
+rotate a PostgreSQL role or roll back other installer steps.
+
 ### macOS (Native)
 ```bash
 # Install

@@ -7,7 +7,8 @@ import test from 'node:test'
 import inquirer from 'inquirer'
 import { parse, stringify } from 'yaml'
 import { generateConfig } from '../src/steps/generate.js'
-import { promptDockerDatabaseUrl } from '../src/steps/infrastructure.js'
+import { dockerDatabaseUrl, promptDockerDatabaseUrl } from '../src/steps/infrastructure.js'
+import { updatePair } from '../src/steps/dockerConfigPair.js'
 
 function installDirectory(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caw-credentials-'))
@@ -107,4 +108,35 @@ test('invalid local credentials stop generation without overwriting the previous
     await assert.rejects(generate(dir, dbUrl), { name: 'Error', message: /^(Invalid|A password)/ })
     assert.deepEqual(fs.readFileSync(file), saved)
   }
+})
+test('a failed second rename restores both files and keeps the saved password', async t => {
+  const dir = installDirectory(t)
+  const creds = 'postgresql://first:fixture@localhost/caw'
+  await generate(dir, creds)
+  const paths = ['client/.env', 'docker-compose.yml'].map(name => path.join(dir, name))
+  const before = paths.map(p => fs.readFileSync(p, 'utf8'))
+  const rename = fs.renameSync
+  let fail = true
+  t.mock.method(fs, 'renameSync', (src, dest) => {
+    if (fail && dest === paths[1]) { fail = false; throw Error('interrupted write') }
+    return rename(src, dest)
+  })
+  assert.throws(() => updatePair(dir, ['new env', 'new compose']), /interrupted write/)
+  assert.deepEqual(paths.map(p => fs.readFileSync(p, 'utf8')), before)
+  assert.ok((await dockerDatabaseUrl('caw', dir)).startsWith(creds))
+  const worker = new URL('../src/steps/dockerConfigPair.js', import.meta.url).href
+  const stopAfterFirstRename = `
+    import fs from 'node:fs'
+    import { updatePair } from ${JSON.stringify(worker)}
+    const rename = fs.renameSync
+    fs.renameSync = (src, dest) => {
+      rename(src, dest)
+      if (dest === process.argv[2]) process.exit(73)
+    }
+    updatePair(process.argv[1], ['DATABASE_URL=interrupted', 'interrupted compose'])
+  `
+  assert.throws(() => execFileSync(process.execPath, ['--input-type=module', '-e', stopAfterFirstRename, dir, paths[0]]), { status: 73 })
+  assert.equal(fs.readFileSync(paths[0], 'utf8'), 'DATABASE_URL=interrupted')
+  assert.ok((await dockerDatabaseUrl('caw', dir)).startsWith(creds))
+  assert.deepEqual(paths.map(p => fs.readFileSync(p, 'utf8')), before)
 })
