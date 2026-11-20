@@ -30,19 +30,13 @@ export async function generateConfig(nodeType, config, installDir) {
 
   const clientDir = path.join(installDir, 'client')
   const envPath = path.join(clientDir, '.env')
-  if (config.useDocker === 'docker') dockerConfigPair(installDir)
+  const version = config.useDocker === 'docker' ? (config.dockerConfigVersion ?? dockerConfigPair(installDir)) : undefined
   if (config.useDocker === 'docker' && !config.dbUrl) {
     const saved = fs.existsSync(envPath) ? parseDotenv(fs.readFileSync(envPath, 'utf8')).DATABASE_URL : null
     config = { ...config, dbUrl: saved || `postgresql://postgres:${crypto.randomBytes(24).toString('hex')}@127.0.0.1:5432/caw` }
   }
   const envVars = buildEnvVars(nodeType, config)
   const dockerCompose = config.useDocker === 'docker' ? buildDockerCompose(envVars.DATABASE_URL) : null
-
-  // Build config.json (services to run)
-  const services = buildServiceList(nodeType, config)
-  const configJsonPath = path.join(clientDir, 'config.json')
-  fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
-  console.log(success(`  Created ${dim(configJsonPath)}`))
 
   // Build .env. Mode 0600 — backend .env carries VALIDATOR_PRIVATE_KEY,
   // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_TOKEN_IDS, and DB credentials.
@@ -54,12 +48,18 @@ export async function generateConfig(nodeType, config, installDir) {
   const envContent = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n') + '\n'
-  if (dockerCompose) dockerConfigPair(installDir, [envContent, dockerCompose])
+  if (dockerCompose) dockerConfigPair(installDir, [envContent, dockerCompose], version)
   else {
     fs.writeFileSync(envPath, envContent, { mode: 0o600 })
     fs.chmodSync(envPath, 0o600)
   }
   console.log(success(`  Created ${dim(envPath)} (mode 600)`))
+
+  // Build config.json (services to run)
+  const services = buildServiceList(nodeType, config)
+  const configJsonPath = path.join(clientDir, 'config.json')
+  fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
+  console.log(success(`  Created ${dim(configJsonPath)}`))
 
   // Same NaN/address-as-number trap as VITE_NETWORK_ID, but for the backend.
   // NETWORK_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
@@ -857,7 +857,11 @@ function composeCredential(encoded) {
   } catch {
     throw new Error('Invalid percent encoding in the Docker PostgreSQL credentials.')
   }
-  if (value.includes('\0')) throw new Error('Docker PostgreSQL credentials cannot contain a NUL byte.')
+  return composeValue(value)
+}
+
+function composeValue(value) {
+  if (value.includes('\0')) throw new Error('Docker PostgreSQL settings cannot contain a NUL byte.')
   return JSON.stringify(value.replaceAll('$', () => '$$'))
 }
 
@@ -886,13 +890,15 @@ function buildDockerCompose(dbUrl) {
       throw new Error('Specify local PostgreSQL credentials in the URL authority only.')
     }
     if (!database.password) throw new Error('A password is required for Docker PostgreSQL.')
+    const dbName = database.searchParams.getAll('dbname').at(-1) ??
+      (decodeURIComponent(database.pathname.slice(1)) || decodeURIComponent(database.username) || 'postgres')
     postgres = `  postgres:
     image: postgres:16-alpine
     restart: always
     environment:
       POSTGRES_USER: ${composeCredential(database.username || 'postgres')}
       POSTGRES_PASSWORD: ${composeCredential(database.password)}
-      POSTGRES_DB: caw
+      POSTGRES_DB: ${composeValue(dbName)}
     ports:
       - "5432:5432"
     volumes:

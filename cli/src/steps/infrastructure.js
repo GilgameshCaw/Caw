@@ -306,6 +306,8 @@ export async function collectInfraLate(nodeType, installDir) {
   let redisUrl = process.env.CAW_REDIS_URL || 'redis://127.0.0.1:6379'
   let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
+  // Snapshot before reading saved credentials or prompting for new ones.
+  const dockerConfigVersion = infraMode === 'docker' && installDir ? dockerConfigPair(installDir) : undefined
   if (infraMode === 'docker' && !process.env.CAW_DB_URL) {
     dbUrl = await dockerDatabaseUrl(defaultDbName, installDir)
   } else if (infraMode === 'existing') {
@@ -355,6 +357,7 @@ export async function collectInfraLate(nodeType, installDir) {
 
   return {
     useDocker,
+    dockerConfigVersion,
     dbUrl,
     redisUrl,
     elasticsearchNode,

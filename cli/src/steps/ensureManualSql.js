@@ -35,6 +35,9 @@
 // attempting a CREATE that would just error out uglier.
 
 import { execFileSync } from 'child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 export const MANUAL_SQL_INDEXES = [
   {
@@ -90,17 +93,127 @@ const PRISMA_ONLY_PARAMS = new Set([
   'schema',
   'statement_cache_size',
   'sslidentity',
-  'sslpassword',
 ])
 
 function stripPrismaOnlyParams(dbUrl) {
   if (!dbUrl || !dbUrl.includes('?')) return dbUrl
-  const [base, query] = dbUrl.split('?')
+  const start = dbUrl.indexOf('?')
+  const base = dbUrl.slice(0, start)
+  const query = dbUrl.slice(start + 1)
   const kept = query
     .split('&')
     .filter(Boolean)
     .filter((kv) => !PRISMA_ONLY_PARAMS.has(kv.split('=')[0].toLowerCase()))
   return kept.length ? `${base}?${kept.join('&')}` : base
+}
+
+// Split out secrets while retaining libpq routing and option precedence.
+function databaseConnection(dbUrl) {
+  const parts = /^(postgres(?:ql)?:\/\/)(?:([^/?#@]*)@)?([^/?#@]*)(?:\/([^?#]*))?(?:\?([^#]*))?$/.exec(stripPrismaOnlyParams(dbUrl))
+  if (!parts) throw new Error('Expected a PostgreSQL connection URI')
+  const [, scheme, userInfo = '', hosts, path = '', query = ''] = parts
+  const separator = userInfo.indexOf(':')
+  const user = separator < 0 ? userInfo : userInfo.slice(0, separator)
+  let password = separator < 0 ? undefined : decodeURIComponent(userInfo.slice(separator + 1))
+  let database = decodeURIComponent(path)
+  const adminOptions = []
+  for (const option of query.split('&').filter(Boolean)) {
+    const split = option.indexOf('=')
+    const key = split < 0 ? '' : decodeURIComponent(option.slice(0, split))
+    // libpq applies query options after credentials and the database path.
+    if (key === 'dbname') database = decodeURIComponent(option.slice(split + 1))
+    else if (key === 'password') password = decodeURIComponent(option.slice(split + 1))
+    else adminOptions.push(option)
+  }
+  if (password !== undefined && (process.env.PGSERVICE || adminOptions.some(option =>
+    decodeURIComponent(option.split('=')[0]) === 'service'))) {
+    throw Object.assign(new Error('Configure the password in the PostgreSQL service or use a direct connection without a service'), { code: 'CAW_DB_CONFIG' })
+  }
+
+  const adminQuery = adminOptions.length ? `?${adminOptions.join('&')}` : ''
+  const adminUrl = `${scheme}${user ? user + '@' : ''}${hosts}/postgres${adminQuery}`
+  const env = password === undefined ? process.env : { ...process.env, PGPASSWORD: password }
+  const queryWithoutPassword = query.split('&').filter(option =>
+    option && decodeURIComponent(option.split('=')[0]) !== 'password').join('&')
+  const targetUrl = scheme + (user ? user + '@' : '') + hosts + '/' + path +
+    (queryWithoutPassword ? '?' + queryWithoutPassword : '')
+  return { adminUrl, targetUrl, database, env }
+}
+
+export function ensurePostgresDatabase(dbUrl, run = execFileSync) {
+  if (!dbUrl) return { status: 'skipped' }
+  const { adminUrl, database, env } = databaseConnection(dbUrl)
+  if (!database || database === 'postgres') return { status: 'skipped' }
+  // Standard PostgreSQL identifiers are limited to 63 bytes, including for
+  // quoted names. Reject longer names before the server silently shortens one.
+  if (Buffer.byteLength(database, 'utf8') > 63) {
+    throw Object.assign(new Error('Database name exceeds the supported 63-byte limit'), { code: 'CAW_DB_CONFIG' })
+  }
+  const args = ['-X', '-w', '-tA', '-v', 'ON_ERROR_STOP=1', '-v', `target_db=${database}`,
+    '--dbname']
+  // psql expands quoted variables in scripts read from stdin. Its literal
+  // and identifier forms supply the appropriate quoting for each statement.
+  const execute = input => withTlsOptions(adminUrl, env, (url, childEnv) =>
+    run('psql', [...args, url], { env: childEnv, input, encoding: 'utf8', stdio: 'pipe' }))
+  const exists = execute("SELECT 1 FROM pg_database WHERE datname = :'target_db';\n").trim()
+  if (exists === '1') return { status: 'present', database }
+  if (exists !== '') throw new Error('Unexpected database existence result')
+  execute('CREATE DATABASE :"target_db";\n')
+  return { status: 'created', database }
+}
+
+// A successful authenticated query to the configured database is the readiness signal.
+export function probeDatabase(dbUrl, dir, timeout, run = execFileSync) {
+  const { targetUrl, env } = databaseConnection(dbUrl)
+  return withTlsOptions(targetUrl, env, (url, childEnv) => {
+    const args = ['-X', '-w', '-tA', '-v', 'ON_ERROR_STOP=1', '--dbname', url, '-c', 'SELECT 1']
+    const options = { cwd: dir, env: childEnv, timeout, encoding: 'utf8', stdio: 'pipe' }
+    let out
+    try { out = run('psql', args, options) }
+    catch (e) {
+      if (e.code !== 'ENOENT') return false
+      // Only an unambiguous local Compose endpoint can use the container's
+      // client. Host services, TLS material and managed routes require host psql.
+      const local = /^postgres(?:ql)?:\/\/(?:[^@/?]+@)?(?:127\.0\.0\.1|localhost|\[::1\])(?::5432)?\/[^?#]*(?:\?port=5432)?$/.test(url)
+      if (!local || Object.keys(childEnv).some(k => k.startsWith('PG') && k !== 'PGPASSWORD')) {
+        throw Object.assign(new Error('Install the PostgreSQL client on this host for the configured database route.'), { code: 'CAW_DB_CONFIG' })
+      }
+      try {
+        out = run('docker', ['compose', 'exec', '-T', '-e', 'PGPASSWORD', 'postgres', 'psql', ...args], options)
+      } catch { return false }
+    }
+    return out.trim() === '1'
+  })
+}
+
+// libpq has no environment variable for sslpassword. Keep its value out of
+// the process list using a private, short-lived service definition.
+function withTlsOptions(url, env, invoke) {
+  const start = url.indexOf('?')
+  if (start < 0) return invoke(url, env)
+  let secret, named = Boolean(env.PGSERVICE)
+  const kept = []
+  for (const field of url.slice(start + 1).split('&')) {
+    const i = field.indexOf('=')
+    const key = i < 0 ? '' : decodeURIComponent(field.slice(0, i))
+    if (key === 'sslpassword') secret = decodeURIComponent(field.slice(i + 1))
+    else {
+      if (key === 'service') named = true
+      kept.push(field)
+    }
+  }
+  if (secret === undefined) return invoke(url, env)
+  if (named || /[\r\n\0]/.test(secret) || secret.trim() !== secret) {
+    throw Object.assign(new Error('Set this TLS passphrase directly in a private PostgreSQL service file.'), { code: 'CAW_DB_CONFIG' })
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caw-pg-tls-'))
+  try {
+    const file = path.join(dir, 'pg_service.conf')
+    fs.writeFileSync(file, '[caw_tls]\nsslpassword=' + secret + '\n', { mode: 0o600 })
+    return invoke(url.slice(0, start) + '?' + [...kept, 'service=caw_tls'].join('&'), { ...env, PGSERVICEFILE: file })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 function runPsql(dbUrl, sql) {
@@ -112,11 +225,11 @@ function runPsql(dbUrl, sql) {
   // whose password contains `$`, `"`, backticks or `;` is passed to psql
   // verbatim instead of being interpreted (or executed) by /bin/sh. The SQL
   // itself is a fixed string from MANUAL_SQL_INDEXES, never caller input.
-  return execFileSync(
+  return withTlsOptions(cleanUrl, process.env, (url, env) => execFileSync(
     'psql',
-    [cleanUrl, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
+    [url, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ))
 }
 
 function indexExists(dbUrl, indexName, table) {

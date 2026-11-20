@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -9,7 +10,7 @@ const files = ['client/.env', 'docker-compose.yml']
 // Under the installer lock, recover the last committed pair before reading
 // saved credentials. A rollback snapshot stays available until both target
 // renames finish. Recovery can itself be interrupted and repeated.
-export function updatePair(dir, values) {
+export function updatePair(dir, values, expectedVersion) {
   const pending = path.join(dir, '.caw-db-pending')
   function replace(name, content) {
     const dest = path.join(dir, name)
@@ -39,11 +40,15 @@ export function updatePair(dir, values) {
     fs.unlinkSync(pending)
   }
   restore()
-  if (!values) return
   const previous = files.map(name => {
     try { return fs.readFileSync(path.join(dir, name)).toString('base64') }
     catch (e) { if (e.code === 'ENOENT') return null; throw e }
   })
+  const version = createHash('sha256').update(JSON.stringify(previous)).digest('hex')
+  if (!values) return version
+  if (expectedVersion !== undefined && version !== expectedVersion) {
+    throw Error('Database configuration changed during setup. Restart the installer to review the current settings.')
+  }
   replace('.caw-db-pending', JSON.stringify(previous))
   try {
     files.forEach((name, i) => replace(name, values[i]))
@@ -54,15 +59,21 @@ export function updatePair(dir, values) {
   }
 }
 
-export function dockerConfigPair(dir, values) {
+export function dockerConfigPair(dir, values, expectedVersion) {
   if (process.platform === 'linux') {
     // util-linux flock releases its advisory directory lock on process exit.
-    execFileSync('flock', ['-x', path.resolve(dir), process.execPath, worker, path.resolve(dir)], {
-      input: JSON.stringify(values ?? null), stdio: ['pipe', 'ignore', 'inherit'],
-    })
-  } else updatePair(dir, values)
+    return execFileSync('flock', ['-x', path.resolve(dir), process.execPath, worker, path.resolve(dir)], {
+      input: JSON.stringify({ values, expectedVersion }), encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'],
+    }).trim()
+  }
+  const lock = path.join(dir, '.caw-db-config.lock')
+  fs.mkdirSync(lock)
+  try { return updatePair(dir, values, expectedVersion) }
+  finally { fs.rmdirSync(lock) }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === worker) {
-  updatePair(process.argv[2], JSON.parse(fs.readFileSync(0, 'utf8')))
+  const { values, expectedVersion } = JSON.parse(fs.readFileSync(0, 'utf8'))
+  const version = updatePair(process.argv[2], values, expectedVersion)
+  if (version) process.stdout.write(version)
 }

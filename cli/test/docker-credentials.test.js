@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,7 +9,7 @@ import inquirer from 'inquirer'
 import { parse, stringify } from 'yaml'
 import { generateConfig } from '../src/steps/generate.js'
 import { dockerDatabaseUrl, promptDockerDatabaseUrl } from '../src/steps/infrastructure.js'
-import { updatePair } from '../src/steps/dockerConfigPair.js'
+import { dockerConfigPair, updatePair } from '../src/steps/dockerConfigPair.js'
 
 function installDirectory(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caw-credentials-'))
@@ -37,6 +38,38 @@ async function generate(dir, dbUrl) {
   await generateConfig('api-only', { useDocker: 'docker', networkId: 1, dbUrl }, dir)
   return parse(fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8')).services
 }
+
+test('a pending installer cannot overwrite a newer credential pair', async t => {
+  for (const existing of [false, true]) {
+    const dir = installDirectory(t)
+    if (existing) await generate(dir, 'postgresql://one:old@localhost/caw')
+    const version = dockerConfigPair(dir)
+    const dbUrl = existing ? await dockerDatabaseUrl('caw', dir) : 'postgresql://one:first@localhost/caw'
+    await generate(dir, 'postgresql://two:current@localhost/selected_db')
+    const files = ['client/.env', 'docker-compose.yml', 'client/config.json'].map(name => path.join(dir, name))
+    const saved = files.map(file => fs.readFileSync(file))
+    await assert.rejects(generateConfig('api-only', { useDocker: 'docker', networkId: 1, dbUrl, dockerConfigVersion: version }, dir))
+    assert.deepEqual(files.map(file => fs.readFileSync(file)), saved)
+    assert.equal(parse(saved[1].toString()).services.postgres.environment.POSTGRES_DB, 'selected_db')
+  }
+})
+
+test('two installer processes starting from one snapshot commit exactly one complete pair', async t => {
+  const dir = installDirectory(t)
+  const version = dockerConfigPair(dir)
+  const module = new URL('../src/steps/dockerConfigPair.js', import.meta.url).href
+  const code = `import {dockerConfigPair} from ${JSON.stringify(module)};
+    const [dir, version, name] = process.argv.slice(1);
+    dockerConfigPair(dir, ['env-'+name, 'compose-'+name], version);`
+  const names = ['first', 'second']
+  const results = await Promise.allSettled(names.map(name => promisify(execFile)(process.execPath,
+    ['--input-type=module', '-e', code, dir, version, name])))
+  const winners = names.filter((_, i) => results[i].status === 'fulfilled')
+  assert.equal(winners.length, 1)
+  assert.equal(fs.readFileSync(path.join(dir, 'client/.env'), 'utf8'), 'env-' + winners[0])
+  assert.equal(fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8'), 'compose-' + winners[0])
+  assert.equal(fs.existsSync(path.join(dir, '.caw-db-pending')), false)
+})
 
 test('a normal PostgreSQL URL supplies exactly its credentials to Docker', async t => {
   for (const query of ['', '?port=5432']) {
