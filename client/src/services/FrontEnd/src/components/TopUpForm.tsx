@@ -187,6 +187,8 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
     setIsPending(true)
     try {
       const feeCaw = BigInt(sponsorQuote.minFeeCawWei)
+      // The fee is paid in CAW from the same balance, after the deposit has pulled `amountWei`.
+      if (amountWei + feeCaw > cawBalance) return
 
       // Call 1: approve CawProfile to pull `amountWei` CAW from the EOA.
       const call1: ExecCall = {
@@ -243,7 +245,7 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
     } finally {
       setIsPending(false)
     }
-  }, [eoaAccount, tokenId, amountValid, amountWei, depositFee, sponsorQuote, smartEoaExecute, onSuccess])
+  }, [eoaAccount, tokenId, amountValid, amountWei, cawBalance, depositFee, sponsorQuote, smartEoaExecute, onSuccess])
 
   // ─── ETH tab: build + relay the 2-call depositZap batch ───────────────────
   const handleDepositZap = useCallback(async () => {
@@ -298,6 +300,10 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   // ─── Display values ─────────────────────────────────────────────────────────
   const lzFeeEth = Number(formatEther(depositFee))
   const feeCawDisplay = sponsorQuote ? Number(formatUnits(BigInt(sponsorQuote.minFeeCawWei), 18)) : null
+  // CAW tab: the relayer fee comes out of the same CAW balance as the deposit, so the two together must fit.
+  const feeCawWei = sponsorQuote?.priceAvailable ? BigInt(sponsorQuote.minFeeCawWei) : null
+  const feeNotCovered = feeCawWei !== null && amountWei + feeCawWei > cawBalance
+  const maxDepositWei = feeCawWei !== null && cawBalance > feeCawWei ? cawBalance - feeCawWei : 0n
   // CAW tab: EOA must hold ETH for the LZ fee forwarded on call 2.
   const needsEth = depositFee > 0n && ethBalanceWei != null && ethBalanceWei < depositFee
 
@@ -430,6 +436,21 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
               {!quoteLoading && sponsorQuote && !sponsorQuote.priceAvailable && (
                 <p className="text-xs text-amber-500">{t('topup.pricing_unavailable')}</p>
               )}
+              {!quoteLoading && feeNotCovered && (
+                <div className="space-y-2">
+                  <p className="text-xs text-amber-500">
+                    {t(maxDepositWei > 0n ? 'topup.fee_not_covered' : 'topup.balance_below_fee', { fee: (feeCawDisplay ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
+                  </p>
+                  {maxDepositWei > 0n && (
+                    <button
+                      onClick={() => setAmount(formatUnits(maxDepositWei, 18))}
+                      className={`text-xs font-medium cursor-pointer hover:underline ${strongClass}`}
+                    >
+                      {t('topup.use_max_deposit', { amount: Number(formatUnits(maxDepositWei, 18)).toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex gap-3">
                 <button
                   onClick={() => setConfirmVisible(false)}
@@ -441,9 +462,9 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
                 </button>
                 <button
                   onClick={handleDeposit}
-                  disabled={isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading}
+                  disabled={isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading || feeNotCovered}
                   className={`flex-1 py-2 px-4 rounded-full text-sm font-semibold transition-all duration-300 ${
-                    isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading
+                    isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading || feeNotCovered
                       ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                       : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                   }`}
