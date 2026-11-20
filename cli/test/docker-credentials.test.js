@@ -30,6 +30,13 @@ test('a normal PostgreSQL URL supplies exactly its credentials to Docker', async
 })
 
 const punctuation = 'demo@:/?# %25 "é" $HOME ${CAW_SAMPLE} $$'
+test('rejects local query credentials before writing configuration', async t => {
+  for (const option of ['user=alternate', 'password=sample']) {
+    const dir = installDirectory(t)
+    await assert.rejects(generate(dir, 'postgresql://operator:sample@localhost/caw?' + option), /authority only/)
+    assert.equal(fs.existsSync(path.join(dir, 'client/.env')), false)
+  }
+})
 test('a password entered at the prompt survives URL, YAML and Compose escaping', async t => {
   t.mock.method(inquirer, 'prompt', async ([question]) => {
     assert.match(question.default, /^caw_[a-f0-9]{48}$/)

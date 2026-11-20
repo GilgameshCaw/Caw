@@ -893,6 +893,9 @@ function buildDockerCompose(dbUrl) {
   // belong only in the backend .env, never in a local Postgres container.
   let postgres = ''
   if (localPostgres) {
+    if (database.searchParams.has('user') || database.searchParams.has('password')) {
+      throw new Error('Specify local PostgreSQL credentials in the URL authority only.')
+    }
     if (!database.password) throw new Error('A password is required for Docker PostgreSQL.')
     postgres = `  postgres:
     image: postgres:16-alpine
