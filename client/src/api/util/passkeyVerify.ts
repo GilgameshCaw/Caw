@@ -26,6 +26,7 @@ import { randomBytes } from 'crypto'
 import Redis from 'ioredis'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { smartEoaAbi } from '../../abi/generated'
+import { isErc1271Valid } from './erc1271'
 
 const redis = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
@@ -87,7 +88,8 @@ export async function consumePasskeyChallenge(tokenId: number, challengeHex: str
  * ERC-1271 magic value.
  *
  * Never throws on a bad signature — a revert / wrong return is mapped to false.
- * Throws only on infrastructure failure (RPC unreachable) so the caller can 503.
+ * Throws on infrastructure failure (RPC unreachable, HTTP error, a JSON-RPC
+ * error that is not a revert) so the caller can 503.
  *
  * NOTE: SmartEOA binds the assertion to the passed digest (the challenge inside
  * clientDataJSON must equal `challengeHex`), so a sig over challenge A cannot
@@ -101,12 +103,5 @@ export async function verifyPasskeyAssertionOnChain(
   sigBlob: `0x${string}`,
 ): Promise<boolean> {
   const contract = new Contract(smartEoaAddress, smartEoaAbi as any, getL1Provider())
-  try {
-    const magic: string = await contract.isValidSignature(challengeHex, sigBlob)
-    return typeof magic === 'string' && magic.toLowerCase() === ERC1271_MAGIC
-  } catch {
-    // SmartEOA reverts (or returns the fail value) for an invalid assertion.
-    // Treat any non-magic outcome as "not valid", not an error.
-    return false
-  }
+  return isErc1271Valid(contract, challengeHex, sigBlob)
 }
