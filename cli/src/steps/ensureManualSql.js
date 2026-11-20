@@ -126,6 +126,15 @@ export function ensurePostgresDatabase(dbUrl, run = execFileSync) {
     else adminOptions.push(option)
   }
   if (!database || database === 'postgres') return { status: 'skipped' }
+  // Standard PostgreSQL identifiers are limited to 63 bytes, including for
+  // quoted names. Reject longer names before the server silently shortens one.
+  if (Buffer.byteLength(database, 'utf8') > 63) {
+    throw Object.assign(new Error('Database name exceeds the supported 63-byte limit'), { code: 'CAW_DB_CONFIG' })
+  }
+  if (password !== undefined && (process.env.PGSERVICE || adminOptions.some(option =>
+    decodeURIComponent(option.split('=')[0]) === 'service'))) {
+    throw Object.assign(new Error('Configure the password in the PostgreSQL service or use a direct connection without a service'), { code: 'CAW_DB_CONFIG' })
+  }
 
   const adminQuery = adminOptions.length ? `?${adminOptions.join('&')}` : ''
   const adminUrl = `${scheme}${user ? user + '@' : ''}${hosts}/postgres${adminQuery}`

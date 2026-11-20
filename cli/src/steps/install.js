@@ -339,6 +339,10 @@ export async function runInstall(nodeType, config, installDir) {
         spinnerDb.succeed('Database check skipped (default postgres DB)')
       }
     } catch (e) {
+      if (e.code === 'CAW_DB_CONFIG') {
+        spinnerDb.fail(e.message)
+        throw e
+      }
       spinnerDb.warn('Could not verify/create database — prisma push may fail')
       // Don't throw — let prisma try anyway. If the DB really doesn't exist
       // and the operator hasn't configured psql access, prisma will surface

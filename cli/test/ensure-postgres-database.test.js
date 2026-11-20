@@ -27,6 +27,18 @@ test('leaves an existing per-domain database in place', () => {
   assert.equal(psql.calls[0].args.at(-1), 'postgresql://operator@localhost:5432/postgres')
 })
 
+test('checks the UTF-8 byte limit before invoking psql', () => {
+  for (const name of ['a'.repeat(64), 'é'.repeat(32)]) {
+    assert.throws(() => ensurePostgresDatabase('postgresql://localhost/' + encodeURIComponent(name), assert.fail), /63-byte/)
+  }
+  const name = 'é'.repeat(31) + 'a'
+  assert.deepEqual(ensurePostgresDatabase('postgresql://localhost/' + encodeURIComponent(name), recordingPsql('1').run), { status: 'present', database: name })
+})
+
+test('rejects ambiguous service and explicit password before invoking psql', () => {
+  assert.throws(() => ensurePostgresDatabase('postgresql://operator:sample@localhost/caw?service=local', assert.fail), { code: 'CAW_DB_CONFIG' })
+})
+
 test('passes a custom name separately and retains libpq connection options', () => {
   const psql = recordingPsql('')
   const url = 'postgresql://reviewer@first:5432,second:5432/O%27Brien%20Archive' +
