@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fs from 'node:fs'
 import { ensurePostgresDatabase } from '../src/steps/ensureManualSql.js'
 
 function recordingPsql(exists) {
@@ -98,4 +99,15 @@ test('a failed or inconclusive existence check never proceeds to creation', () =
   const psql = recordingPsql('unexpected result')
   assert.throws(() => ensurePostgresDatabase('postgresql://localhost/caw_example', psql.run), /Unexpected database existence result/)
   assert.equal(psql.calls.length, 1)
+})
+test('delivers the TLS passphrase privately and removes the service file', () => {
+  let file
+  ensurePostgresDatabase('postgresql://localhost/archive?sslmode=verify-full&sslpassword=fixture%2Bvalue', (_, args, opts) => {
+    file = opts.env.PGSERVICEFILE
+    assert.equal(fs.readFileSync(file, 'utf8'), '[caw_tls]\nsslpassword=fixture+value\n')
+    assert.ok(args.at(-1).includes('sslmode=verify-full&service=caw_tls'))
+    assert.ok(!args.join(' ').includes('fixture'))
+    return '1'
+  })
+  assert.equal(fs.existsSync(file), false)
 })

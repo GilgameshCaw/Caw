@@ -35,6 +35,9 @@
 // attempting a CREATE that would just error out uglier.
 
 import { execFileSync } from 'child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 export const MANUAL_SQL_INDEXES = [
   {
@@ -90,7 +93,6 @@ const PRISMA_ONLY_PARAMS = new Set([
   'schema',
   'statement_cache_size',
   'sslidentity',
-  'sslpassword',
 ])
 
 function stripPrismaOnlyParams(dbUrl) {
@@ -140,15 +142,46 @@ export function ensurePostgresDatabase(dbUrl, run = execFileSync) {
   const adminUrl = `${scheme}${user ? user + '@' : ''}${hosts}/postgres${adminQuery}`
   const env = password === undefined ? process.env : { ...process.env, PGPASSWORD: password }
   const args = ['-X', '-w', '-tA', '-v', 'ON_ERROR_STOP=1', '-v', `target_db=${database}`,
-    '--dbname', adminUrl]
+    '--dbname']
   // psql expands quoted variables in scripts read from stdin. Its literal
   // and identifier forms supply the appropriate quoting for each statement.
-  const execute = input => run('psql', args, { env, input, encoding: 'utf8', stdio: 'pipe' })
+  const execute = input => withTlsOptions(adminUrl, env, (url, childEnv) =>
+    run('psql', [...args, url], { env: childEnv, input, encoding: 'utf8', stdio: 'pipe' }))
   const exists = execute("SELECT 1 FROM pg_database WHERE datname = :'target_db';\n").trim()
   if (exists === '1') return { status: 'present', database }
   if (exists !== '') throw new Error('Unexpected database existence result')
   execute('CREATE DATABASE :"target_db";\n')
   return { status: 'created', database }
+}
+
+// libpq has no environment variable for sslpassword. Keep its value out of
+// the process list using a private, short-lived service definition.
+function withTlsOptions(url, env, invoke) {
+  const start = url.indexOf('?')
+  if (start < 0) return invoke(url, env)
+  let secret, named = Boolean(env.PGSERVICE)
+  const kept = []
+  for (const field of url.slice(start + 1).split('&')) {
+    const i = field.indexOf('=')
+    const key = i < 0 ? '' : decodeURIComponent(field.slice(0, i))
+    if (key === 'sslpassword') secret = decodeURIComponent(field.slice(i + 1))
+    else {
+      if (key === 'service') named = true
+      kept.push(field)
+    }
+  }
+  if (secret === undefined) return invoke(url, env)
+  if (named || /[\r\n\0]/.test(secret) || secret.trim() !== secret) {
+    throw Object.assign(new Error('Set this TLS passphrase directly in a private PostgreSQL service file.'), { code: 'CAW_DB_CONFIG' })
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caw-pg-tls-'))
+  try {
+    const file = path.join(dir, 'pg_service.conf')
+    fs.writeFileSync(file, '[caw_tls]\nsslpassword=' + secret + '\n', { mode: 0o600 })
+    return invoke(url.slice(0, start) + '?' + [...kept, 'service=caw_tls'].join('&'), { ...env, PGSERVICEFILE: file })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 function runPsql(dbUrl, sql) {
@@ -160,11 +193,11 @@ function runPsql(dbUrl, sql) {
   // whose password contains `$`, `"`, backticks or `;` is passed to psql
   // verbatim instead of being interpreted (or executed) by /bin/sh. The SQL
   // itself is a fixed string from MANUAL_SQL_INDEXES, never caller input.
-  return execFileSync(
+  return withTlsOptions(cleanUrl, process.env, (url, env) => execFileSync(
     'psql',
-    [cleanUrl, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  )
+    [url, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ))
 }
 
 function indexExists(dbUrl, indexName, table) {
