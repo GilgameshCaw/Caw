@@ -19,6 +19,7 @@ import UsernameSvg from '~/components/UsernameSvg'
 import { apiFetch } from '~/api/client'
 import { formatNumberCompact } from '~/utils'
 import { useT } from '~/i18n/I18nProvider'
+import { pickFeeCurrency } from '~/utils/marketplaceFeeCurrency'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
@@ -297,10 +298,17 @@ const BuyModal: React.FC = () => {
       // Gas fee currency preference: CAW first, else ETH. The ETH-repay branch must
       // cover EVERYTHING the batch draws in ETH: purchase (if ETH listing) + sync fee
       // + relayer gas fee.
-      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      const ethForFee = feeEth + lzFee + (isEth ? price : 0n)
-      const payInEth = ethBalNow >= ethForFee
-      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+      // A listing priced in CAW takes its price from the same CAW balance as the fee.
+      const feeCurrency = pickFeeCurrency({
+        cawBalance: cawBalNow,
+        cawReserved: !isEth && listing.paymentAddress.toLowerCase() === CAW_ADDRESS.toLowerCase() ? price : 0n,
+        cawFee: feeCaw,
+        ethBalance: ethBalNow,
+        ethReserved: lzFee + (isEth ? price : 0n),
+        ethFee: feeEth,
+      })
+      if (feeCurrency === null) throw new Error('INSUFFICIENT_FEE_CAW')
+      const payInCaw = feeCurrency === 'CAW'
 
       const calls: ExecCall[] = []
       if (isEth) {
