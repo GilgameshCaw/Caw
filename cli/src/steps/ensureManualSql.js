@@ -178,8 +178,26 @@ export function probeDatabase(dbUrl, dir, timeout, run = execFileSync) {
       if (!local || Object.keys(childEnv).some(k => k.startsWith('PG') && k !== 'PGPASSWORD')) {
         throw Object.assign(new Error('Install the PostgreSQL client on this host for the configured database route.'), { code: 'CAW_DB_CONFIG' })
       }
+      if (process.platform !== 'linux' || childEnv.DOCKER_HOST || childEnv.DOCKER_CONTEXT) return false
+      // Resolve the active project (including overrides) and check its running
+      // container. A local-looking URI alone does not identify that service.
+      const docker = (...command) => run('docker', ['--host', 'unix:///var/run/docker.sock', ...command], options)
+      const hostname = new URL(url).hostname
+      const families = hostname === 'localhost' ? ['127.0.0.1', '::1'] :
+        [hostname === '[::1]' ? '::1' : hostname]
+      const covers = (ip, address) => ip === address || ip === (address === '::1' ? '::' : '0.0.0.0')
       try {
-        out = run('docker', ['compose', 'exec', '-T', '-e', 'PGPASSWORD', 'postgres', 'psql', ...args], options)
+        const model = JSON.parse(docker('compose', 'config', '--format', 'json', 'postgres'))
+        const ports = model.services?.postgres?.ports
+        if (!Array.isArray(ports) || !families.every(address => ports.some(p =>
+          Number(p.target) === 5432 && String(p.published) === '5432' && (p.protocol ?? 'tcp') === 'tcp' &&
+          (!p.host_ip || covers(p.host_ip, address))))) return false
+        const id = docker('compose', 'ps', '-q', 'postgres').trim()
+        if (!/^[0-9a-f]{64}$/.test(id)) return false
+        const bindings = JSON.parse(docker('inspect', '--format', '{{json (index .NetworkSettings.Ports "5432/tcp")}}', id))
+        if (!Array.isArray(bindings) || !families.every(address => bindings.some(p =>
+          p.HostPort === '5432' && covers(p.HostIp, address)))) return false
+        out = docker('exec', '-e', 'PGPASSWORD', id, 'psql', ...args)
       } catch { return false }
     }
     return out.trim() === '1'

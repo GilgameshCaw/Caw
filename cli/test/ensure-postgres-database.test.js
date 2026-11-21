@@ -36,6 +36,37 @@ test('readiness requires the expected SQL result and rejects failed authenticati
   assert.throws(() => probeDatabase(url, '.', 100, () => {throw Object.assign(Error(), {code:'ENOENT'})}), /on this host/)
 })
 
+test('Docker fallback requires matching project and running-container port bindings', {skip:process.platform!=='linux'}, () => {
+  const id='1'.repeat(64)
+  const url='postgresql://reader:sample@127.0.0.1:5432/caw'
+  for(const [name, published, livePort, liveIp, ids, expected] of [
+    ['matching port', '5432','5432','127.0.0.1',id,true],
+    ['wildcard on IPv4','5432','5432','0.0.0.0',id,true],
+    ['different published port','6543','5432','127.0.0.1',id,false],
+    ['stale container','5432','6543','127.0.0.1',id,false],
+    ['different address','5432','5432','127.0.0.2',id,false],
+    ['no running container','5432','5432','127.0.0.1','',false],
+    ['ambiguous replicas','5432','5432','127.0.0.1',id+'\n'+'2'.repeat(64),false]
+  ]){
+    let queries=0
+    const run=(cmd,args,options)=>{
+      if(cmd==='psql')throw Object.assign(Error(),{code:'ENOENT'})
+      assert.equal(cmd,'docker')
+      assert.deepEqual(args.slice(0,2),['--host','unix:///var/run/docker.sock'])
+      const sub=args.slice(2)
+      if(sub[1]==='config')return JSON.stringify({services:{postgres:{ports:[{target:5432,published,protocol:'tcp'}]}}})
+      if(sub[1]==='ps')return ids
+      if(sub[0]==='inspect')return JSON.stringify([{HostPort:livePort,HostIp:liveIp}])
+      assert.deepEqual(sub.slice(0,5),['exec','-e','PGPASSWORD',id,'psql'])
+      assert.equal(options.env.PGPASSWORD,'sample')
+      assert.equal(sub.at(-1),'SELECT 1')
+      queries++;return '1\n'
+    }
+    assert.equal(probeDatabase(url,'.',1000,run),expected,name)
+    assert.equal(queries,expected?1:0,name)
+  }
+})
+
 function recordingPsql(exists) {
   const calls = []
   return {
