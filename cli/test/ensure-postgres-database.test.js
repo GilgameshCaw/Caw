@@ -56,8 +56,12 @@ test('Docker fallback requires matching project and running-container port bindi
       const sub=args.slice(2)
       if(sub[1]==='config')return JSON.stringify({services:{postgres:{ports:[{target:5432,published,protocol:'tcp'}]}}})
       if(sub[1]==='ps')return ids
+      if(sub[0]==='inspect'&&sub[2]==='{{.Image}}')return 'sha256:'+id
       if(sub[0]==='inspect')return JSON.stringify([{HostPort:livePort,HostIp:liveIp}])
-      assert.deepEqual(sub.slice(0,5),['exec','-e','PGPASSWORD',id,'psql'])
+      assert.equal(sub[0],'run')
+      assert.ok(sub.includes('--network=host'))
+      assert.ok(sub.includes('sha256:'+id))
+      assert.ok(sub.includes('postgresql://reader@127.0.0.1:5432/caw'))
       assert.equal(options.env.PGPASSWORD,'sample')
       assert.equal(sub.at(-1),'SELECT 1')
       queries++;return '1\n'

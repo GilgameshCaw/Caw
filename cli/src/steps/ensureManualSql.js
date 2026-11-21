@@ -197,7 +197,14 @@ export function probeDatabase(dbUrl, dir, timeout, run = execFileSync) {
         const bindings = JSON.parse(docker('inspect', '--format', '{{json (index .NetworkSettings.Ports "5432/tcp")}}', id))
         if (!Array.isArray(bindings) || !families.every(address => bindings.some(p =>
           p.HostPort === '5432' && covers(p.HostIp, address)))) return false
-        out = docker('exec', '-e', 'PGPASSWORD', id, 'psql', ...args)
+        // PostgreSQL can apply different authentication rules to container
+        // loopback. Use its installed client image on the local host network
+        // so the query actually crosses the application's published port.
+        const image = docker('inspect', '--format', '{{.Image}}', id).trim()
+        if (!/^sha256:[0-9a-f]{64}$/.test(image)) return false
+        out = docker('run', '--rm', '--pull=never', '--network=host', '--read-only',
+          '--cap-drop=ALL', '--security-opt=no-new-privileges', '-e', 'PGPASSWORD',
+          '--entrypoint', 'psql', image, ...args)
       } catch { return false }
     }
     return out.trim() === '1'
