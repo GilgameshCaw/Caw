@@ -19,6 +19,7 @@ import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
 import { pokeIndexTokenId } from '../util/indexerPoke'
+import { ownerHasSigned } from '../../utils/ownerSigned'
 
 // ---------------------------------------------------------------------------
 // isPasskey cache + L1 provider (lazy, reused across requests)
@@ -1278,6 +1279,9 @@ router.get('/:username', async (req, res) => {
       xFollowerBucket,
       xLinkedAt,
       isPasskey,
+      // false: the wallet holding this name has not signed with it (utils/ownerSigned.ts).
+      // A failure here means no note, not a failed profile.
+      ownerHasSigned: await ownerHasSigned(user.tokenId).catch(() => undefined),
     }
 
     return res.json(response)
