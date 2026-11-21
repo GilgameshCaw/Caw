@@ -5,6 +5,7 @@ import { formatEther, formatUnits, parseEther, parseUnits, erc20Abi, maxUint256,
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
+import { pickFeeCurrency } from '~/utils/marketplaceFeeCurrency'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
 import { useSmartEoaExecute, type ExecCall } from '~/hooks/useSmartEoaExecute'
@@ -264,10 +265,17 @@ const MakeOfferModal: React.FC = () => {
 
       // Gas fee currency: CAW when the EOA holds enough, else ETH. For an ETH offer the
       // ETH fee leg must fit ALONGSIDE the offer value, so require ethBal ≥ offer+fee.
-      const payInCaw = feeCaw != null && cawBalNow >= feeCaw
-      const ethNeededForFee = feeEth + (isEth ? amountWei : 0n)
-      const payInEth = ethBalNow >= ethNeededForFee
-      if (!payInCaw && !payInEth) throw new Error('INSUFFICIENT_FEE_CAW')
+      // An offer in CAW takes its amount from the same CAW balance as the fee.
+      const feeCurrency = pickFeeCurrency({
+        cawBalance: cawBalNow,
+        cawReserved: !isEth && selectedToken.value.toLowerCase() === CAW_ADDRESS.toLowerCase() ? amountWei : 0n,
+        cawFee: feeCaw,
+        ethBalance: ethBalNow,
+        ethReserved: isEth ? amountWei : 0n,
+        ethFee: feeEth,
+      })
+      if (feeCurrency === null) throw new Error('INSUFFICIENT_FEE_CAW')
+      const payInCaw = feeCurrency === 'CAW'
 
       const calls: ExecCall[] = []
       // ERC20 offer: approve the marketplace to pull exactly the offer amount (bound
