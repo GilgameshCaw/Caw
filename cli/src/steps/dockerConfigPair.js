@@ -1,0 +1,79 @@
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const worker = fileURLToPath(import.meta.url)
+const files = ['client/.env', 'docker-compose.yml']
+
+// Under the installer lock, recover the last committed pair before reading
+// saved credentials. A rollback snapshot stays available until both target
+// renames finish. Recovery can itself be interrupted and repeated.
+export function updatePair(dir, values, expectedVersion) {
+  const pending = path.join(dir, '.caw-db-pending')
+  function replace(name, content) {
+    const dest = path.join(dir, name)
+    if (content === null) {
+      fs.rmSync(dest, { force: true })
+      return
+    }
+    const tmp = fs.mkdtempSync(path.join(path.dirname(dest), '.caw-db-write-'))
+    try {
+      const file = path.join(tmp, 'new')
+      fs.writeFileSync(file, content, { mode: 0o600 })
+      fs.renameSync(file, dest)
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
+  }
+  function restore() {
+    if (!fs.existsSync(pending)) return
+    const previous = JSON.parse(fs.readFileSync(pending, 'utf8'))
+    if (!Array.isArray(previous) || previous.length !== 2 ||
+        !previous.every(v => v === null || typeof v === 'string')) throw Error('Invalid database configuration recovery file.')
+    const decoded = previous.map(value => {
+      if (value === null) return null
+      const bytes = Buffer.from(value, 'base64')
+      if (bytes.toString('base64') !== value) throw Error('Invalid database configuration recovery file.')
+      return bytes
+    })
+    files.forEach((name, i) => replace(name, decoded[i]))
+    fs.unlinkSync(pending)
+  }
+  restore()
+  const previous = files.map(name => {
+    try { return fs.readFileSync(path.join(dir, name)).toString('base64') }
+    catch (e) { if (e.code === 'ENOENT') return null; throw e }
+  })
+  const version = createHash('sha256').update(JSON.stringify(previous)).digest('hex')
+  if (!values) return version
+  if (expectedVersion !== undefined && version !== expectedVersion) {
+    throw Error('Database configuration changed during setup. Restart the installer to review the current settings.')
+  }
+  replace('.caw-db-pending', JSON.stringify(previous))
+  try {
+    files.forEach((name, i) => replace(name, values[i]))
+    fs.unlinkSync(pending)
+  } catch (e) {
+    restore()
+    throw e
+  }
+}
+
+export function dockerConfigPair(dir, values, expectedVersion) {
+  if (process.platform === 'linux') {
+    // util-linux flock releases its advisory directory lock on process exit.
+    return execFileSync('flock', ['-x', path.resolve(dir), process.execPath, worker, path.resolve(dir)], {
+      input: JSON.stringify({ values, expectedVersion }), encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'],
+    }).trim()
+  }
+  const lock = path.join(dir, '.caw-db-config.lock')
+  fs.mkdirSync(lock)
+  try { return updatePair(dir, values, expectedVersion) }
+  finally { fs.rmdirSync(lock) }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === worker) {
+  const { values, expectedVersion } = JSON.parse(fs.readFileSync(0, 'utf8'))
+  const version = updatePair(process.argv[2], values, expectedVersion)
+  if (version) process.stdout.write(version)
+}

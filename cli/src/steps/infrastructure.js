@@ -1,5 +1,7 @@
 import inquirer from 'inquirer'
+import { dockerConfigPair } from './dockerConfigPair.js'
 import { execSync, spawnSync } from 'child_process'
+import { randomBytes } from 'node:crypto'
 import fs from 'fs'
 import net from 'net'
 import os from 'os'
@@ -268,7 +270,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
  * docker mode. Runs AFTER the L2 RPC step. None of these depend on chain
  * state, so we can collect them once we're past the on-chain bits.
  */
-export async function collectInfraLate(nodeType) {
+export async function collectInfraLate(nodeType, installDir) {
   if (nodeType === 'frontend-only') {
     // Frontend-only's infra was fully collected in collectInfraEarly via
     // collectFrontendOnlyConfig. Nothing else to do.
@@ -304,18 +306,10 @@ export async function collectInfraLate(nodeType) {
   let redisUrl = process.env.CAW_REDIS_URL || 'redis://127.0.0.1:6379'
   let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
+  // Snapshot before reading saved credentials or prompting for new ones.
+  const dockerConfigVersion = infraMode === 'docker' && installDir ? dockerConfigPair(installDir) : undefined
   if (infraMode === 'docker' && !process.env.CAW_DB_URL) {
-    section('Database password')
-    const { dbPassword } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'dbPassword',
-        message: `PostgreSQL password ${dim('(for the Docker container)')}:`,
-        default: 'caw_' + Math.random().toString(36).slice(2, 10),
-        mask: '*',
-      },
-    ])
-    dbUrl = `postgresql://postgres:${dbPassword}@127.0.0.1:5432/${defaultDbName}`
+    dbUrl = await dockerDatabaseUrl(defaultDbName, installDir)
   } else if (infraMode === 'existing') {
     section('Existing services')
     tipBlock([
@@ -363,11 +357,37 @@ export async function collectInfraLate(nodeType) {
 
   return {
     useDocker,
+    dockerConfigVersion,
     dbUrl,
     redisUrl,
     elasticsearchNode,
     apiPort,
   }
+}
+
+export async function dockerDatabaseUrl(dbName, dir) {
+  if (dir) {
+    dockerConfigPair(dir)
+    const file = path.join(dir, 'client/.env')
+    if (fs.existsSync(file)) {
+      const match = /^DATABASE_URL=(.+)$/m.exec(fs.readFileSync(file, 'utf8'))
+      if (!match) throw Error('Existing backend configuration has no DATABASE_URL. Supply CAW_DB_URL to continue.')
+      return match[1].trim().replace(/^(["'])(.*)\1$/, '$2')
+    }
+  }
+  return promptDockerDatabaseUrl(dbName)
+}
+
+export async function promptDockerDatabaseUrl(dbName) {
+  section('Database password')
+  const { dbPassword } = await inquirer.prompt([{
+    type: 'password',
+    name: 'dbPassword',
+    message: `PostgreSQL password ${dim('(for the Docker container)')}:`,
+    default: 'caw_' + randomBytes(24).toString('hex'),
+    mask: '*',
+  }])
+  return `postgresql://postgres:${encodeURIComponent(dbPassword)}@127.0.0.1:5432/${dbName}`
 }
 
 /**
@@ -379,7 +399,7 @@ export async function collectInfraLate(nodeType) {
  */
 export async function collectInfraConfig(nodeType, ctx = {}) {
   const early = await collectInfraEarly(nodeType, ctx)
-  const late = await collectInfraLate(nodeType)
+  const late = await collectInfraLate(nodeType, ctx.installDir)
   return { ...early, ...late }
 }
 

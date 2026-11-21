@@ -411,7 +411,7 @@ program
       // Step 9: Infrastructure phase 2 — DB / Redis / Elasticsearch / API
       // port. None of these need on-chain state, so they happen after the
       // chain-aware steps to keep the natural flow.
-      const infraLate = await collectInfraLate(nodeType)
+      const infraLate = await collectInfraLate(nodeType, opts.dir)
 
       // Step 9: Optional onboarding features — sponsored signups (invite codes)
       // and Moonpay card-payment onramp. Both are fully skippable. Placed after

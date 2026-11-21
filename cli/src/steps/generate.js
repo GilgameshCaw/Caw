@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { dockerConfigPair } from './dockerConfigPair.js'
 import fs from 'fs'
 import path from 'path'
 import { section, success, dim, brand, warn } from '../utils/ui.js'
@@ -28,12 +29,14 @@ export async function generateConfig(nodeType, config, installDir) {
   section('Generating Configuration')
 
   const clientDir = path.join(installDir, 'client')
-
-  // Build config.json (services to run)
-  const services = buildServiceList(nodeType, config)
-  const configJsonPath = path.join(clientDir, 'config.json')
-  fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
-  console.log(success(`  Created ${dim(configJsonPath)}`))
+  const envPath = path.join(clientDir, '.env')
+  const version = config.useDocker === 'docker' ? (config.dockerConfigVersion ?? dockerConfigPair(installDir)) : undefined
+  if (config.useDocker === 'docker' && !config.dbUrl) {
+    const saved = fs.existsSync(envPath) ? parseDotenv(fs.readFileSync(envPath, 'utf8')).DATABASE_URL : null
+    config = { ...config, dbUrl: saved || `postgresql://postgres:${crypto.randomBytes(24).toString('hex')}@127.0.0.1:5432/caw` }
+  }
+  const envVars = buildEnvVars(nodeType, config)
+  const dockerCompose = config.useDocker === 'docker' ? buildDockerCompose(envVars.DATABASE_URL) : null
 
   // Build .env. Mode 0600 — backend .env carries VALIDATOR_PRIVATE_KEY,
   // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_TOKEN_IDS, and DB credentials.
@@ -42,14 +45,21 @@ export async function generateConfig(nodeType, config, installDir) {
   // initial write covers fresh installs; existing files we explicitly
   // chmod afterward (writeFileSync's mode option is ignored for files
   // that already exist — Node's documented behavior).
-  const envVars = buildEnvVars(nodeType, config)
-  const envPath = path.join(clientDir, '.env')
   const envContent = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n') + '\n'
-  fs.writeFileSync(envPath, envContent, { mode: 0o600 })
-  fs.chmodSync(envPath, 0o600)
+  if (dockerCompose) dockerConfigPair(installDir, [envContent, dockerCompose], version)
+  else {
+    fs.writeFileSync(envPath, envContent, { mode: 0o600 })
+    fs.chmodSync(envPath, 0o600)
+  }
   console.log(success(`  Created ${dim(envPath)} (mode 600)`))
+
+  // Build config.json (services to run)
+  const services = buildServiceList(nodeType, config)
+  const configJsonPath = path.join(clientDir, 'config.json')
+  fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
+  console.log(success(`  Created ${dim(configJsonPath)}`))
 
   // Same NaN/address-as-number trap as VITE_NETWORK_ID, but for the backend.
   // NETWORK_ID is read by InstanceRegistryService, DmRelayService, DataCleaner,
@@ -78,13 +88,6 @@ export async function generateConfig(nodeType, config, installDir) {
     // mode that pulls operators (and their AIs) into hours of debugging the
     // wrong layer. Fail the install instead.
     verifyFrontendEnv(frontendEnvPath)
-  }
-
-  // Build docker-compose.yml if needed
-  if (config.useDocker === 'docker') {
-    const dockerComposePath = path.join(installDir, 'docker-compose.yml')
-    fs.writeFileSync(dockerComposePath, buildDockerCompose(config))
-    console.log(success(`  Created ${dim(dockerComposePath)}`))
   }
 
   // Build pm2 ecosystem file
@@ -845,24 +848,69 @@ function verifyBackendEnv(envPath) {
   console.log(success(`  Verified ${dim('NETWORK_ID=' + check.value)}`))
 }
 
-function buildDockerCompose(config) {
-  const dbPassword = config.dbUrl?.match(/:([^@]+)@/)?.[1] || 'postgres'
+// JSON quoting is valid YAML. Compose interpolates dollar signs in values
+// even when they are quoted, so escape each literal dollar separately.
+function composeCredential(encoded) {
+  let value
+  try {
+    value = decodeURIComponent(encoded)
+  } catch {
+    throw new Error('Invalid percent encoding in the Docker PostgreSQL credentials.')
+  }
+  return composeValue(value)
+}
 
-  return `version: '3.8'
+function composeValue(value) {
+  if (value.includes('\0')) throw new Error('Docker PostgreSQL settings cannot contain a NUL byte.')
+  return JSON.stringify(value.replaceAll('$', () => '$$'))
+}
 
-services:
-  postgres:
+function buildDockerCompose(dbUrl) {
+  let database
+  try {
+    database = new URL(dbUrl)
+  } catch {
+    throw new Error('Invalid PostgreSQL connection URL for Docker setup.')
+  }
+  if (!['postgres:', 'postgresql:'].includes(database.protocol)) {
+    throw new Error('Docker setup requires a PostgreSQL connection URL.')
+  }
+  // libpq URI options can override the authority; a named service can also
+  // supply the address or port independently of the displayed hostname.
+  const port = database.searchParams.getAll('port').at(-1) ?? (database.port || '5432')
+  const customRoute = ['host', 'hostaddr', 'service'].some(key => database.searchParams.has(key))
+  const localPostgres = ['127.0.0.1', 'localhost', '[::1]'].includes(database.hostname) &&
+    port === '5432' && !customRoute
+
+  // A managed database override can coexist with Docker Redis. Its credentials
+  // belong only in the backend .env, never in a local Postgres container.
+  let postgres = ''
+  if (localPostgres) {
+    if (database.searchParams.has('user') || database.searchParams.has('password')) {
+      throw new Error('Specify local PostgreSQL credentials in the URL authority only.')
+    }
+    if (!database.password) throw new Error('A password is required for Docker PostgreSQL.')
+    const dbName = database.searchParams.getAll('dbname').at(-1) ??
+      (decodeURIComponent(database.pathname.slice(1)) || decodeURIComponent(database.username) || 'postgres')
+    postgres = `  postgres:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_PASSWORD: ${dbPassword}
-      POSTGRES_DB: caw
+      POSTGRES_USER: ${composeCredential(database.username || 'postgres')}
+      POSTGRES_PASSWORD: ${composeCredential(database.password)}
+      POSTGRES_DB: ${composeValue(dbName)}
     ports:
       - "5432:5432"
     volumes:
       - caw_pgdata:/var/lib/postgresql/data
 
-  redis:
+`
+  }
+
+  return `version: '3.8'
+
+services:
+${postgres}  redis:
     image: redis:7-alpine
     restart: always
     ports:
