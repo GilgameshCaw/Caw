@@ -11,12 +11,12 @@
       "source": {
         "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
         "path": "solidity/contracts/PathwayExpander.sol",
-        "symbol": "contract PathwayExpander",
-        "line": 72,
-        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L72"
+        "symbol": "function addDvnToPathway",
+        "line": 257,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L257"
       },
       "source_sha256": "08ae7dec09bb0077706fc5d65704e4f6b5d2990e220080c64550d14ad72d870a",
-      "observation": "Owner retains peer/configuration/KYC expansion powers on master.",
+      "observation": "Owner retains peer/configuration/KYC expansion powers on master. The owner can also append an optional DVN on an existing pathway through addDvnToPathway in at most two escalation steps. The configuration hash must match, confirmations and required DVNs stay fixed, and existing optional DVNs keep their order.",
       "acceptance_evidence_or_decision_needed": "Sealed multi-chain operational exercise remains; no merged acceptance.",
       "existing_prs": [
         {
@@ -381,12 +381,12 @@
       "source": {
         "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
         "path": "solidity/contracts/PathwayExpander.sol",
-        "symbol": "onlyOwner",
-        "line": 55,
-        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L55"
+        "symbol": "function addDvnToPathway",
+        "line": 257,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L257"
       },
       "source_sha256": "08ae7dec09bb0077706fc5d65704e4f6b5d2990e220080c64550d14ad72d870a",
-      "observation": "The current expansion path is owner-only. Sealing it removes that path. Indefinite addition of future chains is not itself an explicit requirement in the quoted sources.",
+      "observation": "The current expansion path is owner-only. Sealing it removes that path. Indefinite addition of future chains is not itself an explicit requirement in the quoted sources. The owner can also append an optional DVN on an existing pathway through addDvnToPathway in at most two escalation steps. The configuration hash must match, confirmations and required DVNs stay fixed, and existing optional DVNs keep their order.",
       "acceptance_evidence_or_decision_needed": "Choose a sealed supported network set or specify and test permissionless deterministic expansion. Do not call a developer key necessary compliance.",
       "existing_prs": [
         {
@@ -739,7 +739,7 @@
       },
       "source_sha256": "3f5d367a8a8a2f52308b77c732db0cd9dcfdf6e48f7cd36fc8b258b95cfd9275",
       "observation": "Primary writes may fail while checkpoint advances; simple retry exposes partial accounting state.",
-      "acceptance_evidence_or_decision_needed": "PR #349 remains draft: preserved failed-write/session-reset interleaving overwrote an intervening update. Current atomic candidate has modeled checks only; real PostgreSQL/Prisma rollback, concurrency and timeout behavior remain unproved.",
+      "acceptance_evidence_or_decision_needed": "The failed-write / SessionCreated interleaving was reproduced at 1d1617b72f1eca62ec530e0a6739c6ed59c68012. The later draft at 11610f6abb89d9f64ace4b753102f24696272582 puts processing and checkpoint persistence in a Prisma transaction. Actual PostgreSQL rollback, concurrent pollers and timeout behavior remain unverified.",
       "existing_prs": [
         {
           "number": 349,
@@ -998,9 +998,9 @@
       "source": {
         "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
         "path": "solidity/contracts/CawProfile.sol",
-        "symbol": "networkManager",
-        "line": 19,
-        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L19"
+        "symbol": "constructor",
+        "line": 170,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L170"
       },
       "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
       "observation": "Immutable old deployments cannot inherit fresh-generation finalization functions.",
@@ -1075,7 +1075,7 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L17"
       },
       "source_sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
-      "observation": "A public 15-surface operator-disappearance map now exists. Mapping a dependency is not demonstrating its replacement.",
+      "observation": "A public 15-surface operator-disappearance map now exists. Mapping a dependency is not demonstrating its replacement. PR #305 concerns source-chain binding. Operator-disappearance recovery still requires a replacement exercise.",
       "acceptance_evidence_or_decision_needed": "Run the mapped loss/replacement exercises without original operators, secrets or private state. Record surviving and unavailable functionality separately.",
       "existing_prs": [
         {
@@ -1389,7 +1389,7 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L792"
       },
       "source_sha256": "895587b2b3c5e82b46da892ca1c50fdb489510e7089c5f6467246ccd4675a698",
-      "observation": "transferAndSync transfers the NFT on L1 and queues/flushes updates to other chains. Cross-chain ownership propagation is asynchronous.",
+      "observation": "transferAndSync transfers the NFT on L1 and queues/flushes updates to other chains. Cross-chain ownership propagation is asynchronous. PR #351 concerns stale-listing settlement. Cross-chain propagation and same-block ownership stamps require separate evidence.",
       "acceptance_evidence_or_decision_needed": "Reproduce old-owner, new-owner and session permissions during delayed, reordered and replayed transfer messages. No concrete exploit window is certified by source inspection alone.",
       "existing_prs": [
         {
@@ -1766,9 +1766,9 @@
       "source": {
         "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
         "path": "solidity/contracts/CawProfileMinter.sol",
-        "symbol": "DEAD",
-        "line": 312,
-        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L312"
+        "symbol": "CAW.transferFrom(funder",
+        "line": 390,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L390"
       },
       "source_sha256": "31da6efc43d4be9233b1d5f1207642d4965489208f375871a1635a18b2283980",
       "observation": "The minter recipient differs from the literal recipient specified in the manifesto.",
@@ -1876,7 +1876,7 @@
         "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L19"
       },
       "source_sha256": "1319c2aa5a0da9f9a58fe86c500ca49c835ead6ae0db87b255a33220c8a281a4",
-      "observation": "Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls.",
+      "observation": "Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls. The independent R-02 follow-up at b210d060 separately tested the replacement-object correction (https://github.com/GilgameshCaw/Caw/pull/421#issuecomment-6659980458). Full installation and release reproducibility remain open.",
       "acceptance_evidence_or_decision_needed": "Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.",
       "existing_prs": [
         {
@@ -1918,12 +1918,12 @@
       "source": {
         "commit": "97cd13f3a1423f702d411472fdd2b2a2e7bfbd59",
         "path": "solidity/contracts/CawActions.sol",
-        "symbol": "420",
-        "line": 206,
-        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L206"
+        "symbol": "if (action.text.length > 420)",
+        "line": 1300,
+        "url": "https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L1300"
       },
       "source_sha256": "1d8082867addf79184e113f832c84d42573869c4ffc96c33fdb0cc0fe19ef8ea",
-      "observation": "The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed.",
+      "observation": "The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed. PR #380 addresses bot compatibility with the compressed-byte ceiling. The protocol character-limit decision remains open.",
       "acceptance_evidence_or_decision_needed": "Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.",
       "existing_prs": [
         {

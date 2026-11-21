@@ -12,7 +12,7 @@ Status: pre-mainnet. Establish candidate behavior and independent testnet recove
 
 The earlier blanket assertion that all hard claims were already verified is not a release certificate. See the [consolidated manifesto/R2 review](community/MANIFESTO_R2_RELEASE_REVIEW.md) for exact baseline, open decisions and existing patches.
 
-- PathwayExpander retains owner-mediated expansion on the reviewed master. Bounded additions are still special authority; #221 proposes closing it and #276 addresses endpoint-library defaults.
+- PathwayExpander retains owner-mediated expansion on the reviewed master. The owner can also append an optional DVN on an existing pathway through addDvnToPathway in at most two escalation steps. The configuration hash must match, confirmations and required DVNs stay fixed, and existing optional DVNs keep their order. Bounded additions are still special authority; #221 proposes closing it and #276 addresses endpoint-library defaults.
 - NetworkManager has **per-network owner authority**, even though it is not a globally Ownable contract. `addAuthorizedSponsor`, `removeAuthorizedSponsor` and `setGasOverride` remain owner-only after fee and ownership locks. #334 documents the boundary; #342 proposes terminal finalization with unresolved sponsor/gas tradeoffs.
 - CawProfile also permits the network owner to trigger fee swaps paying the recorded recipient. Recipient direct withdrawal remains separate. A full authority review must include this path and the agreed beneficiaries.
 - NFT ownership does not alone settle sponsored-profile withdrawal conditions, asynchronous transfer semantics or historical DM key access. Those require explicit source review, decisions and tests.

@@ -11,9 +11,9 @@ this is a consolidated, open review of known release gaps, not a certification o
 - **M-I — identity:** numbered requirements ii–iv describe NFT ownership as account ownership, including balances/DMs, and holding the NFT as the deposit/withdrawal key. Interpret transfer timing, sponsorship exceptions and historical DM access explicitly.
 - **M-D — availability:** requirements iii, vii and viii cover on-chain ownership/management, trustless secure peer-to-peer messaging, permanence and absence of protocol blocking. The frontend paragraph permits frontend moderation and image hosting; those are not automatically protocol defects.
 - **M-E — economics/text:** the username/action schedules, requirement v and appendices need a reconciled interpretation; proposal a specifies a maximum message length. A proposed improvement does not silently amend the text.
-- **R-A — post-deploy equality:** [reproduced R2](https://github.com/Xubu-Trad/caw-lab/blob/canon/layers/R2-020_hex_transposition/MESSAGE.md) says “no dev backdoors, no proxy, no multisigs” and that after deployment the developers “do not matter more than any individual community member”.
+- **R-A — post-deploy equality:** [reproduced R2](https://github.com/Xubu-Trad/caw-lab/blob/797c6cb6717bde2c4b71120962777fd261815b90/layers/R2-020_hex_transposition/MESSAGE.md) says “no dev backdoors, no proxy, no multisigs” and that after deployment the developers “do not matter more than any individual community member”.
 - **R-C — changes:** R2 says “according to the manifesto (or if clear changes were agreed)”. Record the exact deviation, scope, alternatives and agreement; do not infer agreement from silence.
-- **R-R — release:** R2 calls for something “solid, peer reviewed, contributed to by many and it is agreed to be released”. Its [replay/inverse check](https://github.com/Xubu-Trad/caw-lab/blob/canon/layers/R2-020_hex_transposition/REPRODUCE.md) establishes recovered bytes, not author identity.
+- **R-R — release:** R2 calls for something “solid, peer reviewed, contributed to by many and it is agreed to be released”. Its [replay/inverse check](https://github.com/Xubu-Trad/caw-lab/blob/797c6cb6717bde2c4b71120962777fd261815b90/layers/R2-020_hex_transposition/REPRODUCE.md) establishes recovered bytes, not author identity.
 
 **Interpretation:** releasing with retained special developer authority would contradict M-A/R-A unless a clear change had been agreed and disclosed. It would retain the developer dependency those passages warn against. This is a claim about observable powers and requirements, not about anyone's intentions. A missing receipt, open PR or missed deadline alone does not prove a backdoor or malicious conduct.
 
@@ -38,9 +38,9 @@ FACT denotes the pinned source or named public record. Consequences and requirem
 
 Requirement: **M-A / R-A**. Priority: HIGH (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/PathwayExpander.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L72) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/PathwayExpander.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L257) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: Owner retains peer/configuration/KYC expansion powers on master.
+Observation: Owner retains peer/configuration/KYC expansion powers on master. The owner can also append an optional DVN on an existing pathway through addDvnToPathway in at most two escalation steps. The configuration hash must match, confirmations and required DVNs stay fixed, and existing optional DVNs keep their order.
 
 **Open acceptance gate:** Sealed multi-chain operational exercise remains; no merged acceptance.
 
@@ -110,9 +110,9 @@ Existing work: [#342](https://github.com/GilgameshCaw/Caw/pull/342) `39435a853dd
 
 Requirement: **M-A / R-A**. Priority: HIGH (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/PathwayExpander.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L55) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/PathwayExpander.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/PathwayExpander.sol#L257) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: The current expansion path is owner-only. Sealing it removes that path. Indefinite addition of future chains is not itself an explicit requirement in the quoted sources.
+Observation: The current expansion path is owner-only. Sealing it removes that path. Indefinite addition of future chains is not itself an explicit requirement in the quoted sources. The owner can also append an optional DVN on an existing pathway through addDvnToPathway in at most two escalation steps. The configuration hash must match, confirmations and required DVNs stay fixed, and existing optional DVNs keep their order.
 
 **Open acceptance gate:** Choose a sealed supported network set or specify and test permissionless deterministic expansion. Do not call a developer key necessary compliance.
 
@@ -146,7 +146,7 @@ Existing work: [#221](https://github.com/GilgameshCaw/Caw/pull/221) `9bfe9ea1e94
 
 Requirement: **M-A / R-A**. Priority: HIGH (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/CawProfile.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L19) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/CawProfile.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L170) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
 Observation: Immutable old deployments cannot inherit fresh-generation finalization functions.
 
@@ -212,11 +212,11 @@ Source: [`client/src/services/ChainSyncService/index.ts`](https://github.com/Gil
 
 Observation: Primary writes may fail while checkpoint advances; simple retry exposes partial accounting state.
 
-**Open acceptance gate:** PR #349 remains draft: preserved failed-write/session-reset interleaving overwrote an intervening update. Current atomic candidate has modeled checks only; real PostgreSQL/Prisma rollback, concurrency and timeout behavior remain unproved.
+**Open acceptance gate:** The failed-write / SessionCreated interleaving was reproduced at 1d1617b72f1eca62ec530e0a6739c6ed59c68012. The later draft at 11610f6abb89d9f64ace4b753102f24696272582 puts processing and checkpoint persistence in a Prisma transaction. Actual PostgreSQL rollback, concurrent pollers and timeout behavior remain unverified.
 
 Existing work: [#349](https://github.com/GilgameshCaw/Caw/pull/349) `11610f6abb89d9f64ace4b753102f24696272582` (open, draft), [#345](https://github.com/GilgameshCaw/Caw/pull/345) `e2462760e661dc389643b94d89b92dd4c14dc5e8` (open), [#290](https://github.com/GilgameshCaw/Caw/pull/290) `a08f47b24fdfdc109f9cc5d27d88c6665b27a20f` (open), [#311](https://github.com/GilgameshCaw/Caw/pull/311) `76fabc02076b9d3e04471ce1dd0e857e7cca25aa` (open)
 
-**#349 remains draft.** The failed-write / SessionCreated spent-reset interleaving can overwrite an intervening update. Preserve that failing reproduction. Modeled atomicity is not real Prisma/PostgreSQL concurrency, rollback or timeout proof.
+
 
 #### REPLAY-02 — EVIDENCE GAP
 
@@ -250,11 +250,11 @@ Requirement: **M-D / M-A / R-A**. Priority: HIGH (review prioritization, not exp
 
 Source: [`install.sh`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L17) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: A public 15-surface operator-disappearance map now exists. Mapping a dependency is not demonstrating its replacement.
+Observation: A public 15-surface operator-disappearance map now exists. Mapping a dependency is not demonstrating its replacement. PR #305 concerns source-chain binding. Operator-disappearance recovery still requires a replacement exercise.
 
 **Open acceptance gate:** Run the mapped loss/replacement exercises without original operators, secrets or private state. Record surviving and unavailable functionality separately.
 
-Existing work: [#221](https://github.com/GilgameshCaw/Caw/pull/221) `9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2` (open), [#276](https://github.com/GilgameshCaw/Caw/pull/276) `47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf` (open), [#274](https://github.com/GilgameshCaw/Caw/pull/274) `82428f5f2b7fad370069bc3680c3eaf94be16fbb` (open), [#328](https://github.com/GilgameshCaw/Caw/pull/328) `38fbdd6d45c8e0079c17b35460811863f48163cb` (open, draft), [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#316](https://github.com/GilgameshCaw/Caw/pull/316) `cf765087a8b76b50b3cbd2f66b6d504515a82191` (open)
+Existing work: [#221](https://github.com/GilgameshCaw/Caw/pull/221) `9bfe9ea1e94af4e7ac7cee3ba38908b1fcb3d7a2` (open), [#276](https://github.com/GilgameshCaw/Caw/pull/276) `47dfc2cd18fa663c87d88cb8ea7afc85c44a41cf` (open), [#274](https://github.com/GilgameshCaw/Caw/pull/274) `82428f5f2b7fad370069bc3680c3eaf94be16fbb` (open), [#328](https://github.com/GilgameshCaw/Caw/pull/328) `38fbdd6d45c8e0079c17b35460811863f48163cb` (open, draft), [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#316](https://github.com/GilgameshCaw/Caw/pull/316) `cf765087a8b76b50b3cbd2f66b6d504515a82191` (open), [#305](https://github.com/GilgameshCaw/Caw/pull/305) `a9db052504ee7de80e7f3292ac44e818b02df9a6` (open)
 
 [15-surface replacement map](https://github.com/Xubu-Trad/CawUsernames/blob/295168daf06f92f2f9fd30c7fece23a82baeb9f8/docs/community/OPERATOR_DISAPPEARANCE_MAP.md): RPC/archive, LayerZero/DVNs, Civic/KYC, Postgres, Redis, indexers, credentials, DM/user keys, hosting/DNS/TLS, source/dependencies and prover/release inputs.
 
@@ -300,9 +300,9 @@ Requirement: **M-D / M-A / R-A**. Priority: HIGH (review prioritization, not exp
 
 Source: [`install.sh`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/install.sh#L19) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: The installer defaults to mutable source and allows repository overrides. #421 now disables replacement-object lookup for pinned acquisition, verification and reset; the amendment has eleven local fixture scenarios and expected failing controls.
+Observation: Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls. The independent R-02 follow-up at b210d060 separately tested the replacement-object correction (https://github.com/GilgameshCaw/Caw/pull/421#issuecomment-6659980458). Full installation and release reproducibility remain open.
 
-**Open acceptance gate:** Independently review the replacement amendment and integrate #237; verify installer/bootstrap trust, dependencies, filters/hooks/conversions and independent installation. #421 alone is not supply-chain closure.
+**Open acceptance gate:** Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.
 
 Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#421](https://github.com/GilgameshCaw/Caw/pull/421) `b210d060e247684edaab2021c3d8653d0c885ee5` (open)
 
@@ -326,11 +326,11 @@ Requirement: **M-I / M-D / R-C**. Priority: HIGH (review prioritization, not exp
 
 Source: [`solidity/contracts/CawProfile.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfile.sol#L792) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: transferAndSync transfers the NFT on L1 and queues/flushes updates to other chains. Cross-chain ownership propagation is asynchronous.
+Observation: transferAndSync transfers the NFT on L1 and queues/flushes updates to other chains. Cross-chain ownership propagation is asynchronous. PR #351 concerns stale-listing settlement. Cross-chain propagation and same-block ownership stamps require separate evidence.
 
 **Open acceptance gate:** Reproduce old-owner, new-owner and session permissions during delayed, reordered and replayed transfer messages. No concrete exploit window is certified by source inspection alone.
 
-Existing work: No bounded implementation fix established by this record.
+Existing work: [#351](https://github.com/GilgameshCaw/Caw/pull/351) `f93957bd47c3d96b9af030e4b6412a68ece97c60` (open, draft)
 
 #### DM-01 — SOURCE FINDING / OPEN PROOF
 
@@ -362,11 +362,11 @@ Requirement: **M-I / M-D / R-C**. Priority: HIGH (review prioritization, not exp
 
 Source: [`client/src/services/DmRelayService/index.ts`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/DmRelayService/index.ts#L159) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: DM relay persistence and replication depend on instance storage; no complete independent DM-recovery result is established by this register.
+Observation: dm.ts distinguishes per-user hiding from sender-authorized tombstones that null local ciphertext/history, and group edits replace recipient ciphertext without history. See DM_PERMANENCE_REVIEW.md. Independent archive survival was not tested.
 
 **Open acceptance gate:** Resolve permanence versus privacy/deletion and transferred-NFT history access. Demonstrate the agreed encrypted-data recovery without central key escrow.
 
-Existing work: [#218](https://github.com/GilgameshCaw/Caw/pull/218) `422153af1e63856c3cc76b8daa7cd641ab8c99ff` (open), [#350](https://github.com/GilgameshCaw/Caw/pull/350) `bdcdcea1ed9d0abacaf7f962054ab5e5068f36e9` (open)
+Existing work: [#218](https://github.com/GilgameshCaw/Caw/pull/218) `422153af1e63856c3cc76b8daa7cd641ab8c99ff` (open), [#350](https://github.com/GilgameshCaw/Caw/pull/350) `bdcdcea1ed9d0abacaf7f962054ab5e5068f36e9` (open), [#215](https://github.com/GilgameshCaw/Caw/pull/215) `6fe053260213145d693b496d924725636d65539b` (open)
 
 #### META-01 — SOURCE FINDING / OPEN PROOF
 
@@ -410,7 +410,7 @@ Existing work: [#334](https://github.com/GilgameshCaw/Caw/pull/334) `4206f96cb0c
 
 Requirement: **M-E / R-C**. Priority: MEDIUM (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/CawProfileMinter.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L312) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/CawProfileMinter.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawProfileMinter.sol#L390) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
 Observation: The minter recipient differs from the literal recipient specified in the manifesto.
 
@@ -418,17 +418,17 @@ Observation: The minter recipient differs from the literal recipient specified i
 
 Existing work: No bounded implementation fix established by this record.
 
-#### TEXT-01 — SOURCE FINDING / OPEN PROOF
+#### TEXT-01 — SOURCE DISCREPANCY / SPECIFICATION DECISION
 
 Requirement: **M-E / R-C**. Priority: MEDIUM (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/CawActions.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L206) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/CawActions.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawActions.sol#L1300) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
-Observation: The contract counts smltxt-compressed payload bytes. The pinned codec round-trips 600 ASCII characters into 227 bytes, below the 420-byte check. This is not only a Unicode-counting ambiguity; full transaction acceptance was not tested.
+Observation: The contract measures smltxt-compressed bytes, not decoded characters. The pinned codec round-trips 600 ASCII characters into 227 bytes, passing the source length predicate. No full action or transaction acceptance is claimed. PR #380 addresses bot compatibility with the compressed-byte ceiling. The protocol character-limit decision remains open.
 
-**Open acceptance gate:** Agree the decoded-character versus compressed-byte rule and protocol enforcement; preserve signed encoding and replay compatibility. See [the pinned reproduction](TEXT_LIMIT_REVIEW.md).
+**Open acceptance gate:** Agree the character/byte rule, define protocol-level enforcement and compatibility, and demonstrate it through valid signed-action execution. Do not silently substitute compressed bytes for characters.
 
-Existing work: No bounded implementation fix established by this record.
+Existing work: [#380](https://github.com/GilgameshCaw/Caw/pull/380) `289ee65e47261ec595dbaf7427d362d307ad8048` (open)
 
 ### review
 
