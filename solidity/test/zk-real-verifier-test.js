@@ -29,8 +29,11 @@ const FIXTURE_PATH = path.join(__dirname, 'zk-fixtures', 'groth16-fixture.json')
 let fixture = null
 try {
   fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'))
+  if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) {
+    throw new Error('Expected a Groth16 fixture object')
+  }
 } catch (e) {
-  // missing → suite is skipped below
+  if (e.code !== 'ENOENT') throw e
 }
 
 const SP1Verifier = artifacts.require('SP1Verifier')
@@ -60,9 +63,9 @@ describeOrSkip('CawActions — real Groth16 proof (v6.1.0)', function () {
 
   it('SP1Verifier rejects when proof bytes are tampered', async () => {
     // Flip a byte in the proof and confirm rejection.
-    const tampered = '0x' + (fixture.proof.slice(2, 10) === '00000000'
-      ? '11' + fixture.proof.slice(4)
-      : '00' + fixture.proof.slice(4))
+    const bytes = Buffer.from(fixture.proof.slice(2), 'hex')
+    bytes[0] ^= 1
+    const tampered = '0x' + bytes.toString('hex')
     let threw = false
     try {
       await sp1.methods[SP1_VERIFY_SIG](fixture.vkey, fixture.publicValues, tampered)
