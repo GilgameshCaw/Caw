@@ -47,6 +47,13 @@ interface SponsorExecuteQuote {
   cawAddress: Address
 }
 
+interface StampedSponsorQuote {
+  quote: SponsorExecuteQuote
+  tab: TopUpTab
+  amountWei: bigint | null
+  forwardedValueWei: bigint | null
+}
+
 interface TopUpFormProps {
   /** tokenId of the active CAW profile to deposit into */
   tokenId: number | undefined
@@ -71,12 +78,11 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   const [activeTab, setActiveTab] = useState<TopUpTab>('caw')
   const [isPending, setIsPending] = useState(false)
   const [confirmVisible, setConfirmVisible] = useState(false)
-  const [sponsorQuote, setSponsorQuote] = useState<SponsorExecuteQuote | null>(null)
+  const [sponsorQuoteState, setSponsorQuoteState] = useState<StampedSponsorQuote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
 
   // ─── CAW-tab state ──────────────────────────────────────────────────────────
   const [amount, setAmount] = useState<string>('')
-  const [depositFee, setDepositFee] = useState<bigint>(0n)
 
   const cawBalance = cawBalanceWei ?? 0n
   const cawBalanceTokens = Number(formatUnits(cawBalance, 18))
@@ -90,6 +96,35 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
     } catch { return 0n }
   }, [amount, cawBalance])
   const amountValid = amountWei > 0n && amountWei <= cawBalance
+
+  // ─── CAW tab: LZ deposit fee quote ─────────────────────────────────────────
+  const { data: depositQuote, isFetching: depositQuoteFetching, isError: depositQuoteError } = useReadContract({
+    address: CAW_NAME_QUOTER_ADDRESS,
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: 'depositQuote',
+    args: [CLIENT_ID, tokenId ?? 0, amountWei, chains.l2.layerZero, false],
+    query: { enabled: activeTab === 'caw' && !!tokenId && amountWei > 0n },
+  })
+  // Derive the CAW-tab LZ fee directly from the current amount's quote so an
+  // unresolved, refetching, or errored replacement quote never reuses an earlier amount's fee.
+  const depositFee: bigint =
+    activeTab === 'caw' && !!tokenId && amountValid && !depositQuoteFetching && !depositQuoteError && depositQuote?.nativeFee != null
+      ? BigInt(depositQuote.nativeFee)
+      : 0n
+
+  // Only expose a sponsor quote that matches the active tab and (on the CAW tab)
+  // both the currently selected deposit amount and its resolved LayerZero fee.
+  const sponsorQuote: SponsorExecuteQuote | null =
+    sponsorQuoteState &&
+    sponsorQuoteState.tab === activeTab &&
+    (activeTab === 'eth' || (
+      depositFee > 0n &&
+      sponsorQuoteState.amountWei === amountWei &&
+      sponsorQuoteState.forwardedValueWei === depositFee
+    ))
+      ? sponsorQuoteState.quote
+      : null
 
   // ─── ETH-tab state ──────────────────────────────────────────────────────────
   const [ethAmount, setEthAmount] = useState<string>('')
@@ -147,46 +182,37 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
     ethBalanceBigint < ethTotalRequired
 
 
-  // ─── CAW tab: LZ deposit fee quote ─────────────────────────────────────────
-  const { data: depositQuote } = useReadContract({
-    address: CAW_NAME_QUOTER_ADDRESS,
-    abi: cawProfileQuoterAbi,
-    chainId: chains.l1.chainId,
-    functionName: 'depositQuote',
-    args: [CLIENT_ID, tokenId ?? 0, amountWei, chains.l2.layerZero, false],
-    query: { enabled: activeTab === 'caw' && !!tokenId && amountWei > 0n },
-  })
-  useEffect(() => {
-    if (activeTab === 'caw' && depositQuote?.nativeFee != null) {
-      setDepositFee(BigInt(depositQuote.nativeFee))
-    }
-  }, [activeTab, depositQuote])
-
   // ─── Fetch sponsor quote when confirm panel opens ──────────────────────────
   // CAW tab: forwardedValueWei = depositFee (LZ fee relayer fronts on call 2).
   // ETH tab: no forwarded value; gas-only. Same endpoint, no query param needed.
   useEffect(() => {
-    if (!confirmVisible) return
-    if (activeTab === 'caw' && depositFee === 0n) return
-    if (activeTab === 'eth' && !ethAmountValid) return
+    if (!confirmVisible || (activeTab === 'caw' && depositFee === 0n) || (activeTab === 'eth' && !ethAmountValid)) {
+      setQuoteLoading(false)
+      setSponsorQuoteState(null)
+      return
+    }
     let cancelled = false
+    const quotedAmountWei = activeTab === 'caw' ? amountWei : null
+    const forwardedValueWei = activeTab === 'caw' ? depositFee : null
     setQuoteLoading(true)
     const url = activeTab === 'caw'
       ? `/api/sponsor/execute-quote?forwardedValueWei=${depositFee.toString()}`
       : '/api/sponsor/execute-quote'
     apiFetch<SponsorExecuteQuote>(url)
-      .then(data => { if (!cancelled) setSponsorQuote(data) })
-      .catch(() => { if (!cancelled) setSponsorQuote(null) })
+      .then(data => { if (!cancelled) setSponsorQuoteState({ quote: data, tab: activeTab, amountWei: quotedAmountWei, forwardedValueWei }) })
+      .catch(() => { if (!cancelled) setSponsorQuoteState(null) })
       .finally(() => { if (!cancelled) setQuoteLoading(false) })
     return () => { cancelled = true }
-  }, [confirmVisible, activeTab, depositFee, ethAmountValid])
+  }, [confirmVisible, activeTab, amountWei, depositFee, ethAmountValid])
 
   // ─── CAW tab: build + relay the 3-call deposit batch ───────────────────────
   const handleDeposit = useCallback(async () => {
-    if (!eoaAccount || !tokenId || !amountValid || !sponsorQuote || !sponsorQuote.priceAvailable) return
+    if (!eoaAccount || !tokenId || !amountValid || depositFee === 0n || quoteLoading || !sponsorQuote || !sponsorQuote.priceAvailable) return
     setIsPending(true)
     try {
       const feeCaw = BigInt(sponsorQuote.minFeeCawWei)
+      // The fee is paid in CAW from the same balance, after the deposit has pulled `amountWei`.
+      if (amountWei + feeCaw > cawBalance) return
 
       // Call 1: approve CawProfile to pull `amountWei` CAW from the EOA.
       const call1: ExecCall = {
@@ -243,7 +269,7 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
     } finally {
       setIsPending(false)
     }
-  }, [eoaAccount, tokenId, amountValid, amountWei, depositFee, sponsorQuote, smartEoaExecute, onSuccess])
+  }, [eoaAccount, tokenId, amountValid, amountWei, cawBalance, depositFee, quoteLoading, sponsorQuote, smartEoaExecute, onSuccess])
 
   // ─── ETH tab: build + relay the 2-call depositZap batch ───────────────────
   const handleDepositZap = useCallback(async () => {
@@ -298,6 +324,11 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
   // ─── Display values ─────────────────────────────────────────────────────────
   const lzFeeEth = Number(formatEther(depositFee))
   const feeCawDisplay = sponsorQuote ? Number(formatUnits(BigInt(sponsorQuote.minFeeCawWei), 18)) : null
+  // CAW tab: the relayer fee comes out of the same CAW balance as the deposit, so the two together must fit.
+  const feeCawWei = sponsorQuote?.priceAvailable ? BigInt(sponsorQuote.minFeeCawWei) : null
+  const feeNotCovered = feeCawWei !== null && amountWei + feeCawWei > cawBalance
+  const maxDepositWei = feeCawWei !== null && cawBalance > feeCawWei ? cawBalance - feeCawWei : 0n
+  const cawQuotePending = quoteLoading || depositFee === 0n
   // CAW tab: EOA must hold ETH for the LZ fee forwarded on call 2.
   const needsEth = depositFee > 0n && ethBalanceWei != null && ethBalanceWei < depositFee
 
@@ -426,9 +457,24 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
                   </div>
                 )}
               </div>
-              {quoteLoading && <p className={`text-xs ${mutedClass}`}>{t('topup.fetching_quote')}</p>}
-              {!quoteLoading && sponsorQuote && !sponsorQuote.priceAvailable && (
+              {cawQuotePending && <p className={`text-xs ${mutedClass}`}>{t('topup.fetching_quote')}</p>}
+              {!cawQuotePending && sponsorQuote && !sponsorQuote.priceAvailable && (
                 <p className="text-xs text-amber-500">{t('topup.pricing_unavailable')}</p>
+              )}
+              {!cawQuotePending && feeNotCovered && (
+                <div className="space-y-2">
+                  <p className="text-xs text-amber-500">
+                    {t(maxDepositWei > 0n ? 'topup.fee_not_covered' : 'topup.balance_below_fee', { fee: (feeCawDisplay ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
+                  </p>
+                  {maxDepositWei > 0n && (
+                    <button
+                      onClick={() => setAmount(formatUnits(maxDepositWei, 18))}
+                      className={`text-xs font-medium cursor-pointer hover:underline ${strongClass}`}
+                    >
+                      {t('topup.use_max_deposit', { amount: Number(formatUnits(maxDepositWei, 18)).toLocaleString('en-US', { maximumFractionDigits: 2 }) })}
+                    </button>
+                  )}
+                </div>
               )}
               <div className="flex gap-3">
                 <button
@@ -441,9 +487,9 @@ export function TopUpForm({ tokenId, eoaAddress, cawBalanceWei, ethBalanceWei, o
                 </button>
                 <button
                   onClick={handleDeposit}
-                  disabled={isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading}
+                  disabled={isPending || !amountValid || needsEth || depositFee === 0n || !sponsorQuote || !sponsorQuote.priceAvailable || cawQuotePending || feeNotCovered}
                   className={`flex-1 py-2 px-4 rounded-full text-sm font-semibold transition-all duration-300 ${
-                    isPending || !amountValid || needsEth || !sponsorQuote || !sponsorQuote.priceAvailable || quoteLoading
+                    isPending || !amountValid || needsEth || depositFee === 0n || !sponsorQuote || !sponsorQuote.priceAvailable || cawQuotePending || feeNotCovered
                       ? isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                       : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                   }`}
