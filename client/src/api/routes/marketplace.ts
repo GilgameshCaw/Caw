@@ -509,12 +509,17 @@ router.post('/offers/:offerId/accepted', requireAuth({ anySession: true }), asyn
 
 /**
  * POST /api/marketplace/offers/:offerId/cancelled
- * Optimistically mark an offer as cancelled after a successful cancel tx.
+ * Breadcrumb after a cancel tx; the status change itself comes from the
+ * OfferCancelled event (MarketplaceIndexerService).
  */
 router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const offerId = parseInt(req.params.offerId)
     const { txHash } = req.body
+
+    if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return res.status(400).json({ error: 'Invalid transaction hash format' })
+    }
 
     const offer = await prisma.marketplaceOffer.findUnique({ where: { offerId } })
     if (!offer) return res.status(404).json({ error: 'Offer not found' })
@@ -530,13 +535,17 @@ router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), asy
       return res.status(403).json({ error: 'Session is not authorized as the offerer' })
     }
 
-    await prisma.marketplaceOffer.update({
-      where: { offerId },
-      data: { status: 'CANCELLED' },
-    })
-
-    console.log(`[marketplace] Offer ${offerId} marked as cancelled by offerer ${offererLc} (optimistic, tx: ${txHash})`)
-    res.json({ ok: true })
+    // Logging-only — do NOT write status=CANCELLED optimistically. The
+    // caller supplies txHash and it is not checked against the chain, so a
+    // direct call (or a cancel that does not stick) would leave the row
+    // CANCELLED while the offer is still active on-chain: the indexer only
+    // moves ACTIVE rows, so a later OfferAccepted would never reach it and
+    // nothing would put it back. Same reasoning, and the same pattern, as
+    // /offers/:offerId/accepted and /listings/:id/sold above (2026-05-09
+    // audit HIGH-3). MarketplaceIndexerService handles the OfferCancelled
+    // event.
+    console.log(`[marketplace] /offers/${offerId}/cancelled called by offerer ${offererLc} (status change deferred to indexer; tx: ${txHash})`)
+    res.status(202).json({ ok: true, message: 'Event will be processed by indexer' })
   } catch (err: any) {
     console.error('[marketplace] cancel offer error:', err)
     res.status(500).json({ error: 'Internal server error' })
