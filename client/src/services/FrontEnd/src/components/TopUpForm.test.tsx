@@ -13,7 +13,18 @@ import { decodeFunctionData, erc20Abi } from 'viem'
 import { cawProfileAbi } from '../../../../abi/generated'
 
 type Call = { to: string; value: bigint; data: `0x${string}` }
-const h = vi.hoisted(() => ({ batches: [] as { to: string; value: bigint; data: `0x${string}` }[][] }))
+type LzQuoteResult = { data?: { nativeFee: bigint }; isFetching?: boolean; isError?: boolean }
+const h = vi.hoisted(() => ({
+  batches: [] as { to: string; value: bigint; data: `0x${string}` }[][],
+  lzQuote: null as null | ((amountWei: bigint) => LzQuoteResult),
+  sponsorQuote: null as null | ((url: string) => Promise<{
+    relayer: string
+    minFeeCawWei: string
+    minFeeEthWei: string
+    priceAvailable: boolean
+    cawAddress: string
+  }>),
+}))
 const EOA = '0x1111111111111111111111111111111111111111' as const
 const RELAYER = '0x2222222222222222222222222222222222222222'
 const CAW = '0x3333333333333333333333333333333333333333'
@@ -21,16 +32,23 @@ const E18 = 10n ** 18n
 const FEE = 3n * E18
 
 vi.mock('wagmi', () => ({
-  useReadContract: (a: { functionName?: string }) => ({ data: a.functionName === 'depositQuote' ? { nativeFee: 1000n } : undefined }),
+  useReadContract: (a: { functionName?: string; args?: readonly unknown[] }) => {
+    if (a.functionName !== 'depositQuote') return { data: undefined }
+    if (h.lzQuote) return h.lzQuote(a.args?.[2] as bigint)
+    return { data: { nativeFee: 1000n } }
+  },
 }))
 vi.mock('~/api/client', () => ({
-  apiFetch: async () => ({
-    relayer: '0x2222222222222222222222222222222222222222',
-    minFeeCawWei: (3n * 10n ** 18n).toString(),
-    minFeeEthWei: '1',
-    priceAvailable: true,
-    cawAddress: '0x3333333333333333333333333333333333333333',
-  }),
+  apiFetch: async (url: string) => {
+    if (h.sponsorQuote) return h.sponsorQuote(url)
+    return {
+      relayer: '0x2222222222222222222222222222222222222222',
+      minFeeCawWei: (3n * 10n ** 18n).toString(),
+      minFeeEthWei: '1',
+      priceAvailable: true,
+      cawAddress: '0x3333333333333333333333333333333333333333',
+    }
+  },
 }))
 vi.mock('~/hooks/useSmartEoaExecute', () => ({
   useSmartEoaExecute: () => ({
@@ -82,7 +100,11 @@ function sentBatch() {
 }
 
 describe('TopUpForm CAW tab: the relayer fee comes out of the same CAW balance', () => {
-  beforeEach(() => { h.batches.length = 0 })
+  beforeEach(() => {
+    h.batches.length = 0
+    h.lzQuote = null
+    h.sponsorQuote = null
+  })
 
   it('holds back a deposit of the whole balance, says why, and sends nothing', async () => {
     await review(100n * E18, 'balance-label')
@@ -139,5 +161,140 @@ describe('TopUpForm CAW tab: the relayer fee comes out of the same CAW balance',
     expect(screen.queryByText(/topup\.fee_not_covered/)).toBeNull()
     expect(screen.queryByText(/topup\.use_max_deposit/)).toBeNull()
     expect(button('topup.confirm_button').disabled).toBe(true)
+  })
+
+  it('holds confirmation disabled while the replacement LayerZero quote is unresolved after selecting max deposit', async () => {
+    // Only the initial 100 CAW amount has a resolved LZ quote; 97 CAW remains unresolved.
+    h.lzQuote = (amountWei) => (amountWei === 100n * E18 ? { data: { nativeFee: 7n } } : { data: undefined })
+    await review(100n * E18, 'balance-label')
+
+    const useMax = await screen.findByText(/topup\.use_max_deposit/)
+    fireEvent.click(useMax)
+
+    // While the 97 CAW LZ quote is unresolved, confirm must stay disabled and send nothing.
+    expect(button('topup.confirm_button').disabled).toBe(true)
+    fireEvent.click(button('topup.confirm_button'))
+    expect(h.batches.length).toBe(0)
+  })
+
+  it('holds confirmation disabled while depositQuote is fetching with stale previous data', async () => {
+    let fetching = false
+    h.lzQuote = () => ({ data: { nativeFee: 7n }, isFetching: fetching })
+    const { rerender } = render(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    fireEvent.change(screen.getByPlaceholderText('0.0'), { target: { value: '50' } })
+    await waitFor(() => expect(button('topup.review_button').disabled).toBe(false))
+    fireEvent.click(button('topup.review_button'))
+    await waitFor(() => expect(screen.queryByText('topup.fetching_quote')).toBeNull())
+    expect(button('topup.confirm_button').disabled).toBe(false)
+
+    fetching = true
+    rerender(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    expect(button('topup.confirm_button').disabled).toBe(true)
+    fireEvent.click(button('topup.confirm_button'))
+    expect(h.batches.length).toBe(0)
+  })
+
+  it('waits for both replacement quotes and re-evaluates affordability if the new LZ fee raises the CAW relayer fee', async () => {
+    let quote97: LzQuoteResult = { data: undefined }
+    h.lzQuote = (amountWei) => (amountWei === 100n * E18 ? { data: { nativeFee: 7n } } : quote97)
+    h.sponsorQuote = async (url) => ({
+      relayer: RELAYER,
+      minFeeCawWei: (url.includes('forwardedValueWei=9') ? 4n * E18 : 3n * E18).toString(),
+      minFeeEthWei: '1',
+      priceAvailable: true,
+      cawAddress: CAW,
+    })
+
+    const { rerender } = render(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    fireEvent.click(screen.getByText(/topup\.balance/))
+    await waitFor(() => expect(button('topup.review_button').disabled).toBe(false))
+    fireEvent.click(button('topup.review_button'))
+    await waitFor(() => expect(screen.queryByText('topup.fetching_quote')).toBeNull())
+
+    const useMax = await screen.findByText(/topup\.use_max_deposit/)
+    fireEvent.click(useMax)
+    expect(button('topup.confirm_button').disabled).toBe(true)
+
+    // Replacement LZ quote arrives with higher fee (9 -> relayer fee becomes 4 CAW, so 97 + 4 > 100).
+    quote97 = { data: { nativeFee: 9n } }
+    rerender(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    await waitFor(() => expect(screen.queryByText('topup.fetching_quote')).toBeNull())
+
+    expect(await screen.findByText(/topup\.fee_not_covered/)).toBeTruthy()
+    expect(screen.getByText(/topup\.fee_not_covered/).textContent).toContain('"fee":"4"')
+    expect(button('topup.confirm_button').disabled).toBe(true)
+    expect(h.batches.length).toBe(0)
+  })
+
+  it('re-enables confirmation and sends the updated LayerZero fee once both replacement quotes resolve', async () => {
+    let quote97: LzQuoteResult = { data: undefined }
+    h.lzQuote = (amountWei) => (amountWei === 100n * E18 ? { data: { nativeFee: 7n } } : quote97)
+    h.sponsorQuote = async () => ({
+      relayer: RELAYER,
+      minFeeCawWei: FEE.toString(),
+      minFeeEthWei: '1',
+      priceAvailable: true,
+      cawAddress: CAW,
+    })
+
+    const { rerender } = render(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    fireEvent.click(screen.getByText(/topup\.balance/))
+    await waitFor(() => expect(button('topup.review_button').disabled).toBe(false))
+    fireEvent.click(button('topup.review_button'))
+    await waitFor(() => expect(screen.queryByText('topup.fetching_quote')).toBeNull())
+
+    fireEvent.click(await screen.findByText(/topup\.use_max_deposit/))
+    expect(button('topup.confirm_button').disabled).toBe(true)
+
+    quote97 = { data: { nativeFee: 8n } }
+    rerender(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    await waitFor(() => expect(button('topup.confirm_button').disabled).toBe(false))
+
+    fireEvent.click(button('topup.confirm_button'))
+    await waitFor(() => expect(h.batches.length).toBe(1))
+    expect(h.batches[0][1].value).toBe(8n)
+    const b = sentBatch()
+    expect(b.deposit).toBe(97n * E18)
+    expect(b.fee).toBe(FEE)
+  })
+
+  it('refreshes and waits for the sponsor quote when depositFee resolves to the same nativeFee for the updated amount', async () => {
+    h.lzQuote = () => ({ data: { nativeFee: 7n } })
+    let resolveSecondSponsor: ((v: {
+      relayer: string
+      minFeeCawWei: string
+      minFeeEthWei: string
+      priceAvailable: boolean
+      cawAddress: string
+    }) => void) | null = null
+    let sponsorCalls = 0
+    h.sponsorQuote = async () => {
+      sponsorCalls++
+      if (sponsorCalls === 1) {
+        return { relayer: RELAYER, minFeeCawWei: FEE.toString(), minFeeEthWei: '1', priceAvailable: true, cawAddress: CAW }
+      }
+      return new Promise(resolve => { resolveSecondSponsor = resolve })
+    }
+
+    render(<TopUpForm tokenId={7} eoaAddress={EOA} cawBalanceWei={100n * E18} ethBalanceWei={10n ** 18n} />)
+    fireEvent.click(screen.getByText(/topup\.balance/))
+    await waitFor(() => expect(button('topup.review_button').disabled).toBe(false))
+    fireEvent.click(button('topup.review_button'))
+    await waitFor(() => expect(screen.queryByText('topup.fetching_quote')).toBeNull())
+
+    // Max deposit changes amountWei from 100 to 97, while depositQuote resolves to the same 7n.
+    fireEvent.click(await screen.findByText(/topup\.use_max_deposit/))
+    await waitFor(() => expect(sponsorCalls).toBe(2))
+
+    // Confirm must stay disabled until the refreshed sponsor quote resolves.
+    expect(button('topup.confirm_button').disabled).toBe(true)
+    fireEvent.click(button('topup.confirm_button'))
+    expect(h.batches.length).toBe(0)
+
+    resolveSecondSponsor!({ relayer: RELAYER, minFeeCawWei: FEE.toString(), minFeeEthWei: '1', priceAvailable: true, cawAddress: CAW })
+    await waitFor(() => expect(button('topup.confirm_button').disabled).toBe(false))
+    fireEvent.click(button('topup.confirm_button'))
+    await waitFor(() => expect(h.batches.length).toBe(1))
+    expect(sentBatch().deposit).toBe(97n * E18)
   })
 })
