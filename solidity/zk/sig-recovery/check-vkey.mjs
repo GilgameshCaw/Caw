@@ -1,14 +1,15 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const scriptPath = realpathSync(fileURLToPath(import.meta.url));
+const scriptUrl = pathToFileURL(scriptPath);
 
-const project = fileURLToPath(new URL('.', import.meta.url));
+const project = fileURLToPath(new URL('.', scriptUrl));
 const keyPattern = /^0x[0-9a-fA-F]{64}$/;
 
 // A matching key is one build check, not proof generation or chain verification.
 export function checkVkey({ read = readFileSync, run = spawnSync } = {}) {
-  const fixture = JSON.parse(read(new URL('../../test/zk-fixtures/groth16-fixture.json', import.meta.url), 'utf8'));
+  const fixture = JSON.parse(read(new URL('../../test/zk-fixtures/groth16-fixture.json', scriptUrl), 'utf8'));
   if (typeof fixture.vkey !== 'string' || !keyPattern.test(fixture.vkey)) {
     throw new Error('invalid fixture vkey; build not started');
   }
@@ -26,7 +27,7 @@ export function checkVkey({ read = readFileSync, run = spawnSync } = {}) {
   return actual;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === scriptPath) {
   try {
     console.log(`fixture key matches derived key: ${checkVkey()}`);
     console.log('proof generation, deployment binding and independent reproduction remain separate checks');

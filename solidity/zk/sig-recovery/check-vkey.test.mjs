@@ -1,3 +1,8 @@
+import { mkdtempSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, delimiter } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkVkey } from './check-vkey.mjs';
@@ -54,4 +59,19 @@ test('missing or corrupt fixture cannot pass', () => {
 
 test('hexadecimal case and surrounding whitespace do not change key bytes', () => {
   assert.equal(checkVkey({ read, run: () => ({ ...success, stdout: '  0x' + 'AB'.repeat(32) + '\n' }) }), '0x' + 'AB'.repeat(32));
+});
+
+test('direct and linked entry points enforce the fixture key', { skip: process.platform === 'win32' }, t => {
+  const dir = mkdtempSync(join(tmpdir(), 'vkey-entry-'));
+  t.after(() => rmSync(dir, {recursive: true, force: true}));
+  const checker = fileURLToPath(new URL('./check-vkey.mjs', import.meta.url));
+  const link = join(dir, 'alias.mjs');
+  symlinkSync(checker, link);
+  writeFileSync(join(dir, 'cargo'), '#!/bin/sh\necho 0x' + '00'.repeat(32) + '\n', {mode: 0o700});
+  for (const args of [[checker], [link], ['--preserve-symlinks-main', link]]) {
+    const result = spawnSync(process.execPath, args, {cwd: dir, encoding: 'utf8',
+      env: {...process.env, PATH: dir + delimiter + process.env.PATH}});
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /vkey mismatch/);
+  }
 });
