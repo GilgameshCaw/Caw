@@ -268,10 +268,10 @@ router.post('/listings/:id/sold', requireAuth({ anySession: true }), async (req,
     }
 
     // Validate txHash format (0x + 64 hex chars) and buyer address (0x + 40 hex chars)
-    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       return res.status(400).json({ error: 'Invalid transaction hash format' })
     }
-    if (!/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
+    if (typeof buyer !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
       return res.status(400).json({ error: 'Invalid buyer address format' })
     }
 
@@ -463,10 +463,10 @@ router.post('/offers/:offerId/accepted', requireAuth({ anySession: true }), asyn
     if (!txHash || !buyer) {
       return res.status(400).json({ error: 'txHash and buyer required' })
     }
-    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       return res.status(400).json({ error: 'Invalid transaction hash format' })
     }
-    if (!/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
+    if (typeof buyer !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
       return res.status(400).json({ error: 'Invalid buyer address format' })
     }
 
@@ -665,7 +665,7 @@ router.post('/offers/notify', requireAuth({ field: 'senderTokenId', verifyOwners
       return res.status(400).json({ error: 'senderTokenId and txHash required' })
     }
 
-    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       return res.status(400).json({ error: 'Invalid transaction hash format' })
     }
 
