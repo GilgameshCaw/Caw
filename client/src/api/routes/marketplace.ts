@@ -517,7 +517,7 @@ router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), asy
     const offerId = parseInt(req.params.offerId)
     const { txHash } = req.body
 
-    if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       return res.status(400).json({ error: 'Invalid transaction hash format' })
     }
 

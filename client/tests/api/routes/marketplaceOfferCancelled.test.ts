@@ -126,4 +126,22 @@ describe('POST /api/marketplace/offers/:offerId/cancelled', function () {
     expect(calls.findUnique).to.have.length(0)
     noStatusWrite()
   })
+
+  it('rejects a txHash that is not a string, even when it would read as a valid hash', async () => {
+    // A one-element array (or a nested one) turns into the hash text when the
+    // regular expression coerces it, so the format check alone lets it through.
+    const bad: any[] = [[TX], [[TX]], { txHash: TX }, 123, true, null]
+    for (const txHash of bad) {
+      const r = await post({ txHash })
+      expect(r.status, JSON.stringify(txHash)).to.equal(400)
+    }
+    expect(calls.findUnique).to.have.length(0)
+    noStatusWrite()
+  })
+
+  it('still answers 202 for a valid string txHash, without a write', async () => {
+    const r = await post({ txHash: TX })
+    expect(r.status).to.equal(202)
+    noStatusWrite()
+  })
 })
