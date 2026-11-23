@@ -29,15 +29,17 @@ async function getCursor(): Promise<number | null> {
  * Start just before the earliest indexed action: an OwnerSet before every action
  * cannot exclude any. Only once RawEventsGatherer's history fill is done
  * (floor-filled), as it can store a live event first and fill below it later.
+ * Both the flag (`raw-events-gatherer:<chainId>:<networkId>:floor-filled`) and
+ * the raw event are this L2's, so events of another chain cannot set the start.
  * null: not yet.
  */
-async function firstActionBlock(): Promise<number | null> {
+async function firstActionBlock(chainId: number): Promise<number | null> {
   const flags = await prisma.chainData.findMany({
-    where: { key: { startsWith: 'raw-events-gatherer:', endsWith: ':floor-filled' } },
+    where: { key: { startsWith: `raw-events-gatherer:${chainId}:`, endsWith: ':floor-filled' } },
     select: { value: true },
   })
   if (!flags.some(f => (f.value as any)?.filled === true)) return null
-  const first = await prisma.rawEvent.findFirst({ orderBy: { blockNumber: 'asc' }, select: { blockNumber: true } })
+  const first = await prisma.rawEvent.findFirst({ where: { chainId }, orderBy: { blockNumber: 'asc' }, select: { blockNumber: true } })
   return first ? Math.max(0, Number(first.blockNumber) - 1) : null
 }
 
@@ -51,7 +53,7 @@ async function setCursor(block: number): Promise<void> {
 
 /** Throws on a failure: the cursor stays and the next tick retries; recordOwnerSet is idempotent. */
 export async function syncOwnerSetEvents(
-  l2Provider: Pick<JsonRpcProvider, 'getBlockNumber'> | null,
+  l2Provider: Pick<JsonRpcProvider, 'getBlockNumber' | 'getNetwork'> | null,
   // Replaceable in tests.
   makeContract: (provider: any) => { filters: { OwnerSet(): any }; queryFilter(f: any, from: number, to: number): Promise<any[]> } =
     p => new Contract(CAW_NAMES_L2_ADDRESS, OWNER_SET_ABI as any, p) as any,
@@ -63,7 +65,7 @@ export async function syncOwnerSetEvents(
     const latest = await l2Provider.getBlockNumber()
     let from = await getCursor()
     if (from === null) {
-      from = await firstActionBlock()
+      from = await firstActionBlock(Number((await l2Provider.getNetwork()).chainId))
       if (from === null) return
       console.log(`[ChainSync:OwnerSet] Bootstrapping from block ${from}, the earliest indexed action`)
     }
@@ -94,5 +96,31 @@ export async function syncOwnerSetEvents(
     if (seen > 0) console.log(`[ChainSync:OwnerSet] Indexed ${seen} event(s) through block ${cursor - 1}`)
   } finally {
     running = false
+  }
+}
+
+/**
+ * What ChainSyncService runs each tick. It does not reject: a failed run is
+ * logged and the next tick retries from the cursor.
+ *
+ * ChainSyncService beats a loop's heartbeat only when its task resolves, and
+ * its watchdog restarts the whole service when a declared loop has not beaten
+ * for its timeout. A task that rejects would therefore take the session/auth
+ * loop and the others down with it every 4 minutes for as long as its RPC or
+ * database trouble lasts, for a note that is only a display aid. L2Events
+ * catches its own errors the same way. `onError` is for the caller's recovery
+ * (ChainSyncService passes its provider rebuild, which acts on connection
+ * errors only).
+ */
+export async function runOwnerSetSync(
+  l2Provider: Parameters<typeof syncOwnerSetEvents>[0],
+  onError?: (err: unknown) => void,
+  makeContract?: Parameters<typeof syncOwnerSetEvents>[1],
+): Promise<void> {
+  try {
+    await syncOwnerSetEvents(l2Provider, makeContract)
+  } catch (err: any) {
+    console.error('[ChainSync:OwnerSet] Sync failed, the next tick retries from the cursor:', String(err?.message ?? err).slice(0, 200))
+    onError?.(err)
   }
 }

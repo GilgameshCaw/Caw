@@ -5,7 +5,7 @@ import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder, dataSlice, id as ethersId } from 'ethers'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi, cawProfileAbi } from '../../abi/generated'
-import { syncOwnerSetEvents } from './ownerSetSync'
+import { runOwnerSetSync } from './ownerSetSync'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
@@ -1415,7 +1415,9 @@ export const chainSyncService = {
       registerTask({
         name: 'OwnerSet',
         interval: 60 * 1000,
-        sync: () => syncOwnerSetEvents(l2Provider),
+        // Never rejects (see runOwnerSetSync): a rejected task would stop this loop's
+        // heartbeat and the watchdog would restart the whole service.
+        sync: () => runOwnerSetSync(l2Provider, maybeRebuildProviders),
       })
       ctx.declareLoop('ChainSync:OwnerSet', 4 * 60 * 1000) // 4× interval (240s)
     }
