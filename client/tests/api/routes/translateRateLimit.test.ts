@@ -110,6 +110,20 @@ describe('POST /api/translate: the limit and the cache', function () {
     expect(second.body.text).to.equal(first.body.text)
   })
 
+  it('a language code the handler refuses is not skipped, even when it reads as a cached key', async () => {
+    const ip = '10.1.0.8'
+    const text = fresh()
+    expect((await post(ip, { text, targetLang: 'ja' })).status).to.equal(200)
+    // "auto" as a source reads as no source, the key of the entry just made; the handler refuses it
+    for (let i = 1; i < LIMIT; i++) {
+      const r = await post(ip, { text, targetLang: 'ja', sourceLang: 'auto' })
+      expect(r.status, `request ${i}`).to.equal(400)
+    }
+    // all 30 were counted
+    const over = await post(ip, { text, targetLang: 'ja', sourceLang: 'auto' })
+    expect(over.status).to.equal(429)
+  })
+
   it('a private text is not cached, so every request counts', async () => {
     const ip = '10.1.0.5'
     const text = fresh()

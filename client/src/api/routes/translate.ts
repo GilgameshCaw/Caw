@@ -86,6 +86,10 @@ function getFromCache(key: string): CacheEntry | null {
   return entry
 }
 
+// ISO 639-1/639-2 codes are 2-3 lowercase letters; the handler refuses any other
+// shape (see the note where it checks), and cacheAnswerFor must agree.
+const LANG_CODE_RE = /^[a-z]{2,3}$/
+
 /**
  * The cache entry the handler below would answer this body from, or null: a
  * private text, a body the handler would refuse, or no entry. It reads the
@@ -101,6 +105,10 @@ function cacheAnswerFor(body: unknown): CacheEntry | null {
   if (sourceLang !== undefined && sourceLang !== null && typeof sourceLang !== 'string') return null
   const cleanTarget = targetLang.split('-')[0].toLowerCase()
   const cleanSource = sourceLang ? sourceLang.split('-')[0].toLowerCase() : undefined
+  // A code the handler refuses is not answered from the cache, whatever key it
+  // reads as: "auto" as a source gives the key of a request with no source.
+  if (!LANG_CODE_RE.test(cleanTarget)) return null
+  if (cleanSource && !LANG_CODE_RE.test(cleanSource)) return null
   return getFromCache(getCacheKey(text.trim(), cleanTarget, cleanSource))
 }
 
@@ -357,7 +365,6 @@ router.post('/', translateRateLimit, (async (req: any, res: any): Promise<void> 
     // vector into the HTTP fallback paths. ISO 639-1/639-2 language codes are
     // always 2-3 lowercase letters, so gate on that shape before either use.
     // (Found in review by @nyaromesama.)
-    const LANG_CODE_RE = /^[a-z]{2,3}$/
     if (!LANG_CODE_RE.test(cleanTarget)) {
       res.status(400).json({ error: 'Field "targetLang" must be a 2-3 letter language code' })
       return
