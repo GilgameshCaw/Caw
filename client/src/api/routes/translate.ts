@@ -23,6 +23,7 @@
  *   - E2EE Direct Messages pass `isPrivate: true`. Private content is NEVER cached
  *     in memory to prevent sensitive text from persisting on node servers.
  *   - Per-IP rate limiting (30 req/min) prevents abusive scraping and API quota exhaustion.
+ *     A request the cache can answer calls no provider, so it is not counted.
  */
 
 import { Router } from 'express'
@@ -32,12 +33,26 @@ const router = Router()
 
 // Per-IP rate limit: 30 requests per minute per IP.
 // Prevents automated bots from draining API quotas or hammering node resources.
+//
+// The limit protects the providers' quotas, and a request answered from the
+// cache calls none, so it is not counted: a feed that is opened again, or by
+// a second viewer behind the same address, would otherwise use up the limit on
+// answers the node already has. The entry found here is kept for the handler,
+// so a request that was not counted is always answered from the entry it was
+// not counted for.
+const answeredFromCache = new WeakMap<object, CacheEntry>()
 const translateRateLimit = rateLimit({
   windowMs: 60_000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Translation rate limit exceeded. Please try again in a minute.' },
+  skip: (req) => {
+    const hit = cacheAnswerFor(req.body)
+    if (!hit) return false
+    answeredFromCache.set(req, hit)
+    return true
+  },
 })
 
 // Optional API keys for reliable datacenter/node translation
@@ -69,6 +84,24 @@ function getFromCache(key: string): CacheEntry | null {
   translationCache.delete(key)
   translationCache.set(key, entry)
   return entry
+}
+
+/**
+ * The cache entry the handler below would answer this body from, or null: a
+ * private text, a body the handler would refuse, or no entry. It reads the
+ * fields the way the handler does, and never throws; a body it cannot read is
+ * left to the handler (and the limit).
+ */
+function cacheAnswerFor(body: unknown): CacheEntry | null {
+  if (!body || typeof body !== 'object') return null
+  const { text, targetLang, sourceLang, isPrivate } = body as Record<string, unknown>
+  if (isPrivate) return null
+  if (typeof text !== 'string' || !text.trim() || text.length > 2000) return null
+  if (typeof targetLang !== 'string') return null
+  if (sourceLang !== undefined && sourceLang !== null && typeof sourceLang !== 'string') return null
+  const cleanTarget = targetLang.split('-')[0].toLowerCase()
+  const cleanSource = sourceLang ? sourceLang.split('-')[0].toLowerCase() : undefined
+  return getFromCache(getCacheKey(text.trim(), cleanTarget, cleanSource))
 }
 
 function setToCache(key: string, value: CacheEntry): void {
@@ -349,7 +382,7 @@ router.post('/', translateRateLimit, (async (req: any, res: any): Promise<void> 
     // PRIVACY AUDIT GUARD: Never read from cache for private content (e.g. E2EE DMs)
     const cacheKey = getCacheKey(trimmedText, cleanTarget, cleanSource)
     if (!isPrivate) {
-      const cached = getFromCache(cacheKey)
+      const cached = answeredFromCache.get(req) ?? getFromCache(cacheKey)
       if (cached) {
         res.json({
           text: cached.text,
