@@ -777,6 +777,7 @@
   "profile.updating": "Updating...",
   "profile.joined": "Joined {{date}}",
   "profile.joined_recently": "Joined recently",
+  "profile.owner_not_signed": "Not signed with this name yet. It may have been sent to this wallet.",
   "profile.error.failed_to_load": "Failed to load profile",
   "profile.error.upload_image": "Failed to upload image. Please try again.",
   "profile.error.invalid_image": "Please select a valid image file",

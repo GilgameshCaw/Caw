@@ -1096,6 +1096,18 @@ model NetworkAuth {
   @@index([tokenId], map: "ClientAuth_tokenId_idx")
 }
 
+/// The L2 block of the OwnerSet event that gave a token its current owner
+/// (ChainSyncService). No row: no OwnerSet seen. See utils/ownerSigned.ts.
+model TokenOwnerSince {
+  tokenId       Int      @id
+  owner         String
+  /// The owner this one replaced; NULL for the first OwnerSet seen for the token.
+  previousOwner String?
+  sinceBlock    BigInt
+  sinceLogIndex Int
+  updatedAt     DateTime @updatedAt
+}
+
 model SponsorCode {
   codeHash            String              @id
   tier                String

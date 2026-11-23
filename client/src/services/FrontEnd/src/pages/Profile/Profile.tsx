@@ -83,6 +83,8 @@ type ProfileData = {
   xHandle?: string | null
   xFollowerBucket?: number | null
   xLinkedAt?: string | null
+  // false: the wallet holding this name has not signed with it since it got it
+  ownerHasSigned?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -1047,6 +1049,12 @@ export const Profile: React.FC = () => {
                     </Link>
                     <CopyAddressButton address={profileData.address} iconOnly />
                   </div>
+                )}
+                {profileData?.address && profileData.ownerHasSigned === false && !isOwnProfile
+                  && address?.toLowerCase() !== profileData.address.toLowerCase() && (
+                  <p className={`text-xs mt-1 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                    {t('profile.owner_not_signed')}
+                  </p>
                 )}
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
