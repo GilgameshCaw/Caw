@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   scheduleTranslateRequest,
   resetTranslateRequests,
+  sentRequestCount,
   TranslateRateLimitedError,
   TranslateCancelledError,
   AUTO_BUDGET,
@@ -88,6 +89,15 @@ describe('a request the user asked for', () => {
     resetTranslateRequests()
     const b = await outcome(scheduleTranslateRequest(() => Promise.reject(tooMany(9999)), 'user'))
     expect((b.error as TranslateRateLimitedError).retryAfterSeconds).toBe(120)
+  })
+
+  it('old sends are forgotten as new ones are made, with no automatic request waiting', async () => {
+    // auto-translate off: only presses, so the queue is never pumped
+    for (let i = 0; i < 30; i++) {
+      await scheduleTranslateRequest(() => Promise.resolve('ok'), 'user')
+      await tick(10_000)
+    }
+    expect(sentRequestCount()).toBeLessThanOrEqual(WINDOW_MS / 10_000)
   })
 
   it('a request already cancelled is not sent', async () => {

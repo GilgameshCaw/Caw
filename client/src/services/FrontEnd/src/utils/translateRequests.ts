@@ -77,6 +77,11 @@ export function resetTranslateRequests(): void {
   queue = []
 }
 
+/** For tests: how many sends the pacing is counting (those of the last WINDOW_MS). */
+export function sentRequestCount(): number {
+  return sentAt.length
+}
+
 function isRateLimited(err: unknown): err is { status: number; retryAfterSeconds?: number } {
   return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 429
 }
@@ -90,7 +95,9 @@ function retryAfterOf(err: { retryAfterSeconds?: number }): number {
 /** Sends one request now. A 429 starts the pause and is reported as TranslateRateLimitedError. */
 async function sendNow<T>(send: () => Promise<T>): Promise<T> {
   inFlight++
-  sentAt.push(Date.now())
+  const now = Date.now()
+  sentAt = sentAt.filter(t => now - t < WINDOW_MS) // not only in pump: with auto-translate off the queue is never pumped
+  sentAt.push(now)
   try {
     return await send()
   } catch (err) {

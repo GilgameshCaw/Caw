@@ -256,7 +256,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const controller = new AbortController()
     translateAbortRef.current = controller
     return () => {
-      controller.abort()
+      translateAbortRef.current?.abort() // the current one: a press may have replaced it
       autoTranslatedRef.current = null
     }
   }, [viewerLang.preferredLanguage])
@@ -993,6 +993,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const asked = priority === 'user'
     if (asked) {
       userHandledTranslateRef.current = true
+      // The press takes over from this post's automatic translation if that is
+      // still waiting for its turn; it would only use up a place and be dropped.
+      translateAbortRef.current?.abort()
+      translateAbortRef.current = new AbortController()
       setIsTranslating(true)
       setTranslateRateLimitedFor(null)
     } else {
@@ -1348,7 +1352,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       Hidden when we know the source matches the viewer's
                       language (no value to user); shown otherwise so the
                       first viewer can populate the source-language cache. */}
-                  {!isTranslating && useItem.content?.trim() && (translatedText || shouldShowInlineTranslate) && (
+                  {!isTranslating && useItem.content?.trim() && (translatedText || shouldShowInlineTranslate || translateRateLimitedFor !== null) && (
                     translatedText ? (
                       <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
                         <span className={`min-w-0 truncate text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
@@ -1372,20 +1376,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       </div>
                     ) : (
                       <>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            void handleMenuAction('translate')
-                          }}
-                          className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
-                        >
-                          <HiOutlineTranslate className="w-3.5 h-3.5" />
-                          {t('post.translate')}
-                        </button>
+                        {shouldShowInlineTranslate && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void handleMenuAction('translate')
+                            }}
+                            className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
+                          >
+                            <HiOutlineTranslate className="w-3.5 h-3.5" />
+                            {t('post.translate')}
+                          </button>
+                        )}
+                        {/* Also shown when the press came from the ⋯ menu and there is no button here */}
                         {translateRateLimitedFor !== null && (
-                          <span role="status" className="mb-1 ml-2 text-xs text-gray-500">
+                          <span role="status" className={`mb-1 text-xs text-gray-500${shouldShowInlineTranslate ? ' ml-2' : ''}`}>
                             {t('post.translate_rate_limited', { seconds: translateRateLimitedFor })}
                           </span>
                         )}
