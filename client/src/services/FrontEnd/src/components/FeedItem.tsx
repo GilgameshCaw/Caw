@@ -215,6 +215,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [translatedPollOptions, setTranslatedPollOptions] = useState<string[] | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
+  // Seconds the node's rate limit has left, after a translation the user asked
+  // for was refused because of it; null when there is nothing to say.
+  const [translateRateLimitedFor, setTranslateRateLimitedFor] = useState<number | null>(null)
   // Tracks the source language we've discovered for this caw — either
   // from item.sourceLanguage on first render, or from a successful
   // translate that returned a detected source. Used to label the
@@ -239,6 +242,24 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // useItem) would queue another translate call. We only want one
   // auto-pass per (caw, viewer language) pair.
   const autoTranslatedRef = useRef<string | null>(null)
+  // Cancels this post's automatic translations that are still waiting for their
+  // turn (utils/translateRequests) once it has left the screen, or the viewer's
+  // language has changed and they are for the old one. The auto-translate key is
+  // cleared with it: effects run twice in development (StrictMode), and a
+  // translation cancelled by the first cleanup has to be asked for again.
+  const translateAbortRef = useRef<AbortController | null>(null)
+  // Set when the user presses Translate or hides a translation, and cleared when
+  // an automatic translation starts: one that is still waiting then no longer puts
+  // its text on the post.
+  const userHandledTranslateRef = useRef(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    translateAbortRef.current = controller
+    return () => {
+      translateAbortRef.current?.abort() // the current one: a press may have replaced it
+      autoTranslatedRef.current = null
+    }
+  }, [viewerLang.preferredLanguage])
 
   // Determine which item to use (handle recaws)
   let useItem = item;
@@ -965,17 +986,36 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // the source language back to the server. The 2nd parameter to
   // translateTextDetailed is the viewer's preferred language. Errors
   // are swallowed by the helper itself.
-  const runTranslation = React.useCallback(async () => {
+  const runTranslation = React.useCallback(async (priority: 'user' | 'auto' = 'user') => {
     if (!useItem.content) return
-    setIsTranslating(true)
+    // An automatic translation can wait a while behind the node's rate limit. It
+    // must not hide the Translate button, or stop the user's own press, meanwhile.
+    const asked = priority === 'user'
+    if (asked) {
+      userHandledTranslateRef.current = true
+      // The press takes over from this post's automatic translation if that is
+      // still waiting for its turn; it would only use up a place and be dropped.
+      translateAbortRef.current?.abort()
+      translateAbortRef.current = new AbortController()
+      setIsTranslating(true)
+      setTranslateRateLimitedFor(null)
+    } else {
+      // what the user does from now on is what stops this run's result
+      userHandledTranslateRef.current = false
+    }
     try {
       const pollOpts = useItem.poll?.options
       const hasPoll = Array.isArray(pollOpts) && pollOpts.length > 0
       const sourceText = hasPoll
         ? `${useItem.content}\n\n${pollOpts!.join('\n')}`
         : useItem.content
-      const result = await translateTextDetailed(sourceText, viewerLang.preferredLanguage)
+      const result = await translateTextDetailed(sourceText, viewerLang.preferredLanguage, {
+        priority,
+        signal: translateAbortRef.current?.signal,
+        onRateLimited: asked ? setTranslateRateLimitedFor : undefined,
+      })
       if (!result) return
+      if (!asked && userHandledTranslateRef.current) return
       if (hasPoll) {
         const lines = result.text.replace(/\s+$/, '').split('\n')
         const nonEmptyTrailing: string[] = []
@@ -1013,9 +1053,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }
       }
     } finally {
-      setIsTranslating(false)
+      if (asked) setIsTranslating(false)
     }
   }, [useItem.id, useItem.content, useItem.sourceLanguage, useItem.poll?.options, viewerLang.preferredLanguage, knownSourceLanguage])
+
+  // The note about the rate limit goes away when the limit does.
+  useEffect(() => {
+    if (translateRateLimitedFor === null) return
+    const id = setTimeout(() => setTranslateRateLimitedFor(null), translateRateLimitedFor * 1000)
+    return () => clearTimeout(id)
+  }, [translateRateLimitedFor])
 
   // Auto-translate when the viewer enabled it AND we know the post's
   // source differs from the viewer's language. We require knownSourceLanguage
@@ -1033,7 +1080,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const key = `${useItem.id}|${viewerLang.preferredLanguage}`
     if (autoTranslatedRef.current === key) return
     autoTranslatedRef.current = key
-    void runTranslation()
+    void runTranslation('auto')
   }, [viewerLang.autoTranslate, viewerLang.preferredLanguage, knownSourceLanguage, translatedText, isTranslating, useItem.id, runTranslation])
 
   // Show the inline Translate affordance only when it's actually useful:
@@ -1054,6 +1101,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }
         if (translatedText) {
           // Toggle off — click on Translate when already translated clears the translation.
+          userHandledTranslateRef.current = true
           setTranslatedText(null)
           setTranslatedPollOptions(null)
           return
@@ -1304,7 +1352,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       Hidden when we know the source matches the viewer's
                       language (no value to user); shown otherwise so the
                       first viewer can populate the source-language cache. */}
-                  {!isTranslating && useItem.content?.trim() && (translatedText || shouldShowInlineTranslate) && (
+                  {!isTranslating && useItem.content?.trim() && (translatedText || shouldShowInlineTranslate || translateRateLimitedFor !== null) && (
                     translatedText ? (
                       <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
                         <span className={`min-w-0 truncate text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
@@ -1317,6 +1365,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
+                            userHandledTranslateRef.current = true
                             setTranslatedText(null)
                           }}
                           className="inline-flex shrink-0 items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
@@ -1326,18 +1375,28 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleMenuAction('translate')
-                        }}
-                        className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
-                      >
-                        <HiOutlineTranslate className="w-3.5 h-3.5" />
-                        {t('post.translate')}
-                      </button>
+                      <>
+                        {shouldShowInlineTranslate && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void handleMenuAction('translate')
+                            }}
+                            className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer py-2"
+                          >
+                            <HiOutlineTranslate className="w-3.5 h-3.5" />
+                            {t('post.translate')}
+                          </button>
+                        )}
+                        {/* Also shown when the press came from the ⋯ menu and there is no button here */}
+                        {translateRateLimitedFor !== null && (
+                          <span role="status" className={`mb-1 text-xs text-gray-500${shouldShowInlineTranslate ? ' ml-2' : ''}`}>
+                            {t('post.translate_rate_limited', { seconds: translateRateLimitedFor })}
+                          </span>
+                        )}
+                      </>
                     )
                   )}
 

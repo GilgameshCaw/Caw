@@ -62,6 +62,19 @@ function getCacheKey(text: string, targetLang: string, sourceLang?: string): str
   return `${sourceLang || 'auto'}:${targetLang}:${text.trim()}`
 }
 
+/**
+ * Providers report the language they detected in their own shapes: MyMemory
+ * "zh-CN", DeepL "ZH", Google "und" for "could not tell", Gemini "auto" when it
+ * was not told. The FE compares this with the viewer's language (a primary
+ * subtag such as "zh") and POSTs it to /api/caws/:id/source-language, which only
+ * takes 2-3 lowercase letters, so reduce it to that, or to '' for "unknown".
+ */
+export function normalizeDetectedLanguage(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  const code = raw.split(/[-_]/)[0].trim().toLowerCase()
+  return /^[a-z]{2,3}$/.test(code) && code !== 'und' ? code : ''
+}
+
 function getFromCache(key: string): CacheEntry | null {
   const entry = translationCache.get(key)
   if (!entry) return null
@@ -382,6 +395,16 @@ router.post('/', translateRateLimit, (async (req: any, res: any): Promise<void> 
         error: 'Translation services temporarily unavailable',
       })
       return
+    }
+
+    // Report the language the provider detected, as a primary subtag. A
+    // provider that was told the source detects nothing (MyMemory), and the
+    // answer is '' then: the caller's own guess is not handed back as if it had
+    // been detected, because the FE stores what it gets here as the post's
+    // language.
+    result = {
+      text: result.text,
+      sourceLanguage: normalizeDetectedLanguage(result.sourceLanguage),
     }
 
     // PRIVACY AUDIT GUARD: Never store private content (E2EE DMs) in memory cache
