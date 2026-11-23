@@ -143,6 +143,7 @@
   "post.show_original": "Show original",
   "post.translated_from": "Translated from {{language}}",
   "post.translated_from_original": "Translated from original",
+  "post.translate_rate_limited": "Translation is busy. Try again in {{seconds}}s.",
   "post.recawed_by_you": "Recawed by you",
   "post.recawed_by": "Recawed by {{name}}",
   "post.failed": "Failed",

@@ -129,7 +129,8 @@ const TrendingHashtags: React.FC<TrendingHashtagsProps> = ({ title }) => {
       // re-camelCase the result before showing.
       const split = items.map(h => splitHashtag(h.name))
       const joined = split.map(s => s.words).join(JOIN_SEP)
-      const result = await translateTextDetailed(joined, viewerLang.preferredLanguage)
+      // Nobody pressed anything: it waits its turn behind the node's rate limit.
+      const result = await translateTextDetailed(joined, viewerLang.preferredLanguage, { priority: 'auto' })
       if (!result) return
       const parts = result.text.split(JOIN_SEP)
       // gtx occasionally drops or merges segments — only commit the map

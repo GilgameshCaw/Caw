@@ -23,6 +23,12 @@
 // the user first (see ConfirmModal with rememberKey='dmTranslate').
 
 import { apiFetch } from '~/api/client'
+import {
+  scheduleTranslateRequest,
+  TranslateRateLimitedError,
+  TranslateCancelledError,
+  type TranslatePriority,
+} from './translateRequests'
 
 /** Where DM plaintext goes when the user translates a direct message. */
 export type DmTranslateRoute = 'browser' | 'node'
@@ -158,10 +164,28 @@ export interface TranslationResult {
  * that want the detected source language for caching purposes should
  * use `translateTextDetailed` instead.
  */
+export interface TranslateOptions {
+  isPrivate?: boolean
+  /**
+   * 'auto' for a translation nobody asked for (auto-translate): it waits its
+   * turn behind the node's rate limit. The default, 'user', is for one the user
+   * asked for, and goes at once. See ./translateRequests.
+   */
+  priority?: TranslatePriority
+  /** Cancels a request that is still waiting for its turn. */
+  signal?: AbortSignal
+  /**
+   * Called, with the seconds until the limit is lifted, when the node's rate
+   * limit stopped the translation, so the caller can say so instead of the
+   * null result passing in silence.
+   */
+  onRateLimited?: (retryAfterSeconds: number) => void
+}
+
 export async function translateText(
   text: string,
   targetLang?: string,
-  options?: { isPrivate?: boolean },
+  options?: TranslateOptions,
 ): Promise<string | null> {
   const detail = await translateTextDetailed(text, targetLang, options)
   return detail?.text ?? null
@@ -175,12 +199,31 @@ export async function translateText(
 export async function translateTextDetailed(
   text: string,
   targetLang?: string,
-  options?: { isPrivate?: boolean },
+  options?: TranslateOptions,
+): Promise<TranslationResult | null> {
+  try {
+    return await translateWithFallbacks(text, targetLang, options)
+  } catch (err) {
+    // The node's rate limit stops the whole attempt: the requests below would
+    // only be refused as well. A cancel ends it quietly.
+    if (err instanceof TranslateRateLimitedError) {
+      options?.onRateLimited?.(err.retryAfterSeconds)
+      return null
+    }
+    if (err instanceof TranslateCancelledError) return null
+    throw err
+  }
+}
+
+async function translateWithFallbacks(
+  text: string,
+  targetLang?: string,
+  options?: TranslateOptions,
 ): Promise<TranslationResult | null> {
   if (!text || !text.trim()) return null
   const tl = targetLang || getTargetLanguage()
 
-  const first = await fetchTranslation(text, tl, options?.isPrivate)
+  const first = await fetchTranslation(text, tl, options?.isPrivate, undefined, options)
   if (first && first.text && first.text !== text) {
     return { ...first, targetLanguage: tl }
   }
@@ -197,7 +240,7 @@ export async function translateTextDetailed(
   const viaNode = !(options?.isPrivate && getDmTranslateRoute() === 'browser')
   const hint = first && viaNode ? detectScript(text, 2) : null
   if (hint && hint !== tl) {
-    const hinted = await fetchTranslation(text, tl, options?.isPrivate, hint)
+    const hinted = await fetchTranslation(text, tl, options?.isPrivate, hint, options)
     if (hinted && hinted.text && hinted.text !== text) {
       return { ...hinted, targetLanguage: tl }
     }
@@ -210,7 +253,7 @@ export async function translateTextDetailed(
   // is the target itself; after a hinted request that failed, this is the plain
   // request it always was, in case the guess was the problem.
   if (tl !== 'en') {
-    const en = await fetchTranslation(text, 'en', options?.isPrivate, hint && hint === tl ? hint : undefined)
+    const en = await fetchTranslation(text, 'en', options?.isPrivate, hint && hint === tl ? hint : undefined, options)
     if (en && en.text && en.text !== text) {
       return { ...en, targetLanguage: 'en' }
     }
@@ -223,25 +266,33 @@ interface FetchResult {
   sourceLanguage: string
 }
 
-async function fetchTranslation(text: string, tl: string, isPrivate?: boolean, sourceLang?: string): Promise<FetchResult | null> {
+type Pacing = Pick<TranslateOptions, 'priority' | 'signal'>
+
+async function fetchTranslation(text: string, tl: string, isPrivate?: boolean, sourceLang?: string, pacing?: Pacing): Promise<FetchResult | null> {
   // Private (DM) text only goes through the node when the user opted in.
   if (isPrivate && getDmTranslateRoute() === 'browser') {
     return fetchTranslationDirect(text, tl)
   }
-  return fetchTranslationViaNode(text, tl, isPrivate, sourceLang)
+  return fetchTranslationViaNode(text, tl, isPrivate, sourceLang, pacing)
 }
 
 /** `sourceLang`, when given, is sent so the node does not have to detect it. */
-async function fetchTranslationViaNode(text: string, tl: string, isPrivate?: boolean, sourceLang?: string): Promise<FetchResult | null> {
+async function fetchTranslationViaNode(text: string, tl: string, isPrivate?: boolean, sourceLang?: string, pacing?: Pacing): Promise<FetchResult | null> {
   try {
-    const res = await apiFetch<{ text: string; sourceLanguage: string }>('/api/translate', {
-      method: 'POST',
-      body: JSON.stringify({ text, targetLang: tl, sourceLang, isPrivate }),
-    })
+    const res = await scheduleTranslateRequest(
+      () => apiFetch<{ text: string; sourceLanguage: string }>('/api/translate', {
+        method: 'POST',
+        body: JSON.stringify({ text, targetLang: tl, sourceLang, isPrivate }),
+      }),
+      pacing?.priority,
+      pacing?.signal,
+    )
     if (res?.text) {
       return { text: res.text, sourceLanguage: res.sourceLanguage || '' }
     }
   } catch (err) {
+    // Not a failed translation: the caller decides what to say (see translateTextDetailed).
+    if (err instanceof TranslateRateLimitedError || err instanceof TranslateCancelledError) throw err
     console.warn('[translate] API proxy request failed:', err)
   }
   return null

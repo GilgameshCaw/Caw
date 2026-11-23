@@ -12,7 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('~/api/client', () => ({ apiFetch: vi.fn() }))
 
 import { apiFetch } from '~/api/client'
-import { detectScript, translateTextDetailed } from './translate'
+import { detectScript, translateText, translateTextDetailed } from './translate'
+import { resetTranslateRequests } from './translateRequests'
 
 const mockedApiFetch = vi.mocked(apiFetch)
 
@@ -137,5 +138,89 @@ describe('translateTextDetailed: source hint after an untranslated answer', () =
     expect(r?.text).toBe(`[zh->fr] ${MIXED_ZH}`)
     expect(bodies().every(b => b.isPrivate === true)).toBe(true)
     expect(bodies()[1].sourceLang).toBe('zh')
+  })
+})
+
+describe('translateTextDetailed: the node\'s rate limit', () => {
+  /** What apiFetch throws for a 429. */
+  const tooMany = (retryAfterSeconds?: number) =>
+    Object.assign(new Error('API 429: Translation rate limit exceeded.'), { status: 429, retryAfterSeconds })
+
+  beforeEach(() => { vi.useFakeTimers(); resetTranslateRequests() })
+  afterEach(() => { resetTranslateRequests(); vi.useRealTimers() })
+
+  it('a refused request is not repeated into English, and the caller is told how long the limit lasts', async () => {
+    mockedApiFetch.mockRejectedValue(tooMany(12))
+    const onRateLimited = vi.fn()
+    const r = await translateTextDetailed(MIXED_ZH, 'fr', { onRateLimited })
+    expect(r).toBeNull()
+    expect(onRateLimited).toHaveBeenCalledWith(12)
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('nothing is sent while the limit lasts, and the next request goes out after it', async () => {
+    mockedApiFetch.mockRejectedValueOnce(tooMany(10))
+    await translateTextDetailed('hello world', 'ja', { onRateLimited: () => {} })
+    mockedApiFetch.mockResolvedValue({ text: 'こんにちは世界', sourceLanguage: 'en' } as never)
+
+    const onRateLimited = vi.fn()
+    expect(await translateTextDetailed('hello world', 'ja', { onRateLimited })).toBeNull()
+    expect(onRateLimited).toHaveBeenCalledWith(10)
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(10_001)
+    const r = await translateTextDetailed('hello world', 'ja')
+    expect(r?.text).toBe('こんにちは世界')
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('a failure that is not a 429 still falls back to English, as before', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedApiFetch
+      .mockRejectedValueOnce(new Error('API 503: down'))
+      .mockResolvedValue({ text: 'good morning', sourceLanguage: 'zh' } as never)
+    const r = await translateTextDetailed(PLAIN_ZH, 'fr')
+    expect(r).toEqual({ text: 'good morning', sourceLanguage: 'zh', targetLanguage: 'en' })
+    expect(bodies().map(b => b.targetLang)).toEqual(['fr', 'en'])
+  })
+
+  it('an automatic translation waits out the limit, and is not reported as refused', async () => {
+    mockedApiFetch
+      .mockRejectedValueOnce(tooMany(5))
+      .mockResolvedValue({ text: 'bonjour', sourceLanguage: 'en' } as never)
+    const onRateLimited = vi.fn()
+    const pending = translateTextDetailed('hello there', 'fr', { priority: 'auto', onRateLimited })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect((await pending)?.text).toBe('bonjour')
+    expect(onRateLimited).not.toHaveBeenCalled()
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('a translation cancelled before it was sent gives null and sends nothing', async () => {
+    const c = new AbortController()
+    c.abort()
+    mockedApiFetch.mockResolvedValue({ text: 'x', sourceLanguage: 'en' } as never)
+    expect(await translateTextDetailed('hello', 'fr', { priority: 'auto', signal: c.signal })).toBeNull()
+    expect(mockedApiFetch).not.toHaveBeenCalled()
+  })
+
+  it('translateText passes the options on', async () => {
+    mockedApiFetch.mockRejectedValue(tooMany(3))
+    const onRateLimited = vi.fn()
+    expect(await translateText('hello', 'fr', { onRateLimited })).toBeNull()
+    expect(onRateLimited).toHaveBeenCalledWith(3)
+  })
+
+  it('a DM on the browser route does not go through the node, so the node\'s pause does not stop it', async () => {
+    mockedApiFetch.mockRejectedValueOnce(tooMany(30))
+    await translateTextDetailed('hello world', 'ja', { onRateLimited: () => {} })
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const q = new URL(String(url)).searchParams.get('q') || ''
+      return { ok: true, json: async () => [[[`translated ${q}`, q]], null, 'en'] } as never
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const r = await translateTextDetailed('a private note', 'ja', { isPrivate: true })
+    expect(r?.text).toBe('translated a private note')
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1)
   })
 })

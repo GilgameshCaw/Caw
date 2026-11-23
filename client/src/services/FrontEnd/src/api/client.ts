@@ -173,6 +173,14 @@ function handleAuthError(_res: Response, errorData: any): never {
 // below); the WeakMap shape lets the recursion guard survive across
 // the inner refetch call without leaking state between unrelated
 // requests.
+/**
+ * What apiFetch throws for a non-2xx answer. The message is as it always was;
+ * the status, and the server's Retry-After (in seconds) when it sent one, are
+ * added so a caller can tell a 429 from other failures without reading them
+ * out of the text.
+ */
+export type ApiStatusError = Error & { status?: number; retryAfterSeconds?: number }
+
 const RETRY_FLAG = Symbol('apiFetchRetried')
 
 export async function apiFetch<T = any>(
@@ -360,7 +368,11 @@ export async function apiFetch<T = any>(
       )
     }
 
-    throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
+    const failure: ApiStatusError = new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
+    failure.status = res.status
+    const retryAfter = Number(res.headers?.get?.('Retry-After'))
+    if (retryAfter > 0) failure.retryAfterSeconds = retryAfter
+    throw failure
   }
 
   // Pin the active host for subsequent calls so the FE stays sticky on the
