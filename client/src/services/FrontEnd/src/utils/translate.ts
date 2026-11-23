@@ -79,8 +79,12 @@ export function getTargetLanguage(): string {
  * Counts script-bearing characters; ignores digits, punctuation, URLs,
  * and ASCII letters (which would otherwise dominate any post that
  * contains a single Latin-script @mention or hashtag).
+ *
+ * `minChars` is how many script-bearing characters it takes to commit
+ * (default 3). translateTextDetailed lowers it to 2, because it only asks
+ * after the provider's own detection has already failed.
  */
-export function detectScript(text: string): string | null {
+export function detectScript(text: string, minChars = 3): string | null {
   if (!text) return null
 
   const counts: Record<string, number> = {}
@@ -120,10 +124,10 @@ export function detectScript(text: string): string | null {
   for (const [lang, n] of Object.entries(counts)) {
     if (n > bestCount) { bestCount = n; best = lang }
   }
-  // Require at least 3 script-bearing characters before committing —
+  // Require at least `minChars` script-bearing characters before committing —
   // a single emoji-adjacent CJK character in an otherwise-English post
   // shouldn't flip the language.
-  return bestCount >= 3 ? best : null
+  return bestCount >= minChars ? best : null
 }
 
 export interface TranslationResult {
@@ -181,11 +185,32 @@ export async function translateTextDetailed(
     return { ...first, targetLanguage: tl }
   }
 
+  // The provider answered but handed the text back as it was. Besides "the
+  // text is already in the target language", that happens when the provider
+  // detects the language itself (MyMemory, the node's fallback when no
+  // translation key is set) and Latin-script tokens in the text (gm, $CAW,
+  // #tags) throw the detection off: a Chinese post with a few of them is
+  // "detected" as Polish and returned untouched. When the text's own script
+  // says what it is, tell the provider and ask again. Only on this path, so a
+  // text that already translates goes out exactly as before. A DM on the
+  // browser route goes to Google's gtx, which detects well and is not told.
+  const viaNode = !(options?.isPrivate && getDmTranslateRoute() === 'browser')
+  const hint = first && viaNode ? detectScript(text, 2) : null
+  if (hint && hint !== tl) {
+    const hinted = await fetchTranslation(text, tl, options?.isPrivate, hint)
+    if (hinted && hinted.text && hinted.text !== text) {
+      return { ...hinted, targetLanguage: tl }
+    }
+  }
+
   // Source was already in target language — fall back to English so the
   // user gets *something* useful (vs. tapping "Translate" and seeing the
-  // same text). Skip this if we already targeted English.
+  // same text). Skip this if we already targeted English. The source is named
+  // here only when the request above was not made because the script language
+  // is the target itself; after a hinted request that failed, this is the plain
+  // request it always was, in case the guess was the problem.
   if (tl !== 'en') {
-    const en = await fetchTranslation(text, 'en', options?.isPrivate)
+    const en = await fetchTranslation(text, 'en', options?.isPrivate, hint && hint === tl ? hint : undefined)
     if (en && en.text && en.text !== text) {
       return { ...en, targetLanguage: 'en' }
     }
@@ -198,19 +223,20 @@ interface FetchResult {
   sourceLanguage: string
 }
 
-async function fetchTranslation(text: string, tl: string, isPrivate?: boolean): Promise<FetchResult | null> {
+async function fetchTranslation(text: string, tl: string, isPrivate?: boolean, sourceLang?: string): Promise<FetchResult | null> {
   // Private (DM) text only goes through the node when the user opted in.
   if (isPrivate && getDmTranslateRoute() === 'browser') {
     return fetchTranslationDirect(text, tl)
   }
-  return fetchTranslationViaNode(text, tl, isPrivate)
+  return fetchTranslationViaNode(text, tl, isPrivate, sourceLang)
 }
 
-async function fetchTranslationViaNode(text: string, tl: string, isPrivate?: boolean): Promise<FetchResult | null> {
+/** `sourceLang`, when given, is sent so the node does not have to detect it. */
+async function fetchTranslationViaNode(text: string, tl: string, isPrivate?: boolean, sourceLang?: string): Promise<FetchResult | null> {
   try {
     const res = await apiFetch<{ text: string; sourceLanguage: string }>('/api/translate', {
       method: 'POST',
-      body: JSON.stringify({ text, targetLang: tl, isPrivate }),
+      body: JSON.stringify({ text, targetLang: tl, sourceLang, isPrivate }),
     })
     if (res?.text) {
       return { text: res.text, sourceLanguage: res.sourceLanguage || '' }
