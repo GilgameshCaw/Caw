@@ -14,6 +14,8 @@ import type { RawAction } from '../ActionProcessor/types'
 import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '../UserService'
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
+import { cleanStaleTxQueue, parseRetentionDays, DEFAULT_FAILED_RETENTION_DAYS, DEFAULT_DONE_RETENTION_DAYS } from '../../utils/txQueuePruning'
+import { readFailedTxQueuePage, type FailedTxQueueCursor } from '../../utils/failedTxQueuePage'
 import { NotificationService } from '../NotificationService'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
@@ -567,6 +569,8 @@ async function cleanupPendingCaws() {
 }
 
 const FAILED_TXQUEUE_MAX_PER_TICK = 500
+// Where the next tick's read of failed rows starts (see utils/failedTxQueuePage.ts).
+let failedTxQueueCursor: FailedTxQueueCursor | null = null
 
 /**
  * Clean up failed txqueue records and update associated caws
@@ -581,15 +585,10 @@ async function cleanupFailedTxQueue() {
     // Find txqueue records that have been failed for more than 5 minutes
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
 
-    const failedTxQueueRecords = await prisma.txQueue.findMany({
-      where: {
-        status: 'failed',
-        updatedAt: {
-          lt: fiveMinutesAgo
-        }
-      },
-      orderBy: { updatedAt: 'asc' },
-      take: FAILED_TXQUEUE_MAX_PER_TICK,
+    const { rows: failedTxQueueRecords, nextCursor } = await readFailedTxQueuePage({
+      cursor: failedTxQueueCursor,
+      limit: FAILED_TXQUEUE_MAX_PER_TICK,
+      olderThan: fiveMinutesAgo,
     })
 
     logger.log(` Found ${failedTxQueueRecords.length} failed txqueue records${failedTxQueueRecords.length === FAILED_TXQUEUE_MAX_PER_TICK ? ' (capped — more records pending next tick)' : ''}`)
@@ -696,19 +695,20 @@ async function cleanupFailedTxQueue() {
           })
         }
 
-        // Optional: Delete very old failed txqueue records (e.g., older than 7 days)
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-        if (txRecord.updatedAt < sevenDaysAgo) {
-          logger.log(` Deleting old failed txqueue record ${txRecord.id}`)
-          await prisma.txQueue.delete({
-            where: { id: txRecord.id }
-          })
-        }
+        // Deletion of old failed TxQueue rows is now owned entirely by
+        // cleanStaleTxQueue() (txQueuePruning.ts, called from the main
+        // DataCleaner tick below) -- flagged by nyaromesama on PR #161:
+        // this 7-day delete ran before that PR's 90-day default could
+        // ever apply, and skipped the pending-WithdrawalRequest guard
+        // that delete has. This function keeps its own job (marking the
+        // associated Caw/Follow/etc. row FAILED above); only the
+        // txQueue.delete that used to follow it is gone.
       } catch (err) {
         logger.error(` Error processing failed txqueue record ${txRecord.id}:`, err)
       }
     }
 
+    failedTxQueueCursor = nextCursor
     logger.log('Failed txqueue cleanup completed')
   } catch (err) {
     logger.error('Fatal error during failed txqueue cleanup:', err)
@@ -1369,6 +1369,10 @@ async function runDataCleanup() {
   // doesn't churn a readdir+stat over every cached PNG that often.
   await sweepOgCacheTask()
 
+  // Delete final TxQueue rows that are past their retention window
+  // (see utils/txQueuePruning.ts). Throttled to once an hour.
+  await sweepTxQueueTask()
+
   logger.log('All cleanup tasks completed')
 }
 
@@ -1393,6 +1397,36 @@ async function sweepOgCacheTask() {
     }
   } catch (err: any) {
     logger.error(`OG cache sweep error: ${err?.message || err}`)
+  }
+}
+
+// Throttle: the TxQueue retention sweep runs at most once an hour so the
+// one-minute ticks do not run a bulk delete every time. The windows come from
+// TXQUEUE_FAILED_RETENTION_DAYS (default 90) and TXQUEUE_DONE_RETENTION_DAYS
+// (default 180); "off" switches a group off. A value that is set but not usable
+// also switches that group off, and is logged, so a typo never deletes data.
+// One run has a batch and time budget (see utils/txQueuePruning.ts), so a large
+// backlog is cleared over several runs instead of holding up this loop.
+let lastTxQueueSweep = 0
+const TXQUEUE_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
+
+async function sweepTxQueueTask() {
+  const now = Date.now()
+  if (now - lastTxQueueSweep < TXQUEUE_SWEEP_INTERVAL) return
+  lastTxQueueSweep = now
+  try {
+    const failed = parseRetentionDays(process.env.TXQUEUE_FAILED_RETENTION_DAYS, DEFAULT_FAILED_RETENTION_DAYS)
+    const done = parseRetentionDays(process.env.TXQUEUE_DONE_RETENTION_DAYS, DEFAULT_DONE_RETENTION_DAYS)
+    if (!failed.valid) {
+      logger.error(`TXQUEUE_FAILED_RETENTION_DAYS="${process.env.TXQUEUE_FAILED_RETENTION_DAYS}" is not a whole number of days (1 or more) or "off"; failed rows are NOT pruned until it is fixed`)
+    }
+    if (!done.valid) {
+      logger.error(`TXQUEUE_DONE_RETENTION_DAYS="${process.env.TXQUEUE_DONE_RETENTION_DAYS}" is not a whole number of days (1 or more) or "off"; done rows are NOT pruned until it is fixed`)
+    }
+    const res = await cleanStaleTxQueue({ failedDays: failed.days, doneDays: done.days })
+    logger.log(`TxQueue sweep: failedDeleted=${res.failedDeleted} doneDeleted=${res.doneDeleted}${res.capped ? ' (stopped at the per-run limit; the rest waits for the next run)' : ''}`)
+  } catch (err: any) {
+    logger.error(`TxQueue sweep error: ${err?.message || err}`)
   }
 }
 
