@@ -36,7 +36,8 @@ import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useWalletPopulation } from '~/hooks/useWalletPopulation'
-import { translateTextDetailed, detectScript } from '~/utils/translate'
+import { translateTextDetailed } from '~/utils/translate'
+import { guessPostLanguage } from '~/utils/postLanguageGuess'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { useMyRole } from '~/hooks/useMyRole'
 import { languageName } from '~/constants/languages'
@@ -955,8 +956,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // posts whose author never set their preferredLanguage. Returns
       // null for Latin-script content (mostly English / European
       // languages share the script too closely to disambiguate without
-      // gtx), in which case the inline Translate button still works.
-      const scriptGuess = detectScript(useItem.content)
+      // gtx), and for a post that has only a few characters of another
+      // script among Latin text, in which case the inline Translate
+      // button still works.
+      const scriptGuess = guessPostLanguage(useItem.content)
       if (scriptGuess) setKnownSourceLanguage(scriptGuess)
     }
   }, [useItem.sourceLanguage, useItem.user?.preferredLanguage, useItem.content, knownSourceLanguage])
