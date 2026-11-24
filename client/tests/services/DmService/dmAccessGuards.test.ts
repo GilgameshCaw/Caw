@@ -132,7 +132,15 @@ const sessionRedis = new Redis('redis://127.0.0.1:6379/15', { lazyConnect: true,
   this.timeout(20000)
 
   before(async function () {
-    await import('../../helpers/isolatedEnv')
+    // Another test file in the same run can change DATABASE_URL after this file
+    // was loaded (followFailedConfirm.test.ts deletes it), and then isolatedEnv
+    // refuses to load the app: skip, don't fail.
+    try {
+      await import('../../helpers/isolatedEnv')
+    } catch {
+      sessionRedis.disconnect()
+      return this.skip()
+    }
     cookieName = (await import('../../../src/api/middleware/auth')).SESSION_COOKIE_NAME
 
     // Sessions the way the session store keeps them (caw:session:<token>).
@@ -149,7 +157,10 @@ const sessionRedis = new Redis('redis://127.0.0.1:6379/15', { lazyConnect: true,
     // these sessions are not visible to it: skip rather than fail, and run this
     // file on its own.
     const { getSession } = await import('../../../src/api/sessionStore')
-    if (!(await getSession(tokenOf(OWNER)))) {
+    // getSession throws, instead of returning nothing, when that file's Redis
+    // connection is already closed. Treat that as "not visible" too.
+    const visible = await getSession(tokenOf(OWNER)).catch(() => null)
+    if (!visible) {
       for (const id of USERS) await sessionRedis.del(`caw:session:${sessionTokens[id]}`)
       sessionRedis.disconnect()
       return this.skip()
