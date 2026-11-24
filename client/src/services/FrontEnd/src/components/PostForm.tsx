@@ -121,15 +121,25 @@ function clampToByteLimit(s: string, maxBytes: number): number {
   return s.length
 }
 
-// Find the last space before (or at) the given character index whose prefix fits within maxBytes.
-// Falls back to the byte-clamped hard split if no space is found.
-function findSplitPoint(s: string, maxBytes: number): number {
+// Japanese and Chinese put no space between words, so the last space can be far
+// back in the text (the one in "upstream #398" inside a Japanese post), and
+// splitting there left most of the first post unused. A chunk may also end
+// just after one of these marks.
+const BREAK_AFTER = '。、，．！？）」』】'
+
+// Find the last space or newline before (or at) the given character index, or the point
+// just after the last BREAK_AFTER mark, whichever is later, whose prefix fits within maxBytes.
+// Falls back to the byte-clamped hard split if there is none.
+export function findSplitPoint(s: string, maxBytes: number): number {
   // First, find the largest character index whose prefix fits in maxBytes
   const hardLimit = clampToByteLimit(s, maxBytes)
   if (hardLimit >= s.length) return s.length
-  // Try to find a space at or before hardLimit
-  const spaceAt = s.lastIndexOf(' ', hardLimit)
-  if (spaceAt > 0) return spaceAt
+  // Try to find a space or newline at or before hardLimit
+  let splitAt = Math.max(s.lastIndexOf(' ', hardLimit), s.lastIndexOf('\n', hardLimit))
+  for (let i = hardLimit - 1; i > splitAt; i--) {
+    if (BREAK_AFTER.includes(s[i])) { splitAt = i + 1; break }
+  }
+  if (splitAt > 0) return splitAt
   return hardLimit
 }
 
