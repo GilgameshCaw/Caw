@@ -15,6 +15,7 @@ import { refreshUserFromChain, reconcileUsernameDrift, StaleTokenError } from '.
 import { getNetworkId } from '../../utils/networkId'
 import { countManager } from '../CountManager'
 import { cleanStaleTxQueue, parseRetentionDays, DEFAULT_FAILED_RETENTION_DAYS, DEFAULT_DONE_RETENTION_DAYS } from '../../utils/txQueuePruning'
+import { readFailedTxQueuePage, type FailedTxQueueCursor } from '../../utils/failedTxQueuePage'
 import { NotificationService } from '../NotificationService'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
@@ -568,6 +569,8 @@ async function cleanupPendingCaws() {
 }
 
 const FAILED_TXQUEUE_MAX_PER_TICK = 500
+// Where the next tick's read of failed rows starts (see utils/failedTxQueuePage.ts).
+let failedTxQueueCursor: FailedTxQueueCursor | null = null
 
 /**
  * Clean up failed txqueue records and update associated caws
@@ -582,15 +585,10 @@ async function cleanupFailedTxQueue() {
     // Find txqueue records that have been failed for more than 5 minutes
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
 
-    const failedTxQueueRecords = await prisma.txQueue.findMany({
-      where: {
-        status: 'failed',
-        updatedAt: {
-          lt: fiveMinutesAgo
-        }
-      },
-      orderBy: { updatedAt: 'asc' },
-      take: FAILED_TXQUEUE_MAX_PER_TICK,
+    const { rows: failedTxQueueRecords, nextCursor } = await readFailedTxQueuePage({
+      cursor: failedTxQueueCursor,
+      limit: FAILED_TXQUEUE_MAX_PER_TICK,
+      olderThan: fiveMinutesAgo,
     })
 
     logger.log(` Found ${failedTxQueueRecords.length} failed txqueue records${failedTxQueueRecords.length === FAILED_TXQUEUE_MAX_PER_TICK ? ' (capped — more records pending next tick)' : ''}`)
@@ -710,6 +708,7 @@ async function cleanupFailedTxQueue() {
       }
     }
 
+    failedTxQueueCursor = nextCursor
     logger.log('Failed txqueue cleanup completed')
   } catch (err) {
     logger.error('Fatal error during failed txqueue cleanup:', err)
