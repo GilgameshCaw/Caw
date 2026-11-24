@@ -461,15 +461,27 @@ export class DmService {
     if (messageIds.length === 0) return
 
     // Get conversation IDs from the messages
-    const messages = await prisma.message.findMany({
+    const rawMessages = await prisma.message.findMany({
       where: { id: { in: messageIds } },
+      select: { id: true, conversationId: true }
+    })
+    // Only messages in conversations the user is still a member of.
+    const memberships = await prisma.conversationParticipant.findMany({
+      where: {
+        userId,
+        leftAt: null,
+        conversationId: { in: [...new Set(rawMessages.map(m => m.conversationId))] },
+      },
       select: { conversationId: true }
     })
-    const conversationIds = [...new Set(messages.map(m => m.conversationId))]
+    const memberConvIds = new Set(memberships.map(p => p.conversationId))
+    const messages = rawMessages.filter(m => memberConvIds.has(m.conversationId))
+    if (messages.length === 0) return { conversationIds: [] as string[] }
+    const conversationIds = [...memberConvIds]
 
     // Create read receipts
     await prisma.messageReceipt.createMany({
-      data: messageIds.map(messageId => ({
+      data: messages.map(({ id: messageId }) => ({
         messageId,
         userId,
         readAt: new Date()

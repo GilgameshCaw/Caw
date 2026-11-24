@@ -690,8 +690,17 @@ const DELETE_WINDOW_MS = 5 * 60 * 1000  // 5 minutes
 // Edit a message (within 15 minutes, sender only)
 router.patch('/messages/:messageId',
   requireAuth({ lookup: async (req) => {
-    const msg = await prisma.message.findUnique({ where: { id: req.params.messageId }, select: { senderId: true } })
-    return msg?.senderId
+    const msg = await prisma.message.findUnique({
+      where: { id: req.params.messageId },
+      select: {
+        senderId: true,
+        conversation: { select: { participants: { select: { userId: true, leftAt: true } } } },
+      },
+    })
+    if (!msg) return undefined
+    // A sender who has left or been removed from the group can no longer edit.
+    const stillMember = msg.conversation.participants.some(p => p.userId === msg.senderId && !p.leftAt)
+    return stillMember ? msg.senderId : undefined
   }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
