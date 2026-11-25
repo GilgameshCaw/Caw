@@ -148,6 +148,19 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
       expect(res.status).to.equal(400)
     })
 
+    it('answers 400 for a request with no body', async () => {
+      const res = await request(app).post('/api/users/check-cawonces')
+      expect(res.status).to.equal(400)
+    })
+
+    it('answers 400 for a body that is not JSON', async () => {
+      const res = await request(app)
+        .post('/api/users/check-cawonces')
+        .set('Content-Type', 'text/plain')
+        .send('hello')
+      expect(res.status).to.equal(400)
+    })
+
     it('reports the in-flight and underpriced cawonces as used, and not the final ones', async () => {
       await insertRow('pending', 100)
       await insertRow('awaiting_indexer', 101)
@@ -169,10 +182,13 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
     })
 
     it('ignores rows outside the search range and other senders\' rows', async () => {
-      await insertRow('pending', 50)
-      await insertRow('pending', 100 + 1 + 200 + 5)
-      await insertRow('pending', 101, OTHER)
-      const res = await check({ tokenId: SENDER, start: 100, count: 3 })
+      const START = 100
+      const COUNT = 3
+      const SEARCH_END = START + COUNT + 200 // the last cawonce the route looks at
+      await insertRow('pending', START - 50)
+      await insertRow('pending', SEARCH_END + 3)
+      await insertRow('pending', START + 1, OTHER)
+      const res = await check({ tokenId: SENDER, start: START, count: COUNT })
       expect(res.body.used).to.deep.equal([])
       expect(res.body.nextSafe).to.equal(100)
     })

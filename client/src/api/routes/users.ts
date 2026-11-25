@@ -612,7 +612,8 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
  */
 router.post('/check-cawonces', async (req, res) => {
   try {
-    const { tokenId, start, count } = req.body
+    // Express 5 leaves req.body undefined when the request has no JSON body.
+    const { tokenId, start, count } = req.body ?? {}
     // All three feed Int columns or arithmetic on them, so anything that is not
     // a whole number in range (a string, a fraction, Infinity from "1e999") is
     // refused here instead of becoming a 500 from Prisma.
