@@ -160,6 +160,7 @@ function contentFingerprint(data: any): string {
 // is Redis-backed — the previous in-memory version was bypassable by
 // spreading requests across worker processes.
 import { checkFreeActionRate } from '../freeActionRateLimit'
+import { IN_FLIGHT_TXQUEUE_STATUSES } from '../../utils/txQueueStatus'
 
 // Lazy-initialized read-only provider for on-chain session key verification
 let _readProvider: JsonRpcProvider | WebSocketProvider | null = null
@@ -814,7 +815,7 @@ router.post('/', async (req, res) => {
           // short enough that legitimate "I want to post the same thing
           // later" is not blocked.
           OR: [
-            { status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] } },
+            { status: { in: [...IN_FLIGHT_TXQUEUE_STATUSES] } },
             { status: { in: ['done', 'validated_by_peer'] }, updatedAt: { gte: new Date(Date.now() - 2 * 60_000) } },
           ],
           createdAt: { gte: new Date(Date.now() - 5 * 60_000) },

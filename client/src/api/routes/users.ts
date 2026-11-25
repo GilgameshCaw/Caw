@@ -19,6 +19,8 @@ import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
 import { pokeIndexTokenId } from '../util/indexerPoke'
+import { getMinSafeCawonce, legacyHeldCawonces } from '../../utils/minSafeCawonce'
+import { CAWONCE_HELD_TXQUEUE_STATUSES } from '../../utils/txQueueStatus'
 
 // ---------------------------------------------------------------------------
 // isPasskey cache + L1 provider (lazy, reused across requests)
@@ -574,72 +576,32 @@ router.get('/client-auth/:tokenId', async (req, res) => {
   }
 })
 
+// A value that ends up in an Int column, or in arithmetic on one, has to be a
+// whole number in range. Anything else is refused with a 400 instead of
+// reaching Prisma and coming back as a 500.
+const MAX_INT32 = 2_147_483_647
+const isWholeNumber = (v: unknown): v is number => Number.isSafeInteger(v)
+const isTokenId = (v: unknown): v is number => isWholeNumber(v) && v >= 1 && v <= MAX_INT32
+
 /**
  * GET /api/users/min-cawonce/:tokenId
- * Returns the minimum safe cawonce for a user (accounting for scheduled posts)
- * This helps prevent cawonce collisions when a user has scheduled posts
+ * Returns the minimum safe cawonce for a user: one above the highest cawonce
+ * of a pending scheduled post, of a TxQueue row that still holds its cawonce
+ * (see utils/txQueueStatus.ts), or of a confirmed action.
+ * This helps prevent cawonce collisions when a user has scheduled or in-flight posts
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
  */
 router.get('/min-cawonce/:tokenId', async (req, res) => {
   try {
     const tokenId = Number(req.params.tokenId)
 
-    if (!tokenId || isNaN(tokenId)) {
+    if (!isTokenId(tokenId)) {
       return res.status(400).json({ error: 'Invalid tokenId' })
     }
 
-    // Find the highest cawonce used by any pending scheduled post for this user
-    const maxScheduledCawonce = await prisma.scheduledCaw.aggregate({
-      where: {
-        userId: tokenId,
-        status: 'pending',
-        cawonce: { not: null }
-      },
-      _max: {
-        cawonce: true
-      }
-    })
+    const { minSafeCawonce, hasScheduledPosts } = await getMinSafeCawonce(tokenId)
 
-    // Also check pending/processing TxQueue entries for this user
-    // Scan all pending entries since cawonce is inside JSON and can't be sorted by DB
-    const pendingTxQueue = await prisma.txQueue.findMany({
-      where: {
-        senderId: tokenId,
-        status: { in: ['pending', 'processing'] },
-      },
-      select: { payload: true },
-    })
-    const txQueueCawonces = pendingTxQueue
-      .map(e => (e.payload as any)?.data?.cawonce)
-      .filter((c): c is number => typeof c === 'number')
-    const txQueueMaxCawonce = txQueueCawonces.length > 0
-      ? Math.max(...txQueueCawonces)
-      : null
-
-    // Also check the highest confirmed Action cawonce.
-    // This handles gaps in the on-chain bitmap (e.g. cawonces that were skipped
-    // but later slots are used). Without this, nextCawonce on-chain returns
-    // the first gap, causing the frontend to reuse already-confirmed cawonces.
-    const maxConfirmedAction = await prisma.action.aggregate({
-      where: { senderId: tokenId },
-      _max: { cawonce: true }
-    })
-
-    // The minimum safe cawonce is one higher than the highest in-flight or confirmed cawonce
-    const candidates = [
-      maxScheduledCawonce._max.cawonce,
-      txQueueMaxCawonce,
-      maxConfirmedAction._max.cawonce,
-    ].filter((v): v is number => v !== null)
-
-    const minSafeCawonce = candidates.length > 0
-      ? Math.max(...candidates) + 1
-      : null
-
-    return res.json({
-      minSafeCawonce,
-      hasScheduledPosts: maxScheduledCawonce._max.cawonce !== null
-    })
+    return res.json({ minSafeCawonce, hasScheduledPosts })
   } catch (err: any) {
     console.error('GET /api/users/min-cawonce/:tokenId error', err)
     return res.status(500).json({ error: 'Internal server error' })
@@ -648,7 +610,7 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
 
 /**
  * POST /api/users/check-cawonces
- * Check which cawonces in a given range are already used (pending or confirmed).
+ * Check which cawonces in a given range are already used (in flight or confirmed).
  * Body: { tokenId: number, start: number, count: number }
  * Returns: { used: number[], nextSafe: number }
  *
@@ -657,15 +619,22 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
  */
 router.post('/check-cawonces', async (req, res) => {
   try {
-    const { tokenId, start, count } = req.body
-    if (!tokenId || typeof start !== 'number' || typeof count !== 'number') {
-      return res.status(400).json({ error: 'tokenId, start, and count are required' })
+    // Express 5 leaves req.body undefined when the request has no JSON body.
+    const { tokenId, start, count } = req.body ?? {}
+    // A string, a fraction, or Infinity (JSON reads "1e999" as one) is refused here.
+    // start + count + 200 is compared with an Int column, so start has a bound too.
+    if (
+      !isTokenId(tokenId) ||
+      !isWholeNumber(start) || start < 0 || start > MAX_INT32 - 300 ||
+      !isWholeNumber(count)
+    ) {
+      return res.status(400).json({ error: 'tokenId, start, and count are required whole numbers (tokenId >= 1, start >= 0)' })
     }
     const safeCount = Math.min(Math.max(count, 1), 50)
     const searchEnd = start + safeCount + 200 // extended range for finding a contiguous block
 
     // Single set of queries covering the full search range
-    const [confirmedActions, pendingEntries, scheduledEntries] = await Promise.all([
+    const [confirmedActions, pendingEntries, legacyCawonces, scheduledEntries] = await Promise.all([
       prisma.action.findMany({
         where: { senderId: tokenId, cawonce: { gte: start, lte: searchEnd } },
         select: { cawonce: true },
@@ -673,10 +642,12 @@ router.post('/check-cawonces', async (req, res) => {
       prisma.txQueue.findMany({
         where: {
           senderId: tokenId,
-          status: { in: ['pending', 'processing'] },
+          status: { in: [...CAWONCE_HELD_TXQUEUE_STATUSES] },
+          cawonce: { gte: start, lte: searchEnd },
         },
-        select: { payload: true },
+        select: { cawonce: true },
       }),
+      legacyHeldCawonces(tokenId),
       prisma.scheduledCaw.findMany({
         where: {
           userId: tokenId,
@@ -687,9 +658,10 @@ router.post('/check-cawonces', async (req, res) => {
       }),
     ])
 
-    const pendingCawonces = pendingEntries
-      .map(e => (e.payload as any)?.data?.cawonce)
-      .filter((c): c is number => typeof c === 'number' && c >= start && c <= searchEnd)
+    const pendingCawonces = [
+      ...pendingEntries.map(e => e.cawonce!),
+      ...legacyCawonces.filter(c => c >= start && c <= searchEnd),
+    ]
 
     const usedSet = new Set([
       ...confirmedActions.map(a => a.cawonce),
