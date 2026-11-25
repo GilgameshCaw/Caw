@@ -165,10 +165,20 @@ const TAG = 'hashtagfeedtest'
   })
 
   describe('blocked authors', () => {
-    it('are left out for the user who blocked them', async () => {
-      const res = await asViewer(list()).expect(200)
+    it('are left out for the user who blocked them, with a verified session', async () => {
+      const res = await asViewer(list()).set('x-session-token', viewerToken).expect(200)
       expect(ids(res.body)).to.not.include(String(blockedId))
       expect(ids(res.body)).to.include(String(mainId))
+    })
+
+    it('are not left out on x-user-id alone: the block list is private', async () => {
+      const res = await asViewer(list()).expect(200)
+      expect(ids(res.body)).to.include(String(blockedId))
+    })
+
+    it('are not left out when another user\'s session claims the viewer id', async () => {
+      const res = await asViewer(list()).set('x-session-token', otherToken).expect(200)
+      expect(ids(res.body)).to.include(String(blockedId))
     })
 
     it('are listed for everyone else', async () => {
@@ -177,6 +187,16 @@ const TAG = 'hashtagfeedtest'
       const asOther = await list().set('x-user-id', String(other.tokenId)).set('x-session-token', otherToken).expect(200)
       expect(ids(asOther.body)).to.include(String(blockedId))
     })
+  })
+
+  describe('an x-user-id that is not a user id', () => {
+    for (const bad of ['abc', '0', '1.5', '99999999999']) {
+      it(`is ignored: ${bad}`, async () => {
+        const res = await list().set('x-user-id', bad).expect(200)
+        expect(ids(res.body)).to.include(String(mainId))
+        expect(state(main(res.body))).to.deep.equal(NONE)
+      })
+    }
   })
 
   describe('paging', () => {

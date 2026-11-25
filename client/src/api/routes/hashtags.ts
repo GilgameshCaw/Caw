@@ -19,14 +19,6 @@ router.get('/:tag/caws', async (req, res) => {
     const hashtagName = (req.params.tag as string).toLowerCase()
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
     const cursor = req.query.cursor ? { id: Number(req.query.cursor) } : undefined
-    // currentUserId drives viewer-specific state (liked, reposted, bookmarked, poll
-    // vote) and must be verified; the raw header only feeds the block filter, as on
-    // /api/caws.
-    const headerUserId = Number(req.header('x-user-id')) || undefined
-    const [currentUserId, blockedIds] = await Promise.all([
-      getVerifiedViewerId(req),
-      headerUserId ? getBlockedUserIds(headerUserId) : Promise.resolve([] as number[]),
-    ])
 
     // Find the hashtag first
     const hashtag = await prisma.hashtag.findUnique({
@@ -41,6 +33,13 @@ router.get('/:tag/caws', async (req, res) => {
         hashtag: { name: hashtagName, usageCount: 0 }
       })
     }
+
+    // The viewer drives viewer-specific state (liked, reposted, bookmarked, poll vote)
+    // and the block filter, so it must be verified: x-user-id on its own is a value
+    // the client can set to anything, and the block list is private (GET /api/blocks
+    // needs the owner), so a header alone must not reveal it by what it hides.
+    const currentUserId = await getVerifiedViewerId(req)
+    const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
 
     // Get caws that have this hashtag - only show SUCCESS caws
     const cawHashtags = await prisma.cawHashtag.findMany({
