@@ -2,7 +2,9 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { getTrendingHashtags, searchHashtags } from '../../tools/hashtags'
-import { shapeCaw, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
+import { shapeCaw, handlePagination, enrichWithPollVotes, enrichWithXBadges, getCawIncludeConfig } from '../shared/cawUtils'
+import { getVerifiedViewerId } from '../shared/viewer'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -17,7 +19,14 @@ router.get('/:tag/caws', async (req, res) => {
     const hashtagName = (req.params.tag as string).toLowerCase()
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
     const cursor = req.query.cursor ? { id: Number(req.query.cursor) } : undefined
-    const currentUserId = Number(req.header('x-user-id') || 0) || undefined
+    // currentUserId drives viewer-specific state (liked, reposted, bookmarked, poll
+    // vote) and must be verified; the raw header only feeds the block filter, as on
+    // /api/caws.
+    const headerUserId = Number(req.header('x-user-id')) || undefined
+    const [currentUserId, blockedIds] = await Promise.all([
+      getVerifiedViewerId(req),
+      headerUserId ? getBlockedUserIds(headerUserId) : Promise.resolve([] as number[]),
+    ])
 
     // Find the hashtag first
     const hashtag = await prisma.hashtag.findUnique({
@@ -37,7 +46,10 @@ router.get('/:tag/caws', async (req, res) => {
     const cawHashtags = await prisma.cawHashtag.findMany({
       where: {
         hashtagId: hashtag.id,
-        caw: { status: 'SUCCESS' }  // Only show public SUCCESS caws in hashtag feeds
+        caw: {
+          status: 'SUCCESS', // Only show public SUCCESS caws in hashtag feeds
+          ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+        },
       },
       orderBy: [
         { caw: { createdAt: 'desc' } },
@@ -47,32 +59,7 @@ router.get('/:tag/caws', async (req, res) => {
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor.id } : undefined,
       include: {
-        caw: {
-          include: {
-            user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
-            likes: currentUserId
-              ? { where: { userId: currentUserId }, select: { userId: true, pending: true, action: true } }
-              : false,
-            recaws: currentUserId
-              ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
-              : false,
-            poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
-            hashtags: {
-              include: { hashtag: { select: { name: true } } }
-            },
-            _count: { select: { tips: { where: { pending: false } } } },
-            parent: {
-              include: {
-                user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
-                poll: { select: { id: true, options: true, optionImages: true, totalVotes: true, endsAt: true, multiSelect: true } },
-                hashtags: {
-                  include: { hashtag: { select: { name: true } } }
-                },
-                _count: { select: { tips: { where: { pending: false } } } }
-              }
-            }
-          }
-        }
+        caw: { include: getCawIncludeConfig({ currentUserId, includeHashtags: true }) }
       }
     })
 
