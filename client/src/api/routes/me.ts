@@ -2,6 +2,8 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { extractSession } from '../middleware/auth'
 
+import { getMinSafeCawonce } from '../../utils/minSafeCawonce'
+
 const router = Router()
 
 /**
@@ -243,47 +245,7 @@ async function fetchBlocks(tokenId: number) {
 
 async function fetchCawonce(tokenId: number) {
   try {
-    // Highest cawonce from pending scheduled posts
-    const maxScheduledCawonce = await prisma.scheduledCaw.aggregate({
-      where: {
-        userId: tokenId,
-        status: 'pending',
-        cawonce: { not: null },
-      },
-      _max: { cawonce: true },
-    })
-
-    // Highest cawonce from pending/processing TxQueue entries
-    const pendingTxQueue = await prisma.txQueue.findMany({
-      where: {
-        senderId: tokenId,
-        status: { in: ['pending', 'processing'] },
-      },
-      select: { payload: true },
-    })
-    const txQueueCawonces = pendingTxQueue
-      .map(e => (e.payload as any)?.data?.cawonce)
-      .filter((c): c is number => typeof c === 'number')
-    const txQueueMaxCawonce = txQueueCawonces.length > 0
-      ? Math.max(...txQueueCawonces)
-      : null
-
-    // Highest confirmed Action cawonce
-    const maxConfirmedAction = await prisma.action.aggregate({
-      where: { senderId: tokenId },
-      _max: { cawonce: true },
-    })
-
-    const candidates = [
-      maxScheduledCawonce._max.cawonce,
-      txQueueMaxCawonce,
-      maxConfirmedAction._max.cawonce,
-    ].filter((v): v is number => v !== null)
-
-    const minSafeCawonce = candidates.length > 0
-      ? Math.max(...candidates) + 1
-      : null
-
+    const { minSafeCawonce } = await getMinSafeCawonce(tokenId)
     return { minSafeCawonce }
   } catch (err: any) {
     console.error('[/api/me] fetchCawonce error:', err.message)
