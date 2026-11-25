@@ -19,7 +19,7 @@ import { requireAuth } from '../middleware/auth'
 import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 import { isPlaceholderUser } from '../../services/UserService'
 import { pokeIndexTokenId } from '../util/indexerPoke'
-import { getMinSafeCawonce } from '../../utils/minSafeCawonce'
+import { getMinSafeCawonce, legacyHeldCawonces } from '../../utils/minSafeCawonce'
 import { CAWONCE_HELD_TXQUEUE_STATUSES } from '../../utils/txQueueStatus'
 
 // ---------------------------------------------------------------------------
@@ -634,7 +634,7 @@ router.post('/check-cawonces', async (req, res) => {
     const searchEnd = start + safeCount + 200 // extended range for finding a contiguous block
 
     // Single set of queries covering the full search range
-    const [confirmedActions, pendingEntries, scheduledEntries] = await Promise.all([
+    const [confirmedActions, pendingEntries, legacyCawonces, scheduledEntries] = await Promise.all([
       prisma.action.findMany({
         where: { senderId: tokenId, cawonce: { gte: start, lte: searchEnd } },
         select: { cawonce: true },
@@ -647,6 +647,7 @@ router.post('/check-cawonces', async (req, res) => {
         },
         select: { cawonce: true },
       }),
+      legacyHeldCawonces(tokenId),
       prisma.scheduledCaw.findMany({
         where: {
           userId: tokenId,
@@ -657,7 +658,10 @@ router.post('/check-cawonces', async (req, res) => {
       }),
     ])
 
-    const pendingCawonces = pendingEntries.map(e => e.cawonce!)
+    const pendingCawonces = [
+      ...pendingEntries.map(e => e.cawonce!),
+      ...legacyCawonces.filter(c => c >= start && c <= searchEnd),
+    ]
 
     const usedSet = new Set([
       ...confirmedActions.map(a => a.cawonce),

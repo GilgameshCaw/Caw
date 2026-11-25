@@ -44,7 +44,7 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
   let prisma: typeof import('../../../src/prismaClient').prisma
   let app: express.Express
 
-  async function insertRow(status: string, cawonce: number, senderId = SENDER, payload = '{}') {
+  async function insertRow(status: string, cawonce: number | null, senderId = SENDER, payload = '{}') {
     await prisma.$executeRaw`
       INSERT INTO "TxQueue" ("payload", "signedTx", "status", "senderId", "cawonce", "updatedAt")
       VALUES (${payload}::jsonb, ${'0x' + Math.random().toString(16).slice(2)}, ${status}, ${senderId}, ${cawonce}, NOW())`
@@ -72,6 +72,12 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
     await reset()
     await prisma.$disconnect()
   })
+
+  // A row from before the cawonce column existed, or on a schema made by
+  // `prisma db push` (which does not run the backfill in 20260429100000): the
+  // column is NULL and the cawonce is only in the payload.
+  const insertLegacyRow = (status: string, cawonce: number, senderId = SENDER) =>
+    insertRow(status, null, senderId, JSON.stringify({ data: { cawonce } }))
 
   const minCawonce = (tokenId: number) => request(app).get(`/api/users/min-cawonce/${tokenId}`)
   const check = (body: unknown) => request(app).post('/api/users/check-cawonces').send(body as object)
@@ -198,6 +204,54 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
       const res = await check({ tokenId: SENDER, start: START, count: COUNT })
       expect(res.body.used).to.deep.equal([])
       expect(res.body.nextSafe).to.equal(100)
+    })
+  })
+
+  describe('rows whose cawonce column is NULL (the cawonce is only in the payload)', () => {
+    for (const status of HELD) {
+      it(`min-cawonce counts a ${status} row`, async () => {
+        await insertLegacyRow(status, 23)
+        const res = await minCawonce(SENDER)
+        expect(res.status).to.equal(200)
+        expect(res.body.minSafeCawonce).to.equal(24)
+      })
+    }
+
+    for (const status of FINAL) {
+      it(`min-cawonce does not count a ${status} row`, async () => {
+        await insertLegacyRow(status, 23)
+        const res = await minCawonce(SENDER)
+        expect(res.body.minSafeCawonce).to.equal(null)
+      })
+    }
+
+    it('min-cawonce takes the highest of the column and the payload', async () => {
+      await insertRow('pending', 10)
+      await insertLegacyRow('processing', 30)
+      expect((await minCawonce(SENDER)).body.minSafeCawonce).to.equal(31)
+      await reset()
+      await insertRow('pending', 50)
+      await insertLegacyRow('processing', 30)
+      expect((await minCawonce(SENDER)).body.minSafeCawonce).to.equal(51)
+    })
+
+    it('min-cawonce ignores a payload with no usable cawonce, and another sender\'s row', async () => {
+      await insertRow('pending', null, SENDER, '{}')
+      await insertRow('pending', null, SENDER, JSON.stringify({ data: { cawonce: '5' } }))
+      await insertLegacyRow('pending', 80, OTHER)
+      const res = await minCawonce(SENDER)
+      expect(res.body.minSafeCawonce).to.equal(null)
+    })
+
+    it('check-cawonces reports a held row as used, and not a final one or one outside the range', async () => {
+      await insertRow('pending', 100)
+      await insertLegacyRow('waiting_for_session', 102)
+      await insertLegacyRow('done', 101)
+      await insertLegacyRow('pending', 900)
+      const res = await check({ tokenId: SENDER, start: 100, count: 4 })
+      expect(res.status).to.equal(200)
+      expect(res.body.used).to.deep.equal([100, 102])
+      expect(res.body.nextSafe).to.equal(103)
     })
   })
 })
