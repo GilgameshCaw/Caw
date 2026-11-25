@@ -108,6 +108,13 @@ const FINAL = ['done', 'validated_by_peer', 'failed', 'cancelled', 'retried']
       expect(res.body.minSafeCawonce).to.equal(13)
     })
 
+    for (const bad of ['abc', '0', '-1', '1.5', '1e999', String(2 ** 31)]) {
+      it(`answers 400 for a tokenId of ${bad}`, async () => {
+        const res = await request(app).get(`/api/users/min-cawonce/${bad}`)
+        expect(res.status).to.equal(400)
+      })
+    }
+
     it('ignores another sender\'s rows', async () => {
       await insertRow('pending', 80, OTHER)
       const res = await minCawonce(SENDER)

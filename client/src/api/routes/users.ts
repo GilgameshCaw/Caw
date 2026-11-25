@@ -576,6 +576,13 @@ router.get('/client-auth/:tokenId', async (req, res) => {
   }
 })
 
+// A value that ends up in an Int column, or in arithmetic on one, has to be a
+// whole number in range. Anything else is refused with a 400 instead of
+// reaching Prisma and coming back as a 500.
+const MAX_INT32 = 2_147_483_647
+const isWholeNumber = (v: unknown): v is number => Number.isSafeInteger(v)
+const isTokenId = (v: unknown): v is number => isWholeNumber(v) && v >= 1 && v <= MAX_INT32
+
 /**
  * GET /api/users/min-cawonce/:tokenId
  * Returns the minimum safe cawonce for a user: one above the highest cawonce
@@ -588,7 +595,7 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
   try {
     const tokenId = Number(req.params.tokenId)
 
-    if (!tokenId || isNaN(tokenId)) {
+    if (!isTokenId(tokenId)) {
       return res.status(400).json({ error: 'Invalid tokenId' })
     }
 
@@ -614,15 +621,12 @@ router.post('/check-cawonces', async (req, res) => {
   try {
     // Express 5 leaves req.body undefined when the request has no JSON body.
     const { tokenId, start, count } = req.body ?? {}
-    // All three feed Int columns or arithmetic on them, so anything that is not
-    // a whole number in range (a string, a fraction, Infinity from "1e999") is
-    // refused here instead of becoming a 500 from Prisma.
-    const MAX_INT32 = 2_147_483_647
-    const isWhole = (v: unknown): v is number => Number.isSafeInteger(v)
+    // A string, a fraction, or Infinity (JSON reads "1e999" as one) is refused here.
+    // start + count + 200 is compared with an Int column, so start has a bound too.
     if (
-      !isWhole(tokenId) || tokenId < 1 || tokenId > MAX_INT32 ||
-      !isWhole(start) || start < 0 || start > MAX_INT32 - 300 ||
-      !isWhole(count)
+      !isTokenId(tokenId) ||
+      !isWholeNumber(start) || start < 0 || start > MAX_INT32 - 300 ||
+      !isWholeNumber(count)
     ) {
       return res.status(400).json({ error: 'tokenId, start, and count are required whole numbers (tokenId >= 1, start >= 0)' })
     }
