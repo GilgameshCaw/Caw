@@ -9,8 +9,18 @@ export async function ownershipBundleSelector(profile: Contract): Promise<string
     if (selector !== generationSelector) throw new Error('Unsupported profile ownership bundle version')
     return selector
   } catch (error) {
-    // The original immutable profile reverts with empty data for an unknown selector.
-    if (isError(error, 'CALL_EXCEPTION') && error.data === '0x') return legacySelector
-    throw error
+    // The fixed Base fallback succeeds with zero bytes. ethers reports the
+    // decode failure separately from an empty revert on an unknown selector.
+    const emptyResult = isError(error, 'BAD_DATA') && error.value === '0x' &&
+      error.info?.signature === 'ownershipBundleSelector()'
+    const emptyRevert = isError(error, 'CALL_EXCEPTION') && error.data === '0x'
+    if (!emptyResult && !emptyRevert) throw error
+
+    // An EOA or an unrelated empty fallback can produce the same result.
+    // Check the configured profile's ERC-721 metadata before using the old ABI.
+    if (await profile.name() !== 'CAW NAME' || await profile.symbol() !== 'cawNAME') {
+      throw new Error('Unrecognized legacy ownership profile')
+    }
+    return legacySelector
   }
 }
