@@ -109,7 +109,8 @@ contract PathwayExpander is Ownable {
   /// @param newStep        The step we just moved TO (1 or 2).
   /// @param optionalCount  optionalDVNCount in the new config.
   /// @param threshold      optionalDVNThreshold in the new config.
-  /// @param addedDvn       The single new DVN address that was appended.
+  /// @param addedDvn       The single new DVN address that was added. It can sit anywhere in
+  ///                       the new optionalDVNs array, not only at the end.
   event DvnEscalated(
     address indexed oapp,
     address indexed lib,
@@ -241,12 +242,23 @@ contract PathwayExpander is Ownable {
   ///           step 2+    : LOCKED — reverts
   ///
   ///         At every step the honest-DVN majority is preserved: at 3-of-5 the
-  ///         owner has appended at most 2 DVNs, so passing threshold still
+  ///         owner has added at most 2 DVNs, so passing threshold still
   ///         requires 1 honest DVN.
   ///
   /// @dev    Replay-safe via the stored hash of the current config. Owner can't
   ///         remove DVNs, lower threshold, replace required DVNs, reorder the
   ///         existing optional set, or skip a step.
+  ///
+  /// @dev    The new optionalDVNs array has to be the current one plus exactly
+  ///         one new DVN, which may sit at ANY position: every current DVN stays,
+  ///         in the same relative order. LayerZero's ULN302 libraries only accept
+  ///         DVN arrays in strictly ascending address order (UlnBase reverts with
+  ///         LZ_ULN_Unsorted), so a new DVN whose address is below the current
+  ///         highest one has to go in the middle, and one that is not placed in its
+  ///         sorted position is refused by the endpoint, which reverts this call
+  ///         as a whole. Ordering is left to LayerZero; this function only
+  ///         guarantees which DVNs are in the set. The DvnEscalated event names
+  ///         the DVN that was added, wherever it sits.
   ///
   /// @param oapp             The OApp whose DVN set we're extending.
   /// @param endpointAddr     The LZ EndpointV2 address for this chain.
@@ -294,13 +306,30 @@ contract PathwayExpander is Ownable {
     require(nxt.optionalDVNs.length  == nxt.optionalDVNCount,     "PathwayExpander: optionalDVNs array length mismatch");
     require(cur.optionalDVNs.length  == cur.optionalDVNCount,     "PathwayExpander: current optionalDVNs array length mismatch");
 
-    // Prefix must be identical (no reordering).
-    for (uint256 i; i < cur.optionalDVNCount; ++i) {
-      require(nxt.optionalDVNs[i] == cur.optionalDVNs[i], "PathwayExpander: optionalDVNs prefix reordered");
+    // The new set is the current one plus exactly one DVN, at any position: walk the
+    // new array once, matching the current DVNs in order; the one entry that does not
+    // match is the added DVN. A removed, replaced or reordered current DVN, or a
+    // second new one, leaves a current DVN unmatched or a second extra entry.
+    // While the length checks above hold, each of the two checks below implies the
+    // other; both are kept so that this loop does not depend on them.
+    address addedDvn;
+    {
+      uint256 curLen  = cur.optionalDVNCount;
+      uint256 matched;
+      bool    found;
+      for (uint256 i; i < nxt.optionalDVNs.length; ++i) {
+        if (matched < curLen && nxt.optionalDVNs[i] == cur.optionalDVNs[matched]) {
+          ++matched;
+        } else {
+          require(!found, "PathwayExpander: optionalDVNs not current plus one new DVN");
+          found = true;
+          addedDvn = nxt.optionalDVNs[i];
+        }
+      }
+      require(found && matched == curLen, "PathwayExpander: optionalDVNs not current plus one new DVN");
     }
 
     // New DVN must be fresh.
-    address addedDvn = nxt.optionalDVNs[cur.optionalDVNCount];
     require(addedDvn != address(0), "PathwayExpander: zero DVN address");
     for (uint256 i; i < cur.requiredDVNs.length; ++i) {
       require(addedDvn != cur.requiredDVNs[i], "PathwayExpander: duplicate DVN (required)");
