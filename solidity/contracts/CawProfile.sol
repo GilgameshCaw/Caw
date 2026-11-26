@@ -99,8 +99,8 @@ contract CawProfile is
   ///         - sum(withdrawable[])` holds as an invariant in steady state.
   mapping(uint32 => uint256) public cawDepositedByPeer;
 
-  bytes4 internal constant _lzBundleSelector                 = bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])"));
-  bytes4 internal constant _updateOwnersSelector            = bytes4(keccak256("updateOwners(uint32[],address[],uint64[])"));
+  bytes4 public constant ownershipBundleSelector                 = bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint128[])"));
+  bytes4 internal constant _updateOwnersSelector            = bytes4(keccak256("updateRemoteOwners(uint32[],address[],uint128[])"));
   bytes4 internal constant _allowFreeAuthSelector           = bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)"));
   bytes4 internal constant _setNetworkTipTargetSelector     = bytes4(keccak256("setNetworkTipTarget(uint32,uint256,uint64)"));
 
@@ -214,7 +214,7 @@ contract CawProfile is
     // generously future-proofed against EVM/LZ repricing on an immutable deploy
     // (and updateOwners couldn't use the override anyway: it sends with the
     // networkId=0 sentinel, whose override slot is unsettable).
-    gasBaseFor[_lzBundleSelector]                = 250_000;
+    gasBaseFor[ownershipBundleSelector]                = 250_000;
     gasBaseFor[_updateOwnersSelector]            = 250_000;
     gasBaseFor[_allowFreeAuthSelector]           = 250_000;
     gasBaseFor[_setNetworkTipTargetSelector]     = 250_000;
@@ -307,16 +307,16 @@ contract CawProfile is
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
-      uint64[] memory stamps;
+      uint128[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload;
       if (sessionExtra.length == 0) {
         payload = _bundleNoSession(cawNetworkId, newId, 0, username, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
-        payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, 0, username, sk, ex, sl, tr, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(ownershipBundleSelector, cawNetworkId, newId, 0, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
-      lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, ownershipBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -390,7 +390,7 @@ contract CawProfile is
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
-      uint64[] memory stamps;
+      uint128[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload;
       if (sessionExtra.length == 0) {
@@ -400,13 +400,13 @@ contract CawProfile is
         payload = _bundleNoSession(cawNetworkId, newId, depositAmount, username, tokenIds, owners, stamps);
       } else {
         (address sk, uint64 ex, uint256 sl, uint64 tr) = _decodeSession(sessionExtra);
-        payload = abi.encodeWithSelector(_lzBundleSelector, cawNetworkId, newId, depositAmount, username, sk, ex, sl, tr, tokenIds, owners, stamps);
+        payload = abi.encodeWithSelector(ownershipBundleSelector, cawNetworkId, newId, depositAmount, username, sk, ex, sl, tr, tokenIds, owners, stamps);
       }
       // Cross-chain repay registration is not supported: Networks using
       // cross-chain L2 storage do not enable sponsor repay. The path reverts
       // rather than silently dropping the repay.
       if (repayAmount > 0) revert RepayCrossChainUnsupported();
-      lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, ownershipBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
     // Emit Deposited so indexers can reconstruct totalCaw inflows symmetrically with
@@ -418,6 +418,7 @@ contract CawProfile is
 
   /// @notice Accrued fees available for withdrawal (pull pattern to prevent DOS)
   mapping(address => uint256) public accruedFees;
+  mapping(uint32 => uint64) private transferGeneration;
 
   event FeesAccrued(address indexed recipient, uint256 amount);
   event FeesWithdrawn(address indexed recipient, uint256 amount);
@@ -442,8 +443,8 @@ contract CawProfile is
   }
 
   /// @dev Encode an lzDepositMintSession payload with an empty session leg.
-  function _bundleNoSession(uint32 nid, uint32 tid, uint256 amt, string memory uname, uint32[] memory tids, address[] memory owns, uint64[] memory stmps) internal pure returns (bytes memory) {
-    return abi.encodeWithSelector(_lzBundleSelector, nid, tid, amt, uname, address(0), 0, 0, 0, tids, owns, stmps);
+  function _bundleNoSession(uint32 nid, uint32 tid, uint256 amt, string memory uname, uint32[] memory tids, address[] memory owns, uint128[] memory stmps) internal pure returns (bytes memory) {
+    return abi.encodeWithSelector(ownershipBundleSelector, nid, tid, amt, uname, address(0), 0, 0, 0, tids, owns, stmps);
   }
 
   /// @dev Decode the Quick Sign sessionExtra blob. Centralised so the
@@ -597,10 +598,10 @@ contract CawProfile is
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
-      uint64[] memory stamps;
+      uint128[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = _bundleNoSession(cawNetworkId, tokenId, 0, "", tokenIds, owners, stamps);
-      lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, ownershipBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -691,10 +692,10 @@ contract CawProfile is
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
-      uint64[] memory stamps;
+      uint128[] memory stamps;
       (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = _bundleNoSession(cawNetworkId, tokenId, amount, "", tokenIds, owners, stamps);
-      lzSend(cawNetworkId, lzDestId, _lzBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawNetworkId, lzDestId, ownershipBundleSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
     emit Deposited(cawNetworkId, tokenId, amount, lzDestId, msg.sender);
@@ -874,6 +875,7 @@ contract CawProfile is
 
   function _afterTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize) internal virtual override {
     uint32 token = uint32(tokenId);
+    if (from != to) ++transferGeneration[token];
     EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
     for (uint256 i = 0; i < chainIds.length(); i++) {
       uint32 chainId = uint32(chainIds.at(i));
@@ -887,51 +889,36 @@ contract CawProfile is
     return Math.min(transferUpdateLimit, pendingTransferEnd[lzDestId] - pendingTransferStart[lzDestId]);
   }
 
-  function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory, uint64[] memory) {
+  function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) public view returns (uint32[] memory, address[] memory, uint128[] memory) {
     uint256 updateCount = updatesNeededForPeer(lzDestId);
     uint256 includeOwner = newOwner == address(0) && tokenId == 0 ? 0 : 1;
     uint32[] memory tokenIds = new uint32[](updateCount + includeOwner);
     address[] memory owners = new address[](updateCount + includeOwner);
-    uint64[] memory stamps = new uint64[](updateCount + includeOwner);
-    uint64 stamp = uint64(block.number);
+    uint128[] memory stamps = new uint128[](updateCount + includeOwner);
+    uint128 stamp = uint128(uint64(block.number)) << 64;
 
     for (uint256 i = 0; i < updateCount; i++) {
       tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId] + i];
       owners[i] = ownerOf(tokenIds[i]);
-      stamps[i] = stamp;
+      stamps[i] = stamp | transferGeneration[tokenIds[i]];
     }
 
     if (includeOwner == 1) {
       tokenIds[updateCount] = tokenId;
       owners[updateCount] = newOwner;
-      stamps[updateCount] = stamp;
+      stamps[updateCount] = stamp | transferGeneration[tokenId];
     }
 
     return (tokenIds, owners, stamps);
   }
 
-  function extractPendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) internal returns (uint32[] memory, address[] memory, uint64[] memory) {
-    uint256 updateCount = updatesNeededForPeer(lzDestId);
-    uint256 includeOwner = newOwner == address(0) && tokenId == 0 ? 0 : 1;
-    uint32[] memory tokenIds = new uint32[](updateCount + includeOwner);
-    address[] memory owners = new address[](updateCount + includeOwner);
-    uint64[] memory stamps = new uint64[](updateCount + includeOwner);
-    uint64 stamp = uint64(block.number);
-
-    for (uint256 i = 0; i < updateCount; i++) {
-      tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
-      delete pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
-      owners[i] = ownerOf(tokenIds[i]);
-      stamps[i] = stamp;
-      pendingTransferStart[lzDestId]++;
-    }
-
-    if (includeOwner == 1) {
-      tokenIds[updateCount] = tokenId;
-      owners[updateCount] = newOwner;
-      stamps[updateCount] = stamp;
-    }
-
+  function extractPendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) internal returns (uint32[] memory, address[] memory, uint128[] memory) {
+    (uint32[] memory tokenIds, address[] memory owners, uint128[] memory stamps) =
+      pendingTransferUpdates(lzDestId, newOwner, tokenId);
+    uint256 start = pendingTransferStart[lzDestId];
+    uint256 end = start + updatesNeededForPeer(lzDestId);
+    for (uint256 i = start; i < end; ++i) delete pendingTransfers[lzDestId][i];
+    pendingTransferStart[lzDestId] = end;
     return (tokenIds, owners, stamps);
   }
 
@@ -949,16 +936,13 @@ contract CawProfile is
 
     uint32[] memory tokenIds;
     address[] memory owners;
-    uint64[] memory stamps;
+    uint128[] memory stamps;
 
     (tokenIds, owners, stamps) = extractPendingTransferUpdates(lzDestId, address(0), 0);
     if (tokenIds.length > 0) {
-      if (lzDestId == mainnetLzId)
-        cawProfileLedger.updateOwners(tokenIds, owners, stamps);
-      else {
-        bytes memory payload = abi.encodeWithSelector(_updateOwnersSelector, tokenIds, owners, stamps);
-        lzSend(0, lzDestId, _updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
-      }
+      // Only remote destinations enter this queue. Local hooks run synchronously.
+      bytes memory payload = abi.encodeWithSelector(_updateOwnersSelector, tokenIds, owners, stamps);
+      lzSend(0, lzDestId, _updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 

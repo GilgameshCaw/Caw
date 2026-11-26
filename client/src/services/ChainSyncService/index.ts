@@ -1,8 +1,9 @@
+import { ownershipBundleSelector } from '../../utils/ownershipBundleSelector'
 // src/services/ChainSyncService/index.ts
 // Generic service for syncing on-chain data to the database
 
 import { prisma } from '../../prismaClient'
-import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder, dataSlice, id as ethersId } from 'ethers'
+import { JsonRpcProvider, Contract, verifyTypedData, AbiCoder } from 'ethers'
 import { makeVerifiedJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl, redactRpcUrl, isConnectionError } from '../../utils/rpcProvider'
 import { cawNetworkManagerAbi, cawProfileAbi } from '../../abi/generated'
 import { NETWORK_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_PAIR_ADDRESS, CAW_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -482,27 +483,19 @@ const LZ_QUOTE_REFERENCE_DEPOSIT_WEI = 10n ** 18n // 1 CAW
 const LZ_QUOTE_NETWORK_ID = Number(process.env.LZ_QUOTE_NETWORK_ID || 1)
 const LZ_QUOTE_DEST_ID = Number(process.env.LZ_QUOTE_DEST_ID || 40245)
 
-// Selector for CawProfile's internal `_bundleNoSession` / lzDepositMintSession
-// call shape — MUST match SponsorService/index.ts's LZ_BUNDLE_SELECTOR exactly,
-// since lzQuote's fee is a function of this selector + payload shape. Any drift
-// here would quote the fee for a DIFFERENT message than the one actually sent.
-const LZ_BUNDLE_SELECTOR = dataSlice(
-  ethersId('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])'),
-  0, 4,
-) as `0x${string}`
-
 async function syncLzDepositFee(): Promise<void> {
   if (!l1Provider || !CAW_NAMES_ADDRESS) return  // no L1 RPC / no CawProfile address
   try {
     const cawProfile = new Contract(CAW_NAMES_ADDRESS, cawProfileAbi as any, l1Provider)
+    const selector = await ownershipBundleSelector(cawProfile)
     const bundlePayload = AbiCoder.defaultAbiCoder().encode(
-      ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint64[]'],
+      ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint128[]'],
       [LZ_QUOTE_NETWORK_ID, 0, LZ_QUOTE_REFERENCE_DEPOSIT_WEI, '', '0x0000000000000000000000000000000000000000', 0, 0, 0, [], [], []],
     )
-    const bundlePayloadWithSelector = LZ_BUNDLE_SELECTOR + bundlePayload.slice(2)
+    const bundlePayloadWithSelector = selector + bundlePayload.slice(2)
     const quote = await cawProfile.lzQuote(
       LZ_QUOTE_NETWORK_ID,
-      LZ_BUNDLE_SELECTOR,
+      selector,
       0n,
       bundlePayloadWithSelector,
       LZ_QUOTE_DEST_ID,

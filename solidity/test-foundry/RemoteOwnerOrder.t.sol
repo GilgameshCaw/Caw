@@ -24,16 +24,16 @@ contract RemoteOwnerOrderTest is Test {
     function deliver(uint64 nonce, uint64 stamp, address owner, bool mintBundle) internal {
         uint32[] memory ids = new uint32[](1);
         address[] memory owners = new address[](1);
-        uint64[] memory stamps = new uint64[](1);
+        uint128[] memory stamps = new uint128[](1);
         ids[0] = tokenId;
         owners[0] = owner;
-        stamps[0] = stamp;
+        stamps[0] = (uint128(stamp) << 64) | nonce;
         bytes memory callData;
         if (mintBundle) {
             callData = abi.encodeCall(ledger.lzDepositMintSession, (1, tokenId, 100 ether, "name",
                 KEY, uint64(block.timestamp + 1 days), 0, 0, ids, owners, stamps));
         } else {
-            callData = abi.encodeCall(ledger.updateOwners, (ids, owners, stamps));
+            callData = abi.encodeCall(ledger.updateRemoteOwners, (ids, owners, stamps));
         }
         Origin memory origin = Origin(1, bytes32(uint256(uint160(PROFILE))), nonce);
         vm.prank(address(endpoint));

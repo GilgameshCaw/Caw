@@ -1,3 +1,4 @@
+import { ownershipBundleSelector } from '../../utils/ownershipBundleSelector'
 /**
  * SponsorService — submits sponsored L1 contract calls on behalf of users.
  *
@@ -31,9 +32,7 @@ import {
   AbiCoder,
   toUtf8String,
   TypedDataEncoder,
-  dataSlice,
   ZeroAddress,
-  id as ethersId,
   type Provider,
   type ContractTransactionResponse,
   type TransactionReceipt,
@@ -607,21 +606,14 @@ export class SponsorService {
       // and newId is unknown pre-mint so we use 0 as placeholder. LZ fees
       // depend on message byte-length not content, so placeholder values give
       // the correct size.
-      const LZ_BUNDLE_SELECTOR = dataSlice(
-        ethersId('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])'),
-        0, 4,
-      ) as `0x${string}`
-
       // Encode _bundleNoSession with empty arrays (fresh mint, no pending
       // transfer updates) and placeholder newId=0.
       const bundlePayload = AbiCoder.defaultAbiCoder().encode(
         // encodeWithSelector = selector + abi.encode(args); replicate that shape:
         // We use low-level encode and prepend the selector to match the contract.
-        ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint64[]'],
+        ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint128[]'],
         [params.networkId, 0, params.depositAmountCAW, '', '0x0000000000000000000000000000000000000000', 0, 0, 0, [], [], []],
       )
-      // Prepend the 4-byte selector to match abi.encodeWithSelector output.
-      const bundlePayloadWithSelector = LZ_BUNDLE_SELECTOR + bundlePayload.slice(2)
 
       let paddedFee: bigint
       try {
@@ -630,9 +622,11 @@ export class SponsorService {
           cawProfileAbi as any,
           this.provider,
         )
+        const selector = await ownershipBundleSelector(cawProfileReadOnly)
+        const bundlePayloadWithSelector = selector + bundlePayload.slice(2)
         const quote = await cawProfileReadOnly.lzQuote(
           params.networkId,
-          LZ_BUNDLE_SELECTOR,
+          selector,
           0n,  // n=0: no pending transfer-update entries for a fresh mint
           bundlePayloadWithSelector,
           params.lzDestId,

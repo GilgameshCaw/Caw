@@ -33,6 +33,7 @@ contract CawProfileLedger is
   // codegen grew the deployed bytecode close enough to the EIP-170 24,576-byte
   // cap that the string form pushed CawProfileLedger over.
   error OnlyLZ();
+  error InvalidOwnerGeneration();
   error ZeroKey();
   error Expired();
   error NotCa();
@@ -442,7 +443,7 @@ contract CawProfileLedger is
     uint64 perActionTipRate,
     uint32[] calldata tokenIds,
     address[] calldata owners,
-    uint64[] calldata stamps
+    uint128[] calldata stamps
   ) public {
     if (!(fromLZ)) revert OnlyLZ();
     if (bytes(username).length > 0) {
@@ -461,9 +462,11 @@ contract CawProfileLedger is
     // A stale bundle still carries its own deposit, but cannot grant a session.
     bool grant = sessionKey != address(0) && tokenIds.length != 0
       && tokenIds[tokenIds.length - 1] == tokenId
-      && inboundPacketNonce > lastOwnerPacketNonce[tokenId]
-      && stamps[tokenIds.length - 1] >= lastOwnerUpdateBlock[tokenId];
-    updateOwners(tokenIds, owners, stamps);
+      && inboundPacketNonce > remoteOrder[tokenId].nonce
+      && uint64(stamps[tokenIds.length - 1] >> 64) >= lastOwnerUpdateBlock[tokenId]
+      && uint64(stamps[tokenIds.length - 1]) != 0
+      && uint64(stamps[tokenIds.length - 1]) >= remoteOrder[tokenId].generation;
+    updateRemoteOwners(tokenIds, owners, stamps);
     address owner = ownerOf[tokenId];
     if (grant && owners[tokenIds.length - 1] == owner && owner != address(0)
         && inboundPacketNonce > lastRemoteOwnerLoss[owner]
@@ -528,25 +531,29 @@ contract CawProfileLedger is
   /// @dev Callable from `_lzReceive` (cross-chain) OR directly by the L1 CawProfile
   ///      contract in bypassLZ co-deployment mode (same trust boundary).
   function updateOwners(uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
-    if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
+    if (!(bypassLZ && _msgSender() == address(cawProfile))) revert OnlyLZ();
+    for (uint i = 0; i < tokenIds.length; i++) _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
+  }
+
+  function updateRemoteOwners(uint32[] calldata tokenIds, address[] calldata owners, uint128[] calldata stamps) public {
+    if (!fromLZ) revert OnlyLZ();
     for (uint i = 0; i < tokenIds.length; i++) {
       uint32 tokenId = tokenIds[i];
-      if (fromLZ) {
-        if (inboundPacketNonce <= lastOwnerPacketNonce[tokenId] || stamps[i] < lastOwnerUpdateBlock[tokenId]) continue;
-        lastOwnerPacketNonce[tokenId] = inboundPacketNonce;
-        lastOwnerUpdateBlock[tokenId] = stamps[i];
-        address previous = ownerOf[tokenId];
-        if (owners[i] != previous) {
-          // Losing a token invalidates wallet-wide sessions, including older grants
-          // travelling on another token in the same authenticated channel.
-          if (previous != address(0) && inboundPacketNonce > lastRemoteOwnerLoss[previous]) {
-            lastRemoteOwnerLoss[previous] = inboundPacketNonce;
-          }
-          _applyOwner(tokenId, owners[i]);
-        }
-      } else {
-        _setOwnerOf(tokenId, owners[i], stamps[i]);
+      uint64 height = uint64(stamps[i] >> 64);
+      uint64 generation = uint64(stamps[i]);
+      uint64 prior = remoteOrder[tokenId].generation;
+      if (generation == 0 || generation < prior || inboundPacketNonce <= remoteOrder[tokenId].nonce
+          || height < lastOwnerUpdateBlock[tokenId]) continue;
+      address previous = ownerOf[tokenId];
+      if (generation == prior && owners[i] != previous) revert InvalidOwnerGeneration();
+      remoteOrder[tokenId].nonce = inboundPacketNonce;
+      lastOwnerUpdateBlock[tokenId] = height;
+      if (generation == prior) continue;
+      remoteOrder[tokenId].generation = generation;
+      if (previous != address(0) && inboundPacketNonce > lastRemoteOwnerLoss[previous]) {
+        lastRemoteOwnerLoss[previous] = inboundPacketNonce;
       }
+      _applyOwner(tokenId, owners[i]);
     }
   }
 
@@ -571,7 +578,8 @@ contract CawProfileLedger is
   mapping(uint32 => uint32) public repaySponsorTokenId;
 
   // LayerZero nonces are ordered on the immutable L1 profile -> ledger channel.
-  mapping(uint32 => uint64) private lastOwnerPacketNonce;
+  struct RemoteOrder { uint64 nonce; uint64 generation; }
+  mapping(uint32 => RemoteOrder) private remoteOrder;
   mapping(address => uint64) private lastRemoteOwnerLoss;
   mapping(address => mapping(address => bool)) private revokedRemoteGrant;
 
@@ -720,12 +728,13 @@ contract CawProfileLedger is
   function _setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) internal {
     if (stamp <= lastOwnerUpdateBlock[tokenId]) return; // stale or same-stamp; silent skip
     lastOwnerUpdateBlock[tokenId] = stamp;
-    _applyOwner(tokenId, newOwner);
+    if (newOwner != ownerOf[tokenId]) _applyOwner(tokenId, newOwner);
+    else emit OwnerSet(tokenId, newOwner);
   }
 
   function _applyOwner(uint32 tokenId, address newOwner) internal {
     address prev = ownerOf[tokenId];
-    if (prev != newOwner && prev != address(0)) {
+    if (prev != address(0)) {
       // CL-4 invariant: bump BOTH epochs on owner change.
       //   - ownerSessionEpoch[prev]: invalidates EVERY wallet-scoped session
       //     for the prev wallet. Required because an LZ unordered redelivery
@@ -1104,8 +1113,8 @@ contract CawProfileLedger is
 
   /// @notice Whitelist of selectors allowed via delegatecall from LayerZero messages.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
-    return selector == bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint32[],address[],uint64[])")) ||
+    return selector == bytes4(keccak256("lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint128[])")) ||
+      selector == bytes4(keccak256("updateRemoteOwners(uint32[],address[],uint128[])")) ||
       selector == bytes4(keccak256("setAllowFreeAuth(uint32,bool,uint64)")) ||
       selector == bytes4(keccak256("setNetworkTipTarget(uint32,uint256,uint64)")) ||
       selector == bytes4(keccak256("registerSponsorRepayFromL1(uint32,uint32,uint256)"));
