@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ReportReason, ReportStatus } from '@prisma/client'
 import { requireAuth, requireModerator } from '../middleware/auth'
+import { submitPostReport } from '../shared/reportSubmit'
 
 const router = Router()
 
@@ -11,11 +12,13 @@ const router = Router()
  */
 router.post('/', requireAuth({ field: 'reporterId', verifyOwnership: true }), async (req, res) => {
   try {
-    const { reporterId, postId, postAuthorId, reason, details } = req.body
+    // postAuthorId is not read: the author is taken from the post itself. Clients
+    // that still send it are not refused.
+    const { postId, reason, details } = req.body
 
     // Validate required fields
-    if (!postId || !postAuthorId || !reason) {
-      return res.status(400).json({ error: 'postId, postAuthorId, and reason are required' })
+    if (!postId || !reason) {
+      return res.status(400).json({ error: 'postId and reason are required' })
     }
 
     // Validate reason is a valid enum value
@@ -25,57 +28,18 @@ router.post('/', requireAuth({ field: 'reporterId', verifyOwnership: true }), as
       })
     }
 
-    // If user already reported this post, update their existing report
-    if (reporterId) {
-      const existingReport = await prisma.report.findFirst({
-        where: {
-          reporterId: parseInt(reporterId),
-          postId: parseInt(postId)
-        }
-      })
-
-      if (existingReport) {
-        const updated = await prisma.report.update({
-          where: { id: existingReport.id },
-          data: {
-            reason: reason as ReportReason,
-            details: details || null,
-            status: ReportStatus.PENDING,
-            reviewedAt: null,
-            reviewedBy: null,
-            resolution: null,
-          }
-        })
-
-        return res.status(200).json({
-          success: true,
-          reportId: updated.id,
-          message: 'Report updated'
-        })
-      }
-    }
-
-    // Create the report. reporterId is guaranteed non-falsy by requireAuth
-    // above — it validates req.body.reporterId against the authenticated
-    // session and returns 400 / 401 / 403 if it's missing or doesn't match.
-    // The previous `: 0` fallback was dead code that, if reached, would have
-    // de-anonymized... or rather, falsely anonymized... the report.
-    const report = await prisma.report.create({
-      data: {
-        reporterId: parseInt(reporterId),
-        postId: parseInt(postId),
-        postAuthorId: parseInt(postAuthorId),
-        reason: reason as ReportReason,
-        details: details || null,
-        status: ReportStatus.PENDING
-      }
+    // The reporter is the id requireAuth checked against the session, read the way
+    // it reads it (Number(), from the body or else the query). parseInt would read
+    // "9.90202e5" as 9 while requireAuth took it as 990202, and a report from the
+    // query would have had no reporter at all.
+    const reporterId = Number(req.body?.reporterId ?? req.query?.reporterId)
+    const result = await submitPostReport(prisma, {
+      reporterId,
+      postId,
+      reason: reason as ReportReason,
+      details,
     })
-
-    return res.status(201).json({
-      success: true,
-      reportId: report.id,
-      message: 'Report submitted successfully'
-    })
+    return res.status(result.status).json(result.body)
   } catch (error) {
     console.error('POST /api/reports error:', error)
     return res.status(500).json({ error: 'Failed to submit report' })
