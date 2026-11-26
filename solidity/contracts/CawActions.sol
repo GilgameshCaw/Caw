@@ -64,6 +64,8 @@ contract CawActions {
   error UserNotAuth();
   error TextTooLong();
   error NoWithdrawFee();
+  error WithdrawFeeNotFunded();
+  error RefundFailed();
   error SignerMismatch();
   error SessionExpired();
   error MixedSenders();
@@ -384,15 +386,8 @@ contract CawActions {
 
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
-      // bypassLZ mode legitimately needs zero LZ fee but still requires
-      // the L1 credit to fire. LZ mode requires a non-zero fee for the
-      // cross-chain message. A zero fee in non-bypassLZ mode would skip
-      // _executeWithdrawals after the L2 debit already ran — silent fund
-      // loss. Revert instead so a misconfigured validator surfaces. Audit
-      // fix C-1 (tightened in Round 3).
-      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
+    _settleWithdrawals(c.withdrawCount, withdrawFee, withdrawLzTokenAmount);
   }
 
   /// @notice Process a batch of actions using a ZK proof of signature recovery
@@ -503,10 +498,8 @@ contract CawActions {
 
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
-      // See processActions for the bypassLZ rationale.
-      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
+    _settleWithdrawals(c.withdrawCount, withdrawFee, withdrawLzTokenAmount);
   }
 
   /// @dev ZK-path equivalent of _processOneGroup. Reads (groupSize, v, r, s)
@@ -985,10 +978,8 @@ contract CawActions {
     // bypassLZ co-deployment shortcut.
     if (sc.withdrawCount > 0) {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
-      // See processActions for the bypassLZ rationale.
-      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
-      _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
+    _settleWithdrawals(sc.withdrawCount, withdrawFee, withdrawLzTokenAmount);
   }
 
   /// @dev Bookkeeping for safeProcessActions, kept on the stack as a struct
@@ -1930,6 +1921,40 @@ contract CawActions {
   ///      nonReentrant guard would not help either. The pattern deviates
   ///      from checks-effects-interactions only cosmetically; the reachable
   ///      attack surface is empty.
+  /// @dev The one place where the native value of a processing call is accounted for.
+  ///      Without it a call's `msg.value` stayed in this contract whenever it was not
+  ///      spent as the withdraw fee: after a ZK or safe batch whose only WITHDRAW was
+  ///      skipped or rejected (`withdrawCount == 0`), after an overpayment, and in
+  ///      bypassLZ mode (where the ledger refuses a non-zero fee). There is no sweep,
+  ///      and a later caller could spend the leftover as the fee of a batch of its own
+  ///      (the LayerZero refund of the excess goes to `tx.origin`). So now:
+  ///        - the fee is paid out of `msg.value` only: `msg.value < withdrawFee` reverts;
+  ///        - what is not spent (all of it when no WITHDRAW executed) goes back to the caller.
+  ///      A batch is deliberately not reverted for carrying value it did not need: on
+  ///      the ZK and safe paths the validator cannot know that another validator's
+  ///      WITHDRAW will win the race, and reverting would discard the other actions.
+  ///      The refund comes last, after every state change and the LayerZero send.
+  function _settleWithdrawals(uint256 withdrawCount, uint256 withdrawFee, uint256 lzTokenAmount) internal {
+    uint256 spent;
+    if (withdrawCount > 0) {
+      // bypassLZ mode legitimately needs zero LZ fee but still requires
+      // the L1 credit to fire. LZ mode requires a non-zero fee for the
+      // cross-chain message. A zero fee in non-bypassLZ mode would skip
+      // _executeWithdrawals after the L2 debit already ran — silent fund
+      // loss. Revert instead so a misconfigured validator surfaces. Audit
+      // fix C-1 (tightened in Round 3).
+      if (withdrawFee == 0 && !cawProfile.bypassLZ()) revert NoWithdrawFee();
+      if (msg.value < withdrawFee) revert WithdrawFeeNotFunded();
+      _executeWithdrawals(withdrawFee, lzTokenAmount);
+      spent = withdrawFee;
+    }
+    uint256 surplus = msg.value - spent;
+    if (surplus > 0) {
+      (bool ok, ) = msg.sender.call{ value: surplus }("");
+      if (!ok) revert RefundFailed();
+    }
+  }
+
   function _executeWithdrawals(uint256 withdrawFee, uint256 lzTokenAmount) internal {
     if (_pendingWithdrawIds.length > 0) {
       cawProfile.setWithdrawable{ value: withdrawFee }(
