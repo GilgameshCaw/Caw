@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { getPublicClient } from '@wagmi/core'
 import { sepolia } from 'wagmi/chains'
 import { wagmiConfig } from '~/config/Web3Provider'
-import { cawNetworkManagerAbi } from '~/../../../abi/generated'
+import { readRegistryInstances } from './readRegistryInstances'
 import { NETWORK_MANAGER_ADDRESS } from '~/../../../abi/addresses'
 import { API_HOST } from '~/api/client'
 
@@ -37,7 +37,7 @@ interface InstanceState {
 // what's persisted, even on a brand-new session (instant first render).
 const FRESH_THRESHOLD_MS = 10 * 60 * 1000  // 10 minutes
 
-// Chain-fallback circuit breaker. Each chunked scan does ~15-30
+// Chain-fallback circuit breaker. A full history scan may need many
 // eth_getLogs on L1; if the API tier is genuinely broken we'd otherwise
 // fire that on every fetchInstances tick forever. Suppress chain
 // fallback for an hour after a successful chain run — by then we've got
@@ -198,140 +198,12 @@ async function fetchFromAnyApi(
   return null
 }
 
-/**
- * Chunked log walker, mirrors the server-side scanLogsForward but
- * adapted for viem (free RPCs cap eth_getLogs at ~50K blocks).
- *
- * Backward walk because we want recent registrations first and stop as
- * soon as we hit an empty window — registrations cluster around the
- * contract's deploy block, not spread across history. 10K blocks per
- * chunk plays nice with publicnode (50K cap) without hammering paid
- * RPCs.
- */
-async function chunkedGetLogs(
-  publicClient: any,
-  args: { event: any; eventArgs: any; address: string },
-  opts: { chunkBlocks?: number; maxWindows?: number } = {},
-): Promise<any[]> {
-  const chunkBlocks = BigInt(opts.chunkBlocks ?? 10_000)
-  const maxWindows = opts.maxWindows ?? 30
-  const head: bigint = await publicClient.getBlockNumber()
-  const all: any[] = []
-  let foundAny = false
-  let toBlock = head
-  for (let i = 0; i < maxWindows; i++) {
-    const fromBlock = toBlock > chunkBlocks ? toBlock - chunkBlocks + 1n : 0n
-    let logs: any[]
-    try {
-      logs = await publicClient.getLogs({
-        address: args.address,
-        event: args.event,
-        args: args.eventArgs,
-        fromBlock,
-        toBlock,
-      })
-    } catch {
-      // Halve and try just the upper half rather than spinning on a
-      // problematic chunk.
-      try {
-        const halfStart = fromBlock + (toBlock - fromBlock) / 2n
-        logs = await publicClient.getLogs({
-          address: args.address,
-          event: args.event,
-          args: args.eventArgs,
-          fromBlock: halfStart,
-          toBlock,
-        })
-      } catch {
-        break
-      }
-    }
-    if (logs.length > 0) foundAny = true
-    all.push(...logs)
-    if (foundAny && logs.length === 0) break
-    if (fromBlock === 0n) break
-    toBlock = fromBlock - 1n
-  }
-  return all
-}
-
 async function fetchFromChain(networkId: number): Promise<Instance[] | null> {
   const publicClient = getPublicClient(wagmiConfig, { chainId: sepolia.id })
   if (!publicClient) return null
 
   try {
-    const registeredLogs = await chunkedGetLogs(publicClient, {
-      address: NETWORK_MANAGER_ADDRESS,
-      event: {
-        type: 'event',
-        name: 'InstanceRegistered',
-        inputs: [
-          { name: 'instanceId', type: 'uint32', indexed: true },
-          { name: 'networkId', type: 'uint32', indexed: true },
-          { name: 'owner', type: 'address', indexed: true },
-          { name: 'apiUrl', type: 'string', indexed: false },
-          { name: 'validatorAddress', type: 'address', indexed: false },
-        ],
-      },
-      eventArgs: { networkId: networkId },
-    })
-
-    const instanceMap = new Map<number, Instance>()
-    for (const log of registeredLogs) {
-      const a = (log as any).args
-      instanceMap.set(Number(a.instanceId), {
-        instanceId: Number(a.instanceId),
-        networkId: Number(a.networkId),
-        owner: a.owner,
-        apiUrl: a.apiUrl,
-        validatorAddress: a.validatorAddress,
-        active: true,
-      })
-    }
-
-    if (instanceMap.size === 0) return []
-
-    // Apply InstanceUpdated overrides — not networkId-indexed so we pull
-    // all and filter by instanceId membership.
-    const updatedLogs = await chunkedGetLogs(publicClient, {
-      address: NETWORK_MANAGER_ADDRESS,
-      event: {
-        type: 'event',
-        name: 'InstanceUpdated',
-        inputs: [
-          { name: 'instanceId', type: 'uint32', indexed: true },
-          { name: 'apiUrl', type: 'string', indexed: false },
-          { name: 'validatorAddress', type: 'address', indexed: false },
-        ],
-      },
-      eventArgs: {},
-    })
-    for (const log of updatedLogs) {
-      const a = (log as any).args
-      const existing = instanceMap.get(Number(a.instanceId))
-      if (existing) {
-        existing.apiUrl = a.apiUrl
-        existing.validatorAddress = a.validatorAddress
-      }
-    }
-
-    // Refresh the active flag from on-chain state. instanceActive() is a
-    // single SLOAD per instance — even with 100 peers this is <1s.
-    for (const [id, instance] of instanceMap) {
-      try {
-        const isActive = await publicClient.readContract({
-          address: NETWORK_MANAGER_ADDRESS,
-          abi: cawNetworkManagerAbi,
-          functionName: 'instanceActive',
-          args: [id],
-        })
-        instance.active = isActive as boolean
-      } catch {
-        instance.active = true
-      }
-    }
-
-    return Array.from(instanceMap.values())
+    return await readRegistryInstances(publicClient, NETWORK_MANAGER_ADDRESS, networkId)
   } catch (err: any) {
     console.warn('[InstanceStore] chain fetch failed:', err?.message)
     return null
