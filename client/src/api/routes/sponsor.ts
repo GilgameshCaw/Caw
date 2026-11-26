@@ -40,6 +40,7 @@ import { quoteSponsorInviteCostCawLive, quoteExecuteGasFeeCaw, quoteExecuteGasFe
 import { CAW_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, WETH_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '../../abi/addresses'
 import { getOwnValidatorTokenId } from '../../services/SponsorService/validatorIdentity'
 import { decryptInviteCode } from '../../services/SponsorService/inviteCodeCrypto'
+import { openSignupNameRefusal } from '../shared/openSignupName'
 import { INVITE_ACTION_PREFIX } from '../../services/SponsorService/handleSponsorInvite'
 import { decompressActionText } from '../../utils/decompressActionText'
 import { requireAuth } from '../middleware/auth'
@@ -323,6 +324,12 @@ router.post('/bootstrap', async (req, res) => {
       detail: 'An invite code or X verification is required to create an account here.',
     })
   }
+
+  // The two gates with no invite code (X token, ungated) have no pot to size the
+  // name against, and the sponsor wallet pays the whole username burn, which grows
+  // steeply for short names. Refuse them here, before the X token is consumed.
+  const nameRefusal = openSignupNameRefusal(hasCode, params.username)
+  if (nameRefusal) return res.status(400).json(nameRefusal)
 
   // Rate limit: PEEK-only here. The ungated (free) path uses an INDEPENDENT
   // counter + cap so a flood of free signups can never trip or exhaust the
