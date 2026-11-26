@@ -1,0 +1,41 @@
+{
+  "verdict": "PASS",
+  "chromium": "145.0.7632.6",
+  "initialKeys": [],
+  "before": {
+    "keys": [
+      "wagmi.store"
+    ],
+    "peers": 0
+  },
+  "offlineEndpoint": "/api/instances?networkId=1",
+  "rpcMethods": [
+    "eth_getBlockByNumber",
+    "eth_call",
+    "eth_getLogs"
+  ],
+  "source": "chain",
+  "peers": [
+    {
+      "instanceId": 2,
+      "networkId": 1,
+      "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "apiUrl": "https://live.invalid",
+      "validatorAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "active": true
+    },
+    {
+      "instanceId": 1,
+      "networkId": 1,
+      "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "apiUrl": "https://updated.invalid",
+      "validatorAddress": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "active": false
+    }
+  ],
+  "activeHosts": [
+    "https://live.invalid"
+  ],
+  "cacheMatched": true,
+  "externalRequests": []
+}
