@@ -60,7 +60,11 @@ const ComposePostModal: React.FC<ComposePostModalProps> = ({ isOpen, onClose }) 
       className={`fixed left-0 right-0 bottom-0 z-[70] flex flex-col ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
       }`}
-      style={{ top: '4rem' }}
+      // Start below the mobile header, whose height includes the top safe-area
+      // inset (taller on iPhone home-screen apps). A fixed 4rem let the header
+      // cover the close button there. The fallback is the header's own formula
+      // (MainLayout), so it holds even where the variable is not inherited.
+      style={{ top: 'var(--app-mobile-header-h, calc(3rem + max(env(safe-area-inset-top), 1rem)))' }}
     >
       <div className="flex items-center px-3 py-2 shrink-0">
         <button
