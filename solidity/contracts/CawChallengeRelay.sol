@@ -107,7 +107,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ///         CawActions (this chain) and sent via LZ to the archive.
   /// @dev The batch form collapses what would otherwise be N transactions
   ///      into a single LZ message. Payload format is always the batch shape:
-  ///        abi.encode(submissionId, networkId, checkpointIds[], correctHashes[])
+  ///        abi.encode(MSG_CHALLENGE, submissionId, networkId, checkpointIds[], correctHashes[])
   ///      so the archive has exactly one decode path.
   function relayChallengeBatch(
     uint32 destEid,
@@ -200,7 +200,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
   ) external view returns (MessagingFee memory) {
     uint256 n = checkpointIds.length;
     bytes32[] memory placeholder = new bytes32[](n);
-    bytes memory payload = abi.encode(submissionId, networkId, checkpointIds, placeholder);
+    bytes memory payload = abi.encode(MSG_CHALLENGE, submissionId, networkId, checkpointIds, placeholder);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP * uint128(n);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
     return _quote(destEid, payload, options, payInLzToken);
@@ -217,7 +217,7 @@ contract CawChallengeRelay is OnlyOnce, OApp {
     uint256[] memory ids = new uint256[](1);
     bytes32[] memory placeholder = new bytes32[](1);
     ids[0] = checkpointId;
-    bytes memory payload = abi.encode(submissionId, networkId, ids, placeholder);
+    bytes memory payload = abi.encode(MSG_CHALLENGE, submissionId, networkId, ids, placeholder);
     uint128 gasLimit = CHALLENGE_GAS_BASE + CHALLENGE_GAS_PER_CP;
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimit, 0);
     return _quote(destEid, payload, options, payInLzToken);
