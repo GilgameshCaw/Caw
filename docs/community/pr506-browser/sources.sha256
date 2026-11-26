@@ -1,0 +1,4 @@
+e70862ce87cc331f859539d62f67e6dfd079b35d68713d810ed2cfeca96db881  ../../../solidity/contracts/CawNetworkManager.sol
+c4248832bdcdfb06f0cb4dfd9285cdb9c141ea95ae124493e50806bdc3ff3e08  ../../../client/src/services/FrontEnd/src/store/instanceStore.ts
+ffe780d1c01c635fc94da3cf8c72e4459dca2878b7116ee8996b68ccf74ae0cf  ../../../client/src/services/FrontEnd/src/store/readRegistryInstances.ts
+a162fcdb6bf104bc761dc37137af7112207c82693c7646e569f2aa0042c588aa  ../../../client/src/abi/generated.ts
