@@ -175,6 +175,8 @@
   "post_form.button.thread": "スレッド ({{count}})",
   "post_form.button.wrong_wallet": "ウォレットが違います",
   "post_form.button.create_account": "アカウント作成",
+  "post_form.number.checking": "投稿番号を確認中...",
+  "post_form.number.failed": "投稿番号を確認できなかったため、まだ送信されていません。接続を確認して、もう一度お試しください。",
   "post_form.error.no_video_schedule": "予約投稿はまだ動画に対応していません。",
   "post_form.error.upload_failed": "予約投稿用の画像のアップロードに失敗しました。",
   "post_form.error.schedule_failed": "この投稿の予約に問題が発生しました。",

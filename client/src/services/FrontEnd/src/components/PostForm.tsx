@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
 import { Link } from '~/utils/localizedRouter'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
+import { usePostNumberPreparation } from '~/hooks/usePostNumberPreparation'
 
 /** Hard cap on thread length. Must match the API cap in
  *  `client/src/api/routes/actions.ts` (POST /api/actions/batch). The cap
@@ -584,6 +585,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [tipGateDismissed, setTipGateDismissed] = useState<Set<string>>(new Set())
 
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const postNumber = usePostNumberPreparation(allocateCawonces)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const signingTotal = signingProgress?.total ?? 0
   // Pre-signing phase progress: media compression + upload. Without this
@@ -1359,6 +1361,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // Prevent double-clicks
     if (isSubmitting) return
     setIsSubmitting(true)
+    postNumber.clear()
 
     try {
     let finalText = text
@@ -1703,8 +1706,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // 409 retry path on submit.
     //
     // Tips are embedded in the CAW action itself — no extra cawonces needed.
-    const allocatedCawonces = await allocateCawonces(effectiveTokenId, chunks.length)
-    const threadCawonces = allocatedCawonces
+    const threadCawonces = await postNumber.prepare(effectiveTokenId, chunks.length)
+    if (!threadCawonces) return
     const startCawonce = threadCawonces[0]
     // Refresh the UI hint store so any "next post #N" indicator stays
     // roughly accurate without waiting for the next poll cycle.
@@ -2757,6 +2760,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         onChange={handleFileInputChange}
         className="hidden"
       />
+
+      {postNumber.status === 'checking' && (
+        <p role="status" className="mb-2 text-sm text-gray-500">
+          {t('post_form.number.checking')}
+        </p>
+      )}
+      {postNumber.status === 'failed' && (
+        <p role="alert" className="mb-2 text-sm text-red-600 dark:text-red-400">
+          {t('post_form.number.failed')}
+        </p>
+      )}
 
       {/* Mobile Layout - Input + Button */}
       <div className={`${composeMode ? 'hidden' : 'md:hidden'} flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
