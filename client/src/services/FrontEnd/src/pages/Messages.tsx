@@ -1,4 +1,5 @@
 import { useTheme } from '~/hooks/useTheme'
+import { isSendShortcut } from '~/utils/composerKeys'
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
@@ -3300,7 +3301,9 @@ const MessagesPage: React.FC = () => {
                     })
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    // Enter inserts a newline, like the post composer;
+                    // Cmd/Ctrl+Enter sends (never mid-IME-composition).
+                    if (isSendShortcut(e)) {
                       e.preventDefault()
                       if (gifPreview) {
                         dmSendMessage(gifPreview.url)
@@ -3653,6 +3656,12 @@ const MessagesPage: React.FC = () => {
                   <textarea
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (isSendShortcut(e)) {
+                        e.preventDefault()
+                        void handleSendNewMessage()
+                      }
+                    }}
                     placeholder={t('messages.composer.placeholder')}
                     className={`w-full h-32 px-4 py-3 rounded-lg border resize-none text-base md:text-[15px] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
                       isDark
