@@ -37,5 +37,12 @@
     "https://live.invalid"
   ],
   "cacheMatched": true,
+  "automaticRecovery": true,
+  "switchClearedPeers": true,
+  "lateResponseIgnored": true,
+  "lateChainReadIgnored": true,
+  "secondNetworkHosts": [
+    "https://second.invalid"
+  ],
   "externalRequests": []
 }

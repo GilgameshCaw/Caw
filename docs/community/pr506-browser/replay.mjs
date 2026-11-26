@@ -34,6 +34,9 @@ await send('updateInstance', [1, 'https://updated.invalid', validator])
 await send('deactivateInstance', [1])
 await send('registerInstance', [1, 'https://live.invalid', owner])
 
+await send('createNetwork', ['second', owner, 1, 0, 0, 0, 0, 0])
+await send('registerInstance', [2, 'https://second.invalid', owner])
+
 // Supply only deployment configuration and redirect package imports to the locked toolchain.
 const overrides = new Map([
   ['~/config/Web3Provider', "import { createConfig, http } from '@wagmi/core'; import { sepolia } from 'viem/chains'; export const wagmiConfig=createConfig({chains:[sepolia],transports:{[sepolia.id]:http(location.origin+'/rpc')}})"],
@@ -89,7 +92,87 @@ try {
   assert.deepEqual(result.peers, expected)
   assert.deepEqual(result.cached.instances, expected)
   assert.deepEqual(result.hosts,['https://live.invalid'])
+  // A separate fresh context starts with both discovery transports unavailable.
+  const cold = await browser.newContext({ serviceWorkers:'block' })
+  const tab = await cold.newPage()
+  let rpcOut = true
+  let releaseOld
+  let signalOldRequest
+  const oldRequestStarted = new Promise(resolve => { signalOldRequest = resolve })
+  await tab.route('**/api/instances?networkId=3', async route => {
+      const released = new Promise(resolve => { releaseOld = resolve })
+      signalOldRequest()
+      await released
+      await route.fulfill({ json: {networkId:3, instances:[{...expected[0],networkId:3}]} })
+    })
+  await tab.route('**/rpc', route => rpcOut ? route.fulfill({status:400, body:'offline'}) : route.continue())
+  await tab.route('**/api/instances?networkId=2', route =>
+    route.fulfill({json:{networkId:1,instances:expected}}))
+  const leakedRequests = []
+  await cold.route('**/*', route => {
+    if (new URL(route.request().url()).origin === origin) return route.continue()
+    leakedRequests.push(route.request().url())
+    return route.abort()
+  })
+  await tab.goto(origin)
+  assert.deepEqual(await tab.evaluate(() => window.initialKeys), [])
+  const failed = await tab.evaluate(() => window.discover())
+  assert.ok(failed.error)
+  assert.equal(failed.cached,null)
+  rpcOut = false
+  // No second discover call, reload, or clock advancement.
+  await tab.waitForFunction(() => window.peerSnapshot().source === 'chain', null, {timeout:20000})
+  assert.deepEqual((await tab.evaluate(() => window.peerSnapshot())).peers, expected)
+  await tab.evaluate(() => window.pinPeer('https://live.invalid'))
+  assert.equal((await tab.evaluate(() => window.peerSnapshot())).pinned,'https://live.invalid')
+  const switching = await tab.evaluate(() => {
+    window.oldRefresh = window.discover(3)
+    return window.peerSnapshot()
+  })
+  assert.deepEqual(switching.peers,[])
+  assert.deepEqual(switching.hosts,[])
+  assert.equal(switching.pinned,null)
+  await oldRequestStarted
+  const second = await tab.evaluate(() => window.discover(2))
+  assert.equal(second.source,'chain')
+  assert.deepEqual(second.hosts,['https://second.invalid'])
+  assert.deepEqual(second.peers.map(p => p.networkId),[2])
+  releaseOld()
+  await tab.evaluate(async () => {
+    await window.oldRefresh
+    window.pinPeer('https://live.invalid')
+  })
+  const settled = await tab.evaluate(() => window.peerSnapshot())
+  assert.deepEqual(settled.peers,second.peers)
+  assert.deepEqual(settled.hosts,second.hosts)
+  assert.equal(settled.pinned,null)
+  assert.equal(await tab.evaluate(() => localStorage.getItem('caw:instances:3')),null)
+  assert.deepEqual(leakedRequests,[])
+  // Hold a registry read while the user leaves network 4. Its late result must
+  // not replace network 2 or write a cache entry after the switch.
+  let releaseRpc, signalRpc
+  const rpcStarted = new Promise(resolve => { signalRpc = resolve })
+  const rpcReleased = new Promise(resolve => { releaseRpc = resolve })
+  await tab.route('**/rpc', async route => {
+    if ([route.request().postDataJSON()].flat().some(q => q.method === 'eth_getLogs')) {
+      signalRpc()
+      await rpcReleased
+    }
+    await route.continue()
+  })
+  await tab.evaluate(() => { window.heldChain = window.discover(4) })
+  await Promise.race([rpcStarted, tab.waitForTimeout(8000).then(() => { throw Error('Network 4 chain read did not start') })])
+  // Provide a valid same-network API response on the return visit.
+  await tab.route('**/api/instances?networkId=2', route => route.fulfill({json:{networkId:2,instances:second.peers}}))
+  const returned = await tab.evaluate(() => window.discover(2))
+  assert.equal(returned.source,'api')
+  releaseRpc()
+  await tab.evaluate(() => window.heldChain)
+  assert.deepEqual((await tab.evaluate(() => window.peerSnapshot())).peers,second.peers)
+  assert.equal(await tab.evaluate(() => localStorage.getItem('caw:instances:4')),null)
+  await cold.close()
   console.log(JSON.stringify({verdict:'PASS', chromium:browser.version(), initialKeys:[], before:result.before,
     offlineEndpoint:offline[0], rpcMethods:[...new Set(calls)], source:result.source, peers:result.peers,
-    activeHosts:result.hosts, cacheMatched:true, externalRequests:unexpected},null,2))
+    activeHosts:result.hosts, cacheMatched:true, automaticRecovery:true, switchClearedPeers:true, lateResponseIgnored:true, lateChainReadIgnored:true,
+    secondNetworkHosts:second.hosts, externalRequests:unexpected},null,2))
 } finally { try { await browser?.close() } finally { server.closeAllConnections(); server.close() } }
