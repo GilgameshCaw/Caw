@@ -36,8 +36,13 @@ const CONTRACTS = [
  *   "t_mapping(t_uint32,t_struct(CawNetwork)457_storage)" → normalised recursively
  */
 function normaliseType(t) {
-  // Replace )NNN_ (AST ID embedded between closing paren and underscore) with )_
-  return t.replace(/\)(\d+)_/g, ')_');
+  return t
+    // Replace )NNN_ (AST ID embedded between closing paren and underscore) with )_
+    .replace(/\)(\d+)_/g, ')_')
+    // Contract types end in the AST ID with no underscore:
+    //   "t_contract(ICawActions)33941" -> "t_contract(ICawActions)"
+    // The contract name stays, so a different contract type is still a mismatch.
+    .replace(/(t_contract\([^)]*\))\d+/g, '$1');
 }
 
 function getStorageLayout(contractName) {
@@ -46,11 +51,14 @@ function getStorageLayout(contractName) {
     { cwd: SOLIDITY_DIR }
   ).toString().trim();
   const parsed = JSON.parse(raw);
+  if (!parsed || !Array.isArray(parsed.storage) || parsed.storage.length === 0) {
+    throw new Error(`forge inspect ${contractName} returned no storage entries`);
+  }
   // Normalise: only keep label, slot, offset, type for each slot.
   // Omit astId (changes between compilations without semantic change).
   // Strip embedded AST IDs from type strings (t_struct(X)NNN_storage -> t_struct(X)_storage).
   // Sort by (slot, offset) to be deterministic.
-  const normalised = (parsed.storage || []).map(s => ({
+  const normalised = parsed.storage.map(s => ({
     label: s.label,
     slot: s.slot,
     offset: s.offset,

@@ -248,7 +248,8 @@ contract PathwayExpanderEscalation is Test {
   }
 
   // ---------------------------------------------------------------------------
-  // Test 7: prefix reorder
+  // Test 7: reorder of the existing DVNs
+  // (the new DVN may now go anywhere, but the existing ones keep their order)
   // ---------------------------------------------------------------------------
 
   function test_prefixReorder() public {
@@ -260,7 +261,7 @@ contract PathwayExpanderEscalation is Test {
     opt[0] = dvn2; opt[1] = dvn1; opt[2] = dvn3; opt[3] = dvn4;
     bytes memory reordered = _makeConfig(15, req, opt, 3);
 
-    vm.expectRevert("PathwayExpander: optionalDVNs prefix reordered");
+    vm.expectRevert("PathwayExpander: optionalDVNs not current plus one new DVN");
     pe.addDvnToPathway(address(oapp), address(ep), lib, eid, _step0Config(), reordered);
   }
 
