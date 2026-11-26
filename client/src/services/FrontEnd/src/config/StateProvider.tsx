@@ -1,3 +1,4 @@
+import { WalletProfileLookupContext } from "~/config/walletProfileLookup";
 import useTokenDataUpdate from "~/hooks/useTokenDataUpdate";
 import { useTokenDataStore } from "~/store/tokenDataStore"
 import { useFetchPrices } from "~/hooks/useFetchPrices";
@@ -15,8 +16,8 @@ export default function StateProvider({ children }: StateProviderProps) {
   const { address } = useAccount();
   const prevAddress = useRef<string | undefined>(undefined)
 
-  useFetchPrices(),
-  useTokenDataUpdate();
+  useFetchPrices();
+  const profileLookup = useTokenDataUpdate();
 
   useEffect(() => {
     // Note: the AI provider key (Gemini BYOK) is intentionally NOT cleared
@@ -63,5 +64,9 @@ export default function StateProvider({ children }: StateProviderProps) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [])
 
-  return children;
+  return (
+    <WalletProfileLookupContext.Provider value={profileLookup}>
+      {children}
+    </WalletProfileLookupContext.Provider>
+  );
 }

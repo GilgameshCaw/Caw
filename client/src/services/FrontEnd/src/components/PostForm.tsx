@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import toast from 'react-hot-toast'
-import { Link } from '~/utils/localizedRouter'
+import ProfileLookupAction from '~/components/ProfileLookupAction'
 import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
 /** Hard cap on thread length. Must match the API cap in
@@ -3153,12 +3153,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
             {/* Right side - Action buttons (Post/etc.) */}
             { hasNoToken ? (
-              <Link
-                to="/usernames/new"
+              <ProfileLookupAction
+                createLabel={t('post_form.button.create_account')}
                 className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
-              >
-                Create profile
-              </Link>
+              />
             ) : (() => {
                 // "Wrong Wallet" only applies when a wallet IS connected but
                 // doesn't own the active token (and no Quick Sign session is
@@ -4036,7 +4034,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               )}
             </div>
 
-            {(() => {
+            {hasNoToken ? (
+              <ProfileLookupAction
+                createLabel={t('post_form.button.create_account')}
+                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+              />
+            ) : (() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? t('post_form.error.wrong_wallet_tooltip') : ''
                 const threadTooLong2 = isThreadMode && submittableChunkCount > MAX_THREAD_LENGTH
@@ -4048,7 +4051,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : uploadProgress ? uploadProgress : signingProgress ? <span className="inline-flex items-center justify-center gap-1.5"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /><span ref={signingCountRef2}>1</span>/{signingProgress.total}</span> : isSubmitting ? <span className="inline-flex items-center justify-center"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /></span> : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
+                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : uploadProgress ? uploadProgress : signingProgress ? <span className="inline-flex items-center justify-center gap-1.5"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /><span ref={signingCountRef2}>1</span>/{signingProgress.total}</span> : isSubmitting ? <span className="inline-flex items-center justify-center"><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /></span> : isThreadMode ? t('post_form.button.thread', { count: submittableChunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2

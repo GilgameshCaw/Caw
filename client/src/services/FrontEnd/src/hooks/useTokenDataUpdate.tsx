@@ -1,3 +1,4 @@
+import type { WalletProfileLookupStatus } from "~/config/walletProfileLookup"
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
 import { useEffect, useCallback, useMemo } from "react"
@@ -42,7 +43,7 @@ export default function useTokenDataUpdate() {
   // CawProfileLens.tokens() — the V2 replacement for the removed
   // CawProfile.tokens() view. Same shape returned (tokenId, username,
   // owner, ownerBalance, withdrawable) — see solidity/contracts/CawProfileLens.sol.
-  const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = useReadContract({
+  const viewedProfiles = useReadContract({
     address: CAW_PROFILE_LENS_ADDRESS,
     chainId: sepolia.id,
     abi: cawProfileLensAbi,
@@ -53,9 +54,10 @@ export default function useTokenDataUpdate() {
       enabled: !!viewedAddress,
     }
   })
+  const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = viewedProfiles
 
   // Also fetch tokens for the connected address if it differs from viewedAddress
-  const { data: connectedTokens, refetch: refetchConnected } = useReadContract({
+  const connectedProfiles = useReadContract({
     address: CAW_PROFILE_LENS_ADDRESS,
     chainId: sepolia.id,
     abi: cawProfileLensAbi,
@@ -65,6 +67,7 @@ export default function useTokenDataUpdate() {
       enabled: needsConnectedFetch,
     }
   })
+  const { data: connectedTokens, refetch: refetchConnected } = connectedProfiles
 
   useEffect(() => {
     console.log('[TokenData] L1 query (viewed):', {
@@ -133,7 +136,7 @@ export default function useTokenDataUpdate() {
     [connectedTokens],
   )
 
-  const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = useReadContract({
+  const viewedBalances = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId:      baseSepolia.id,
     abi:          cawProfileLedgerAbi,
@@ -143,9 +146,10 @@ export default function useTokenDataUpdate() {
     },
     args: [viewedTokenIds],
   })
+  const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = viewedBalances
 
   // L2 data for connected address tokens
-  const { data: connectedL2TokenData, isLoading: connectedBalancesLoading, refetch: refetchConnectedL2 } = useReadContract({
+  const connectedBalances = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId: baseSepolia.id,
     abi: cawProfileLedgerAbi,
@@ -155,6 +159,7 @@ export default function useTokenDataUpdate() {
     },
     args: [connectedTokenIds],
   })
+  const { data: connectedL2TokenData, isLoading: connectedBalancesLoading, refetch: refetchConnectedL2 } = connectedBalances
 
 
   // Get the active token ID for the current address
@@ -516,6 +521,28 @@ export default function useTokenDataUpdate() {
   useEffect(() => {
     setRefetchTokenData(refetch)
   }, [refetch, setRefetchTokenData])
+
+  // The connected wallet can differ from the last profile viewed.
+  const profiles = needsConnectedFetch ? connectedProfiles : viewedProfiles
+  const balances = needsConnectedFetch ? connectedBalances : viewedBalances
+  const retry = () => {
+    void profiles.refetch()
+    if (profiles.data?.length) void balances.refetch()
+  }
+
+  let status: WalletProfileLookupStatus = 'checking'
+  if (viewedAddress && !profiles.isFetching) {
+    if (profiles.isError) status = 'unavailable'
+    else if (profiles.isSuccess && profiles.data?.length === 0) status = 'empty'
+    else if (profiles.data?.length && !balances.isFetching) {
+      if (balances.isError) status = 'unavailable'
+      else if (balances.isSuccess) {
+        status = profiles.data.some(profile => !!profile.username) ? 'found' : 'unavailable'
+      }
+    }
+  }
+
+  return { status, retry }
 }
 
 

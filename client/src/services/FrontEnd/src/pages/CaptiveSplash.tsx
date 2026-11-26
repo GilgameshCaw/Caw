@@ -1,3 +1,4 @@
+import ProfileLookupAction from '~/components/ProfileLookupAction'
 import { Link, useNavigate } from '~/utils/localizedRouter'
 import { useConnectModalBridge as useConnectModal } from '~/hooks/useConnectModalBridge'
 import { useAccount } from 'wagmi'
@@ -107,12 +108,10 @@ export default function CaptiveSplash() {
               {t('common.sign_in')}
             </button>
           ) : !activeToken?.username ? (
-            <Link
-              to="/usernames/new"
+            <ProfileLookupAction
               className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow whitespace-nowrap"
-            >
-              {t('main_layout.create_profile')}
-            </Link>
+              createLabel={t('main_layout.create_profile')}
+            />
           ) : (
             <Link
               to="/home"
@@ -166,12 +165,10 @@ export default function CaptiveSplash() {
               {t('common.sign_in')}
             </button>
           ) : !activeToken?.username ? (
-            <Link
-              to="/usernames/new"
+            <ProfileLookupAction
               className="px-5 sm:px-8 py-3 bg-yellow-500 text-black font-bold text-base sm:text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl whitespace-nowrap"
-            >
-              {t('main_layout.create_profile')}
-            </Link>
+              createLabel={t('main_layout.create_profile')}
+            />
           ) : (
             <Link
               to="/home"

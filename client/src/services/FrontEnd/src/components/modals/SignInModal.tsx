@@ -1,4 +1,6 @@
-import { Link, useNavigate } from '~/utils/localizedRouter'
+import { useWalletProfileLookup } from '~/config/walletProfileLookup'
+import ProfileLookupAction from '~/components/ProfileLookupAction'
+import { useNavigate } from '~/utils/localizedRouter'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignInModalStore } from '~/store/signInModalStore'
@@ -21,6 +23,7 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
   const { isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
+  const { status } = useWalletProfileLookup()
   const store = useSignInModalStore()
   const navigate = useNavigate()
 
@@ -41,9 +44,11 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
           <h3 className="text-lg font-bold text-white mb-2">
             {t('signin_modal.title')}
           </h3>
-          <p className="text-sm text-white/60">
-            {message || t('signin_modal.default_message')}
-          </p>
+          {(message || !isConnected || status === 'empty') && (
+            <p className="text-sm text-white/60">
+              {message || t('signin_modal.default_message')}
+            </p>
+          )}
         </div>
 
         {!isConnected ? (
@@ -94,13 +99,11 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             })()}
           </div>
         ) : !activeToken?.username ? (
-          <Link
-            to="/usernames/new"
-            onClick={onClose}
+          <ProfileLookupAction
             className="block w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors text-center"
-          >
-            {t('signin_modal.create_profile')}
-          </Link>
+            createLabel={t('signin_modal.create_profile')}
+            onCreate={onClose}
+          />
         ) : (
           <button
             onClick={onClose}

@@ -1,3 +1,4 @@
+import ProfileLookupAction from '~/components/ProfileLookupAction'
 // src/components/ProfileChooser.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
@@ -319,11 +320,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
 
   if (hasHydrated && !selectedToken) {
-    // Check if there are ANY profiles in the browser
-    const hasAnyProfiles = Object.values(tokensByAddress).some(tokens => tokens.length > 0);
-
-    // If no wallet connected and no profiles exist, show "Sign In"
-    if (!isConnected && !hasActiveSession && !hasAnyProfiles) {
+    if (!isConnected && !hasActiveSession) {
       return (
         <div className="mb-2 flex justify-start">
           {/* Route to the sign-in CHOICE (passkey OR wallet) at /welcome, not the
@@ -338,14 +335,14 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     // Otherwise show "create your profile"
     return (
       <div className="mb-2">
-        <a href="/usernames/new" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm hover:scale-105 ${
+        <ProfileLookupAction
+          createLabel={t('profile_chooser.create_profile')}
+          className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm hover:scale-105 ${
           isDark
             ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:border-white/30'
             : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
-        }`}>
-          <span className="text-lg">+</span>
-          {t('profile_chooser.create_profile')}
-        </a>
+        }`}
+        />
       </div>
     );
   }

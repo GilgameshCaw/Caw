@@ -1,3 +1,4 @@
+import ProfileLookupAction from '~/components/ProfileLookupAction'
 import { Toaster } from "react-hot-toast";
 import { Modals } from "~/components/modals/Modals";
 import Sidebar from "~/components/Sidebar";
@@ -537,12 +538,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
                   {t('common.sign_in')}
                 </button>
               ) : (
-                <Link
-                  to="/usernames/new"
+                <ProfileLookupAction
                   className="px-3 sm:px-4 py-1.5 bg-yellow-500 text-black font-bold text-sm rounded-full hover:bg-yellow-400 transition-all shadow whitespace-nowrap"
-                >
-                  {t('main_layout.create_profile')}
-                </Link>
+                  createLabel={t('main_layout.create_profile')}
+                />
               )}
             </div>
           }
