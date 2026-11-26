@@ -32,7 +32,7 @@ No dependency installation is required; this uses the committed CommonJS codec. 
 
 ## Decision needed before calling the limit aligned
 
-The [official manifesto](https://github.com/cawdevelopment/manifesto/blob/37399aeb55974d4b09d404014865b5ef8918e9de/README.md) specifies characters. The [reproduced R2 text](https://github.com/Xubu-Trad/caw-lab/blob/canon/layers/R2-020_hex_transposition/MESSAGE.md) allows clear agreed changes. Its byte recovery does not authenticate the author.
+The [official manifesto](https://github.com/cawdevelopment/manifesto/blob/37399aeb55974d4b09d404014865b5ef8918e9de/README.md) specifies characters. The [reproduced R2 text](https://github.com/Xubu-Trad/caw-lab/blob/797c6cb6717bde2c4b71120962777fd261815b90/layers/R2-020_hex_transposition/MESSAGE.md) allows clear agreed changes. Its byte recovery does not authenticate the author.
 
 Please identify whether the agreed rule is 420 decoded characters, 420 compressed bytes, or another explicitly defined measure, and where protocol-level enforcement belongs. A frontend limit alone would not establish the same invariant for independent callers. A compressed-byte ceiling may serve resource control, but should not be described as equivalent without agreement.
 

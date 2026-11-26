@@ -18,7 +18,7 @@ This is conditional source analysis, not evidence that a fraudulent submission h
 
 ## Manifesto / R2 boundary
 
-The [manifesto](https://github.com/cawdevelopment/manifesto/blob/main/README.md) requires permanent, trustless data storage and a system no single person can cripple. The [reproduced R2 text](https://github.com/Xubu-Trad/caw-lab/blob/canon/layers/R2-020_hex_transposition/MESSAGE.md) requires developer independence and a peer-reviewed, agreed release. This makes independent monitoring, acquisition and recovery a release-evidence requirement. It does not establish that every temporary outage violates the manifesto or that a particular two-day interval is forbidden. Any departure from the promised storage guarantee needs explicit scope and agreement. Recovered R2 bytes do not authenticate their author.
+The [manifesto](https://github.com/cawdevelopment/manifesto/blob/37399aeb55974d4b09d404014865b5ef8918e9de/README.md) requires permanent, trustless data storage and a system no single person can cripple. The [reproduced R2 text](https://github.com/Xubu-Trad/caw-lab/blob/797c6cb6717bde2c4b71120962777fd261815b90/layers/R2-020_hex_transposition/MESSAGE.md) requires developer independence and a peer-reviewed, agreed release. This makes independent monitoring, acquisition and recovery a release-evidence requirement. It does not establish that every temporary outage violates the manifesto or that a particular two-day interval is forbidden. Any departure from the promised storage guarantee needs explicit scope and agreement. Recovered R2 bytes do not authenticate their author.
 
 ## Required bounded experiment
 

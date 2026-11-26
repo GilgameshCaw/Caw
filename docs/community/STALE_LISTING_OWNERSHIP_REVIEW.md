@@ -20,9 +20,9 @@ The author reports four real-CawProfile Foundry stale-listing tests: three stale
 
 ## Manifesto and release consequence
 
-The [manifesto](https://github.com/cawdevelopment/manifesto/blob/main/README.md) makes the NFT the ownership key for the associated account and assets. A stale seller's terms remaining executable against an approved new owner's NFT is a concrete ownership-safety discrepancy, not merely a different interface preference. The optional marketplace can be replaced, but this implementation should not be represented as a safe realization of that ownership promise while the defect remains.
+The [manifesto](https://github.com/cawdevelopment/manifesto/blob/37399aeb55974d4b09d404014865b5ef8918e9de/README.md) makes the NFT the ownership key for the associated account and assets. A stale seller's terms remaining executable against an approved new owner's NFT is a concrete ownership-safety discrepancy, not merely a different interface preference. The optional marketplace can be replaced, but this implementation should not be represented as a safe realization of that ownership promise while the defect remains.
 
-The [reproduced R2 message](https://github.com/Xubu-Trad/caw-lab/blob/canon/layers/R2-020_hex_transposition/MESSAGE.md) calls for peer review and an agreed release. A source comment, generic marketplace approval, or open PR is not community agreement to this defect. Recovery of that text does not authenticate its author.
+The [reproduced R2 message](https://github.com/Xubu-Trad/caw-lab/blob/797c6cb6717bde2c4b71120962777fd261815b90/layers/R2-020_hex_transposition/MESSAGE.md) calls for peer review and an agreed release. A source comment, generic marketplace approval, or open PR is not community agreement to this defect. Recovery of that text does not authenticate its author.
 
 ## Action and boundaries
 

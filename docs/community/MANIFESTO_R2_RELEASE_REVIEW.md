@@ -74,7 +74,7 @@ Existing work: [#334](https://github.com/GilgameshCaw/Caw/pull/334) `4206f96cb0c
 
 Requirement: **M-A / R-A**. Priority: HIGH (review prioritization, not exploit rating).
 
-Source: [`solidity/contracts/CawNetworkManager.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawNetworkManager.sol#L204) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+Source: [`solidity/contracts/CawNetworkManager.sol`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/solidity/contracts/CawNetworkManager.sol#L480) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
 
 Observation: On master, sponsor membership is owner-managed even after both locks. The #342 candidate would freeze existing membership when it clears the owner; that is a proposal, not deployed master behavior.
 
@@ -302,7 +302,7 @@ Source: [`install.sh`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f70
 
 Observation: Master defaults to mutable source and allows repository overrides. PR #421 now disables Git replacement-object lookup for pinned acquisition/check/reset; its amendment has eleven local fixture scenarios and expected failing controls. The independent R-02 follow-up at b210d060 separately tested the replacement-object correction (https://github.com/GilgameshCaw/Caw/pull/421#issuecomment-6659980458). Full installation and release reproducibility remain open.
 
-**Open acceptance gate:** Independent amendment review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.
+**Open acceptance gate:** The independent #421 R-02 amendment review is complete within its stated scope. Broader release review, #237 integration, installer/bootstrap trust, dependencies, filters/hooks/conversions, runtime recovery and release agreement remain. No full installer or live deployment result.
 
 Existing work: [#330](https://github.com/GilgameshCaw/Caw/pull/330) `f141ba65c3d84ae8a9ff777c9cb930eecaf04007` (open, draft), [#421](https://github.com/GilgameshCaw/Caw/pull/421) `b210d060e247684edaab2021c3d8653d0c885ee5` (open)
 
@@ -361,6 +361,8 @@ Existing work: [#185](https://github.com/GilgameshCaw/Caw/pull/185) `54b842b77ff
 Requirement: **M-I / M-D / R-C**. Priority: HIGH (review prioritization, not exploit rating).
 
 Source: [`client/src/services/DmRelayService/index.ts`](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/services/DmRelayService/index.ts#L159) at `97cd13f3a1423f702d411472fdd2b2a2e7bfbd59`.
+
+Message mutation routes: [edit](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/api/routes/dm.ts#L691), [hide](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/api/routes/dm.ts#L782), [delete](https://github.com/GilgameshCaw/Caw/blob/97cd13f3a1423f702d411472fdd2b2a2e7bfbd59/client/src/api/routes/dm.ts#L819).
 
 Observation: dm.ts distinguishes per-user hiding from sender-authorized tombstones that null local ciphertext/history, and group edits replace recipient ciphertext without history. See DM_PERMANENCE_REVIEW.md. Independent archive survival was not tested.
 
