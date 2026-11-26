@@ -203,6 +203,8 @@
   "post_form.button.thread": "Thread ({{count}})",
   "post_form.button.wrong_wallet": "Wrong Wallet",
   "post_form.button.create_account": "Create Account",
+  "post_form.number.checking": "Checking the post number...",
+  "post_form.number.failed": "Could not check the post number. Your post was not sent. Check your connection and try again.",
   "post_form.error.no_video_schedule": "Scheduled posts do not support video yet.",
   "post_form.error.upload_failed": "Failed to upload images for scheduled post.",
   "post_form.error.schedule_failed": "Something went wrong scheduling this post.",
