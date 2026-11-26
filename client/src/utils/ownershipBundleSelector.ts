@@ -1,4 +1,4 @@
-import { Contract, dataSlice, id, isError } from 'ethers'
+import { AbiCoder, Contract, ZeroAddress, dataSlice, id, isError } from 'ethers'
 
 const legacySelector = dataSlice(id('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint64[])'), 0, 4)
 const generationSelector = dataSlice(id('lzDepositMintSession(uint32,uint32,uint256,string,address,uint64,uint256,uint64,uint32[],address[],uint128[])'), 0, 4)
@@ -23,4 +23,17 @@ export async function ownershipBundleSelector(profile: Contract): Promise<string
     }
     return legacySelector
   }
+}
+
+// Quote the same owner-update count as mintAndDeposit. newId is unknown but fixed-width.
+export async function quoteMintOwnershipBundle(profile: Contract, networkId: number, dest: number,
+  recipient: string, username: string, depositAmount: bigint): Promise<bigint> {
+  const selector = await ownershipBundleSelector(profile)
+  const [ids, owners, stamps] = await profile.pendingTransferUpdates(dest, recipient, 0)
+  const payload = AbiCoder.defaultAbiCoder().encode(
+    ['uint32','uint32','uint256','string','address','uint64','uint256','uint64','uint32[]','address[]','uint128[]'],
+    [networkId, 0, depositAmount, username, ZeroAddress, 0, 0, 0, ids, owners, stamps],
+  )
+  const quote = await profile.lzQuote(networkId, selector, ids.length, selector + payload.slice(2), dest, false)
+  return quote.nativeFee ?? quote[0]
 }

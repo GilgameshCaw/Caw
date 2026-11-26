@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const { ContractFactory, JsonRpcProvider, Wallet, ZeroAddress, ZeroHash, zeroPadValue, id, Interface } = require('ethers')
+const { ContractFactory, JsonRpcProvider, AbiCoder, Wallet, ZeroAddress, ZeroHash, zeroPadValue, id, Interface } = require('ethers')
 const [port, version, out, fixtureOut] = process.argv.slice(2)
 assert.match(port, /^\d+$/)
 assert.ok(['base','generation'].includes(version))
@@ -46,6 +46,7 @@ async function run() {
   const { SponsorService } = require('../src/services/SponsorService/index.ts')
   const iface = new Interface(require('../src/abi/generated.ts').cawProfileAbi)
   const selector = version === 'base' ? '0xe179bcce' : '0x1010d949'
+  let checkingSponsor = false
   const quotes = []
   const send = JsonRpcProvider.prototype.send
   JsonRpcProvider.prototype.send = async function(method, params) {
@@ -55,6 +56,13 @@ async function run() {
       const args = iface.decodeFunctionData('lzQuote',params[0].data)
       assert.equal(args[1],selector)
       assert.equal(args[3].slice(0,10),selector)
+      const body = AbiCoder.defaultAbiCoder().decode(
+        ['uint32','uint32','uint256','string','address','uint64','uint256','uint64','uint32[]','address[]','uint128[]'],
+        '0x'+args[3].slice(10))
+      assert.equal(args[2],1n)
+      assert.equal(body[8].length,1)
+      assert.equal(body[9][0], checkingSponsor ? user.address : profile.target)
+      assert.equal(body[3], checkingSponsor ? 'servicecheck' : 'a'.repeat(255))
       quotes.push(iface.decodeFunctionResult('lzQuote',result)[0].nativeFee)
     }
     return result
@@ -65,6 +73,7 @@ async function run() {
     const cache = await sync.ensureFreshLzDepositFeeCache(0)
     assert.ok(quotes.length && cache?.nativeFeeWei > 0n)
     assert.equal(cache.nativeFeeWei,quotes.at(-1))
+    checkingSponsor = true
     const count = quotes.length
     // A deliberately low cap exercises the actual post-quote decision without a sponsored send.
     const bootstrap = new SponsorService({l1ProviderUrl:url,l1ChainId:11155111,

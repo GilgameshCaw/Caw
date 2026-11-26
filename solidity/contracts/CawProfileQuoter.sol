@@ -89,6 +89,9 @@ contract CawProfileQuoter {
     return quote;
   }
 
+  // These legacy quote signatures have no username argument.
+  // Use a nonzero owner for the appended mint entry even on anonymous eth_call.
+  // Reserve the 255 bytes accepted by CawProfileMinter; dynamic bytes and string encode identically.
   function mintAndDepositQuote(uint32 networkId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     // Storage-fee leg: mint + deposit + auth (new user always needs auth).
     quote.nativeFee = cawProfile.networkManager().getMintFee(networkId) * 2
@@ -100,10 +103,10 @@ contract CawProfileQuoter {
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     uint32[] memory tokenIds; address[] memory owners; uint128[] memory stamps;
-    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, address(this), 0);
 
     bytes memory payload = abi.encodeWithSelector(
-      _lzBundleSelector, networkId, uint32(0), depositAmount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
+      _lzBundleSelector, networkId, uint32(0), depositAmount, new bytes(255), address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
     MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
@@ -125,14 +128,14 @@ contract CawProfileQuoter {
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     uint32[] memory tokenIds; address[] memory owners; uint128[] memory stamps;
-    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, address(this), 0);
 
     bytes memory payload = abi.encodeWithSelector(
       _lzBundleSelector,
       networkId,
       uint32(0),
       uint256(0),
-      "placeholdr",  // ~10-char placeholder username for sizing
+      new bytes(255),
       address(0),
       uint64(0),
       uint256(0),
@@ -163,16 +166,16 @@ contract CawProfileQuoter {
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     uint32[] memory tokenIds; address[] memory owners; uint128[] memory stamps;
-    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, address(this), 0);
 
     bytes memory payload;
     if (sessionKey == address(0)) {
       payload = abi.encodeWithSelector(
-        _lzBundleSelector, networkId, uint32(0), depositAmount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
+        _lzBundleSelector, networkId, uint32(0), depositAmount, new bytes(255), address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     } else {
       payload = abi.encodeWithSelector(
-        _lzBundleSelector, networkId, uint32(0), depositAmount, "",
+        _lzBundleSelector, networkId, uint32(0), depositAmount, new bytes(255),
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }
@@ -196,16 +199,16 @@ contract CawProfileQuoter {
     if (lzDestId == cawProfile.mainnetLzId()) return quote;
 
     uint32[] memory tokenIds; address[] memory owners; uint128[] memory stamps;
-    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+    (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, address(this), 0);
 
     bytes memory payload;
     if (sessionKey == address(0)) {
       payload = abi.encodeWithSelector(
-        _lzBundleSelector, networkId, uint32(0), uint256(0), "placeholdr", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
+        _lzBundleSelector, networkId, uint32(0), uint256(0), new bytes(255), address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     } else {
       payload = abi.encodeWithSelector(
-        _lzBundleSelector, networkId, uint32(0), uint256(0), "placeholdr",
+        _lzBundleSelector, networkId, uint32(0), uint256(0), new bytes(255),
         sessionKey, uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
       );
     }

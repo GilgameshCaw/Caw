@@ -1,4 +1,4 @@
-import { ownershipBundleSelector } from '../../utils/ownershipBundleSelector'
+import { quoteMintOwnershipBundle } from '../../utils/ownershipBundleSelector'
 /**
  * SponsorService — submits sponsored L1 contract calls on behalf of users.
  *
@@ -599,22 +599,6 @@ export class SponsorService {
       // therefore refunds to the USER, not the sponsor — so overpaying slightly
       // via the 20% buffer is safe; the user receives the excess back.
       //
-      // _bundleNoSession signature (CawProfile.sol line 422):
-      //   abi.encodeWithSelector(_lzBundleSelector, nid, tid, amt, uname,
-      //     address(0), 0, 0, 0, tids, owns, stmps)
-      // For a fresh mint there are no pending transfer updates (empty arrays),
-      // and newId is unknown pre-mint so we use 0 as placeholder. LZ fees
-      // depend on message byte-length not content, so placeholder values give
-      // the correct size.
-      // Encode _bundleNoSession with empty arrays (fresh mint, no pending
-      // transfer updates) and placeholder newId=0.
-      const bundlePayload = AbiCoder.defaultAbiCoder().encode(
-        // encodeWithSelector = selector + abi.encode(args); replicate that shape:
-        // We use low-level encode and prepend the selector to match the contract.
-        ['uint32', 'uint32', 'uint256', 'string', 'address', 'uint64', 'uint256', 'uint64', 'uint32[]', 'address[]', 'uint128[]'],
-        [params.networkId, 0, params.depositAmountCAW, '', '0x0000000000000000000000000000000000000000', 0, 0, 0, [], [], []],
-      )
-
       let paddedFee: bigint
       try {
         const cawProfileReadOnly = new Contract(
@@ -622,17 +606,8 @@ export class SponsorService {
           cawProfileAbi as any,
           this.provider,
         )
-        const selector = await ownershipBundleSelector(cawProfileReadOnly)
-        const bundlePayloadWithSelector = selector + bundlePayload.slice(2)
-        const quote = await cawProfileReadOnly.lzQuote(
-          params.networkId,
-          selector,
-          0n,  // n=0: no pending transfer-update entries for a fresh mint
-          bundlePayloadWithSelector,
-          params.lzDestId,
-          false, // _payInLzToken=false: pay in native ETH
-        )
-        const nativeFee: bigint = quote.nativeFee ?? quote[0]
+        const nativeFee = await quoteMintOwnershipBundle(cawProfileReadOnly, params.networkId,
+          params.lzDestId, userEoaAddress, params.username, params.depositAmountCAW)
         // 20% buffer to absorb fee drift between quote and inclusion.
         // Excess ETH refunds to the user via setLzRefundTo (Minter H-1 fix).
         paddedFee = (nativeFee * 120n) / 100n
