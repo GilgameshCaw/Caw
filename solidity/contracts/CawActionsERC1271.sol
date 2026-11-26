@@ -98,8 +98,18 @@ contract CawActionsERC1271 {
 
     require(ctx.pos == packedActions.length, "Trailing bytes");
 
+    uint256 spent;
     if (ctx.withdrawCount > 0) {
       _executeWithdrawals(ctx, withdrawFee, withdrawLzTokenAmount);
+      spent = withdrawFee;
+    }
+    // Same accounting as CawActions._settleWithdrawals: the fee is paid out of
+    // msg.value only (see _executeWithdrawals), and whatever was not spent goes
+    // back to the caller instead of staying here.
+    uint256 surplus = msg.value - spent;
+    if (surplus > 0) {
+      (bool ok, ) = msg.sender.call{value: surplus}("");
+      require(ok, "refund failed");
     }
   }
 
@@ -117,6 +127,7 @@ contract CawActionsERC1271 {
       unchecked { ++i; }
     }
     require(withdrawFee > 0 || cawProfile.bypassLZ(), "withdrawFee required");
+    require(msg.value >= withdrawFee, "withdrawFee not funded");
     cawProfile.setWithdrawable{value: withdrawFee}(wIds, wAmts, withdrawLzTokenAmount);
   }
 
