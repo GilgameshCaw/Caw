@@ -1075,7 +1075,8 @@ contract CawProfile is
     // Per-token cost: 19k SSTORE (ownerOf, warm) + 22k (lastOwnerUpdateBlock cold)
     // + 22k (ownerSessionEpoch++ on prev-owner-out, cold)
     // + 22k (tokenSessionEpoch[tokenId]++ cold, token-scoped-session invalidation). Plus arithmetic/loop overhead.
-    return gasBaseFor[selector] + uint128(65_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
+    // Include first writes for remote packet order and the previous wallet's loss watermark.
+    return gasBaseFor[selector] + uint128(110_000 * n) + networkManager.networkGasOverride(cawNetworkId, selector);
   }
 
   // selectors() and selectorAllowFreeAuth() removed to reclaim bytecode budget.

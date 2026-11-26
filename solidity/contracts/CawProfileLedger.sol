@@ -110,6 +110,8 @@ contract CawProfileLedger is
 
   bool public bypassLZ;
   CawProfile public cawProfile;
+  // Packed into the remaining bytes of the dispatch-context slot.
+  uint64 private inboundPacketNonce;
 
   // ============================================
   // SESSION KEY DELEGATION (address-based)
@@ -218,6 +220,7 @@ contract CawProfileLedger is
   event Authenticated(uint32 cawNetworkId, uint32 tokenId);
   event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit, uint64 perActionTipRate);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
+  event StaleSessionGrantSkipped(uint32 indexed tokenId, address indexed sessionKey);
   /// @notice Emitted when CawActions burns L2 stake on behalf of a token (withdraw flow).
   /// @dev Counterpart to L1 `CawProfile.Withdrawn`. The L2-side decrement of `totalCaw`
   ///      happens here; the L1 setWithdrawable LZ message carries the amounts back to
@@ -454,14 +457,22 @@ contract CawProfileLedger is
       authenticated[cawNetworkId][tokenId] = true;
       emit Authenticated(cawNetworkId, tokenId);
     }
-    // Apply ownership updates BEFORE session registration so ownerOf[tokenId]
-    // is current when we read it for the session nonce bump.
+    // The L1 profile appends the authorizing token and owner last in a mint bundle.
+    // A stale bundle still carries its own deposit, but cannot grant a session.
+    bool grant = sessionKey != address(0) && tokenIds.length != 0
+      && tokenIds[tokenIds.length - 1] == tokenId
+      && inboundPacketNonce > lastOwnerPacketNonce[tokenId]
+      && stamps[tokenIds.length - 1] >= lastOwnerUpdateBlock[tokenId];
     updateOwners(tokenIds, owners, stamps);
-    if (sessionKey != address(0)) {
+    address owner = ownerOf[tokenId];
+    if (grant && owners[tokenIds.length - 1] == owner && owner != address(0)
+        && inboundPacketNonce > lastRemoteOwnerLoss[owner]
+        && !revokedRemoteGrant[owner][sessionKey] && sessions[owner][sessionKey].expiry == 0) {
       if (expiry <= block.timestamp) revert Expired();
-      address owner = ownerOf[tokenId];
       sessionNonce[owner]++;
       _writeWalletSession(owner, sessionKey, expiry, 0xBF, perActionTipRate, spendLimit);
+    } else if (sessionKey != address(0)) {
+      emit StaleSessionGrantSkipped(tokenId, sessionKey);
     }
   }
 
@@ -518,8 +529,25 @@ contract CawProfileLedger is
   ///      contract in bypassLZ co-deployment mode (same trust boundary).
   function updateOwners(uint32[] calldata tokenIds, address[] calldata owners, uint64[] calldata stamps) public {
     if (!(fromLZ || (bypassLZ && _msgSender() == address(cawProfile)))) revert OnlyLZ();
-    for (uint i = 0; i < tokenIds.length; i++)
-      _setOwnerOf(tokenIds[i], owners[i], stamps[i]);
+    for (uint i = 0; i < tokenIds.length; i++) {
+      uint32 tokenId = tokenIds[i];
+      if (fromLZ) {
+        if (inboundPacketNonce <= lastOwnerPacketNonce[tokenId] || stamps[i] < lastOwnerUpdateBlock[tokenId]) continue;
+        lastOwnerPacketNonce[tokenId] = inboundPacketNonce;
+        lastOwnerUpdateBlock[tokenId] = stamps[i];
+        address previous = ownerOf[tokenId];
+        if (owners[i] != previous) {
+          // Losing a token invalidates wallet-wide sessions, including older grants
+          // travelling on another token in the same authenticated channel.
+          if (previous != address(0) && inboundPacketNonce > lastRemoteOwnerLoss[previous]) {
+            lastRemoteOwnerLoss[previous] = inboundPacketNonce;
+          }
+          _applyOwner(tokenId, owners[i]);
+        }
+      } else {
+        _setOwnerOf(tokenId, owners[i], stamps[i]);
+      }
+    }
   }
 
   // ----------------------------------------------------------------
@@ -541,6 +569,11 @@ contract CawProfileLedger is
   mapping(uint32 => uint256) public sponsorRepay;
   /// @notice Sponsor's profile tokenId that receives sweep credits.
   mapping(uint32 => uint32) public repaySponsorTokenId;
+
+  // LayerZero nonces are ordered on the immutable L1 profile -> ledger channel.
+  mapping(uint32 => uint64) private lastOwnerPacketNonce;
+  mapping(address => uint64) private lastRemoteOwnerLoss;
+  mapping(address => mapping(address => bool)) private revokedRemoteGrant;
 
   event SponsorRepayRegistered(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 repayAmount);
   event SponsorRepaySwept(uint32 indexed tokenId, uint32 sponsorTokenId, uint256 swept, uint256 remaining);
@@ -867,6 +900,7 @@ contract CawProfileLedger is
     // otherwise a pre-signed registerTokenScopedSession at the current nonce
     // stays replayable after revocation. Read profileId before the delete.
     _bumpTokenSessionNonce(msg.sender, sessionKey);
+    if (!bypassLZ) revokedRemoteGrant[msg.sender][sessionKey] = true;
     delete sessions[msg.sender][sessionKey];
     emit SessionRevoked(msg.sender, sessionKey);
   }
@@ -915,6 +949,7 @@ contract CawProfileLedger is
     if (!(msg.sender == address(cawActions))) revert NotCa();
     sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
     _bumpTokenSessionNonce(owner, sessionKey); // TSN-1: token-scoped nonce too
+    if (!bypassLZ) revokedRemoteGrant[owner][sessionKey] = true;
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
@@ -946,6 +981,7 @@ contract CawProfileLedger is
 
     sessionNonce[owner]++; // SES-1: invalidate pre-signed registerSession at current nonce
     _bumpTokenSessionNonce(owner, sessionKey); // TSN-1: token-scoped nonce too
+    if (!bypassLZ) revokedRemoteGrant[owner][sessionKey] = true;
     delete sessions[owner][sessionKey];
     emit SessionRevoked(owner, sessionKey);
   }
@@ -1049,9 +1085,12 @@ contract CawProfileLedger is
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
+    if (_origin.srcEid != layer1EndpointId || _origin.nonce == 0) revert OnlyLZ();
+    inboundPacketNonce = _origin.nonce;
     fromLZ = true;
     (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;
+    inboundPacketNonce = 0;
 
     // Handle failure and revert with the error message
     if (!success) {
