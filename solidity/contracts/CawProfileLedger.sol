@@ -667,6 +667,12 @@ contract CawProfileLedger is
 
   /// @notice Update a single token's owner — co-deployment mode only.
   function setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) external onlyOnMainnet {
+    // Local ERC-721 hooks run synchronously in transfer order, even in the same block.
+    // Keep equal-stamp suppression for batched and cross-chain deliveries.
+    if (stamp == block.number && stamp == lastOwnerUpdateBlock[tokenId]) {
+      if (newOwner != ownerOf[tokenId]) _applyOwner(tokenId, newOwner);
+      return;
+    }
     _setOwnerOf(tokenId, newOwner, stamp);
   }
 
@@ -681,6 +687,10 @@ contract CawProfileLedger is
   function _setOwnerOf(uint32 tokenId, address newOwner, uint64 stamp) internal {
     if (stamp <= lastOwnerUpdateBlock[tokenId]) return; // stale or same-stamp; silent skip
     lastOwnerUpdateBlock[tokenId] = stamp;
+    _applyOwner(tokenId, newOwner);
+  }
+
+  function _applyOwner(uint32 tokenId, address newOwner) internal {
     address prev = ownerOf[tokenId];
     if (prev != newOwner && prev != address(0)) {
       // CL-4 invariant: bump BOTH epochs on owner change.
