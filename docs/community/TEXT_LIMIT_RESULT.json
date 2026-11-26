@@ -1,0 +1,29 @@
+{
+  "scope": "actual pinned codec and source predicate; no EVM, valid signed action, API, transaction or deployment tested",
+  "results": [
+    {
+      "id": "ascii-420",
+      "decodedCharacters": 420,
+      "utf8Bytes": 420,
+      "compressedBytes": 160,
+      "passesContractLengthPredicate": true,
+      "compressedHex": "4758adb6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6d80"
+    },
+    {
+      "id": "ascii-421",
+      "decodedCharacters": 421,
+      "utf8Bytes": 421,
+      "compressedBytes": 160,
+      "passesContractLengthPredicate": true,
+      "compressedHex": "4758adb6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db0"
+    },
+    {
+      "id": "ascii-600",
+      "decodedCharacters": 600,
+      "utf8Bytes": 600,
+      "compressedBytes": 227,
+      "passesContractLengthPredicate": true,
+      "compressedHex": "4758adb6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6d8"
+    }
+  ]
+}
