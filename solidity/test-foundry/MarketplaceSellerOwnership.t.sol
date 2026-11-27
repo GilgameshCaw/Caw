@@ -20,6 +20,7 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "../contracts/CawProfileMarketplace.sol";
 
 contract ApprovalCheckingProfile is ERC721 {
@@ -46,6 +47,46 @@ contract ApprovalCheckingProfile is ERC721 {
 contract TestToken is ERC20 {
     constructor() ERC20("Pay", "PAY") {}
     function mint(address to, uint256 amount) external { _mint(to, amount); }
+}
+
+/// @dev ERC-777-style sender hook: the token calls `tokensToSend` on the sender (if it is a contract)
+///      before the balances move, so a payer can run code in the middle of `transferFrom`.
+interface ISendHook { function tokensToSend(address from, address to, uint256 amount) external; }
+
+contract HookedToken is ERC20 {
+    constructor() ERC20("Hook", "HK") {}
+    function mint(address to, uint256 amount) external { _mint(to, amount); }
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+        if (from != address(0) && from.code.length > 0) ISendHook(from).tokensToSend(from, to, amount);
+    }
+}
+
+/// @dev A seller that is also the buyer of its own listing, and uses the payer hook to move the
+///      token to `victim` (a wallet that approved the marketplace) after the marketplace has
+///      checked the seller and before it moves the token.
+contract HookSeller is ISendHook, IERC721Receiver {
+    ApprovalCheckingProfile public nft;
+    uint32 public tokenId;
+    address public victim;
+    bool public armed;
+
+    constructor(ApprovalCheckingProfile _nft, uint32 _tokenId) { nft = _nft; tokenId = _tokenId; }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+    function approveAll(address operator) external { nft.setApprovalForAll(operator, true); }
+    function list(CawProfileMarketplace m, address payToken, uint256 price) external {
+        m.createListing(tokenId, CawProfileMarketplace.ListingType.FIXED, payToken, price, 0, 1 days);
+    }
+    function arm(address _victim) external { victim = _victim; armed = true; }
+    function tokensToSend(address, address, uint256) external {
+        if (armed) { armed = false; nft.transferFrom(address(this), victim, tokenId); }
+    }
+    function buyOwnListing(CawProfileMarketplace m, HookedToken t, uint256 id, uint256 price) external {
+        t.approve(address(m), price);
+        m.buyWithToken(id, price, 0);
+    }
 }
 
 contract MarketplaceSellerOwnershipTest is Test {
@@ -199,5 +240,58 @@ contract MarketplaceSellerOwnershipTest is Test {
 
         vm.prank(newOwner);
         marketplace.createListing(TOKEN_ID, CawProfileMarketplace.ListingType.FIXED, address(0), 2 ether, 0, DURATION);
+    }
+
+    // ───────────── the owner can change inside buyWithToken (R01-F01) ─────────────
+
+    /// @dev With a payment token that runs code on the payer during transferFrom, the seller (as the
+    ///      payer) moves the token to a wallet that approved the marketplace AFTER the marketplace
+    ///      checked the seller and BEFORE it moves the token. The sale must then revert.
+    function test_buyWithToken_ownerChangedDuringPayment_reverts() public {
+        HookedToken hook = new HookedToken();
+        address[] memory pts = new address[](1);
+        pts[0] = address(hook);
+        CawProfileMarketplace m = new CawProfileMarketplace(address(nft), 1, pts);
+
+        HookSeller seller_ = new HookSeller(nft, 7);
+        nft.mintTo(address(seller_), 7);
+        seller_.approveAll(address(m));
+        // The victim holds other tokens and has approved the marketplace for all of them.
+        vm.prank(newOwner);
+        nft.setApprovalForAll(address(m), true);
+
+        seller_.list(m, address(hook), PRICE);
+        uint256 id = m.nextListingId() - 1;
+        hook.mint(address(seller_), PRICE);
+        seller_.arm(newOwner);
+
+        vm.expectRevert(bytes("Seller no longer owns NFT"));
+        seller_.buyOwnListing(m, hook, id, PRICE);
+
+        // Nothing moved: the token is still with the seller contract, the listing is untouched.
+        assertEq(nft.ownerOf(7), address(seller_), "the token was not taken from the wallet it was moved to");
+        assertEq(hook.balanceOf(address(seller_)), PRICE, "the payment was not taken");
+    }
+
+    /// @dev Control: the same flow without the hook armed is an ordinary sale and still works.
+    function test_buyWithToken_hookTokenWithoutHook_stillSells() public {
+        HookedToken hook = new HookedToken();
+        address[] memory pts = new address[](1);
+        pts[0] = address(hook);
+        CawProfileMarketplace m = new CawProfileMarketplace(address(nft), 1, pts);
+
+        nft.mintTo(seller, 8);
+        vm.prank(seller);
+        nft.setApprovalForAll(address(m), true);
+        vm.prank(seller);
+        m.createListing(8, CawProfileMarketplace.ListingType.FIXED, address(hook), PRICE, 0, DURATION);
+        uint256 id = m.nextListingId() - 1;
+        hook.mint(buyer, PRICE);
+        vm.startPrank(buyer);
+        hook.approve(address(m), PRICE);
+        m.buyWithToken(id, PRICE, 0);
+        vm.stopPrank();
+        assertEq(nft.ownerOf(8), buyer);
+        assertEq(m.pendingTokenPayouts(seller, address(hook)), PRICE);
     }
 }

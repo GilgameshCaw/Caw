@@ -270,7 +270,6 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(listing.active, "Listing not active");
         require(listing.listingType != ListingType.ENGLISH_AUCTION, "Use placeBid for auctions");
         require(listing.paymentToken != address(0), "Use buy for ETH");
-        require(cawProfile.ownerOf(listing.tokenId) == listing.seller, "Seller no longer owns NFT");
 
         uint256 price = _getCurrentPrice(listing);
         require(amount >= price, "Insufficient amount");
@@ -284,6 +283,13 @@ contract CawProfileMarketplace is ReentrancyGuard {
         // blocklisted seller can no longer make the listing permanently unsellable.
         IERC20(listing.paymentToken).safeTransferFrom(msg.sender, address(this), price);
         pendingTokenPayouts[listing.seller][listing.paymentToken] += price;
+
+        // The seller must still own the token. Checked here, after the payment token has been
+        // called and right before the transfer: a token that runs code on the payer during
+        // transferFrom (an ERC-777 style hook) could otherwise move the NFT to another wallet
+        // that approved this contract after an earlier check, and transferAndSync would take it
+        // from there.
+        require(cawProfile.ownerOf(listing.tokenId) == listing.seller, "Seller no longer owns NFT");
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
         cawProfile.transferAndSync{value: msg.value}(
