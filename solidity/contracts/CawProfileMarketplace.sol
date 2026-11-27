@@ -237,6 +237,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(listing.active, "Listing not active");
         require(listing.listingType != ListingType.ENGLISH_AUCTION, "Use placeBid for auctions");
         require(listing.paymentToken == address(0), "Use buyWithToken for ERC20");
+        require(cawProfile.ownerOf(listing.tokenId) == listing.seller, "Seller no longer owns NFT");
 
         uint256 price = _getCurrentPrice(listing);
         require(msg.value >= price, "Insufficient ETH");
@@ -269,6 +270,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(listing.active, "Listing not active");
         require(listing.listingType != ListingType.ENGLISH_AUCTION, "Use placeBid for auctions");
         require(listing.paymentToken != address(0), "Use buy for ETH");
+        require(cawProfile.ownerOf(listing.tokenId) == listing.seller, "Seller no longer owns NFT");
 
         uint256 price = _getCurrentPrice(listing);
         require(amount >= price, "Insufficient amount");
@@ -383,6 +385,7 @@ contract CawProfileMarketplace is ReentrancyGuard {
         require(listing.listingType == ListingType.ENGLISH_AUCTION, "Not an English auction");
         require(block.timestamp > listing.endTime, "Auction not ended");
         require(listing.highestBidder != address(0), "No bids");
+        require(cawProfile.ownerOf(listing.tokenId) == listing.seller, "Seller no longer owns NFT");
 
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
