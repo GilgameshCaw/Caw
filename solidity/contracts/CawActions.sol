@@ -1031,10 +1031,13 @@ contract CawActions {
       cawonces[i] = peek.cawonce;
       isWithdraw[i] = peek.actionType == ActionType.WITHDRAW;
       // Capture networkId once from the very first action of the very first group.
-      // Subsequent groups must match (enforced by _trackNetworkAndWithdraw inside
-      // processGroupSingle's success path; safe-mode failures don't emit).
+      // Every later action, in this group or any other, must match it, as processActions
+      // enforces (_trackNetworkAndWithdraw). processGroupSingle only checks within its own
+      // group, and ActionsProcessed carries a single networkId for the whole batch.
       if (sc.actionsSeen == 0 && i == 0) {
         sc.firstNetworkId = peek.networkId;
+      } else if (peek.networkId != sc.firstNetworkId) {
+        revert MixedNetworks();
       }
       unchecked { ++i; }
     }
