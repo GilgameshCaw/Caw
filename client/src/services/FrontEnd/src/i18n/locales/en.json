@@ -632,6 +632,8 @@
   "profile_chooser.remove_hide": "Hide for now",
   "signin_modal.title": "Sign in to continue",
   "signin_modal.default_message": "Connect your wallet and create a username to get started.",
+  "profile_lookup.checking": "Checking for an existing profile...",
+  "profile_lookup.retry": "Profile lookup failed. Retry",
   "signin_modal.create_profile": "Create Your Profile",
   "signin_modal.sign_in_passkey": "Sign in with passkey",
   "signin_modal.sign_in_wallet": "Sign in with wallet",

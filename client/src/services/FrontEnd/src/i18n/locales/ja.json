@@ -513,6 +513,8 @@
   "profile_chooser.manage_profiles": "プロフィール管理",
   "signin_modal.title": "続行するにはログイン",
   "signin_modal.default_message": "ウォレットを接続してユーザー名を作成してください。",
+  "profile_lookup.checking": "既存プロフィールを確認中...",
+  "profile_lookup.retry": "プロフィールを読み込めませんでした。再試行",
   "signin_modal.create_profile": "プロフィールを作成",
   "marketplace.button.switch_network": "ネットワークを切り替え",
   "marketplace.button.confirm_in_wallet": "ウォレットで確認中...",
