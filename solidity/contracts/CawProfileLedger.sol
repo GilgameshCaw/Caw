@@ -1121,6 +1121,9 @@ contract CawProfileLedger is
   /// @notice Quote the LayerZero fee for sending a withdraw message to L1.
   /// @param payInLzToken True to quote in ZRO token, false for native gas
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // bypassLZ: setWithdrawable calls CawProfile directly, sends no LZ message and
+    // refuses a non-zero fee (NoFee). There is no peer to quote against either.
+    if (bypassLZ) return MessagingFee(0, 0);
     bytes memory payload = abi.encodeWithSelector(
       setWithdrawableSelector, tokenIds, amounts
     ); return lzQuote(setWithdrawableSelector, tokenIds.length, payload, payInLzToken);
