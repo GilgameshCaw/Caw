@@ -82,6 +82,11 @@ contract ArchiveNonExistenceTest is Test {
     address relayer  = makeAddr("relayer");
     uint32 constant NETWORK_ID = 1;
     uint32 constant L2_EID = 40245;
+    // A share of a slashed stake is burned (SLASH_BURN_BPS in CawActionsArchive); the
+    // account that lands the slash is credited the rest.
+    uint256 constant STAKE = 0.05 ether;
+    uint256 constant BURN_BPS = 5_000;
+    uint256 constant REWARD = STAKE - (STAKE * BURN_BPS) / 10_000;
 
     function setUp() public {
         lzEp = new MockLayerZeroEndpoint(L2_EID);
@@ -105,13 +110,13 @@ contract ArchiveNonExistenceTest is Test {
         assertEq(uint8(status), uint8(CawActionsArchive.Status.SLASHED), "over-reaching submission slashed");
         assertEq(archive.stakes(attacker), 0, "attacker stake zeroed");
         // NONEXIST-1: reward is pull-pattern (credited, not pushed).
-        assertEq(archive.pendingReward(relayer), 0.05 ether, "relayer reward credited");
+        assertEq(archive.pendingReward(relayer), REWARD, "relayer reward credited");
 
         // Relayer claims to a fresh address.
         uint256 relayerBalBefore = relayer.balance;
         vm.prank(relayer);
         archive.claimReward(relayer);
-        assertEq(relayer.balance, relayerBalBefore + 0.05 ether, "relayer claims the slashed stake");
+        assertEq(relayer.balance, relayerBalBefore + REWARD, "relayer claims the slashed stake, after the burn");
         assertEq(archive.pendingReward(relayer), 0, "reward cleared after claim");
     }
 
@@ -166,11 +171,11 @@ contract ArchiveNonExistenceTest is Test {
         ( , , , , , , CawActionsArchive.Status status, ) = archive.submissions(4);
         assertEq(uint8(status), uint8(CawActionsArchive.Status.SLASHED), "slash lands despite reverting rewardTo");
         assertEq(archive.stakes(attacker), 0, "attacker stake zeroed");
-        assertEq(archive.pendingReward(address(challenger)), 0.05 ether, "reward credited to reverting challenger");
+        assertEq(archive.pendingReward(address(challenger)), REWARD, "reward credited to reverting challenger");
 
         // The challenger reverts on its own address but can claim to a payable EOA.
         challenger.claim(archive, relayer);
-        assertEq(relayer.balance, 0.05 ether, "reward claimed to a payable address");
+        assertEq(relayer.balance, REWARD, "reward claimed to a payable address");
         assertEq(archive.pendingReward(address(challenger)), 0, "reward cleared after claim");
     }
 }
