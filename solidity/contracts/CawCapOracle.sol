@@ -371,13 +371,20 @@ contract CawCapOracle {
     // Staleness check: the most recent sample must be within STALE_THRESHOLD.
     if (block.timestamp > latest.timestamp + STALE_THRESHOLD) return (0, false);
 
-    // Find the oldest sample within the TWAP_WINDOW. Walk backward from
-    // latest-1 until we either fall off the populated range or find a
-    // sample older than `latest.timestamp - TWAP_WINDOW`.
+    // Find the newest sample at or before the start of the TWAP_WINDOW.
+    //
+    // Samples are strictly increasing in time by index (recordSample skips any
+    // sample that is not newer than the last one), so "timestamp <= windowStart"
+    // is true for a prefix of the populated slots and false after it. That makes
+    // the anchor a binary search: about log2(BUFFER_SIZE) = 10 reads, whatever
+    // the number of samples inside the window. A backward linear walk reads one
+    // slot per sample inside the window (about 2,100 gas each when cold), which
+    // outgrows the 180,000 gas CawProfileLedger gives recordSample once the
+    // window holds a few dozen samples, and the ratio push is then dropped.
     uint64 oldestIdx;
     bool foundWindowAnchor = false;
     uint64 cursor = nextIdx - 1;
-    uint64 maxScan = nextIdx > BUFFER_SIZE ? uint64(BUFFER_SIZE) : nextIdx;
+    uint64 populated = nextIdx > BUFFER_SIZE ? uint64(BUFFER_SIZE) : nextIdx;
 
     // Early protocol life: if latest.timestamp < TWAP_WINDOW, no sample can
     // possibly be old enough to anchor the window. Skip the search and fall
@@ -388,15 +395,22 @@ contract CawCapOracle {
     if (uint256(latest.timestamp) >= TWAP_WINDOW) {
       uint32 windowStart = latest.timestamp - uint32(TWAP_WINDOW);
 
-      for (uint64 i = 1; i < maxScan; i++) {
-        uint64 probe = cursor - i;
-        Sample memory s = buf[probe & BUFFER_MASK];
-        if (s.timestamp == 0) break; // unwritten slot (early life)
-        if (s.timestamp <= windowStart) {
-          oldestIdx = probe;
-          foundWindowAnchor = true;
-          break;
+      // Candidates are the populated slots before `latest`: [first, cursor - 1].
+      // (nextIdx >= 2 here, so populated >= 2 and the range is not empty.)
+      uint64 lo = nextIdx - populated;
+      uint64 hi = cursor - 1;
+      if (buf[lo & BUFFER_MASK].timestamp <= windowStart) {
+        // buf[lo] qualifies; find the last index that still does.
+        while (lo < hi) {
+          uint64 mid = lo + (hi - lo + 1) / 2;
+          if (buf[mid & BUFFER_MASK].timestamp <= windowStart) {
+            lo = mid;
+          } else {
+            hi = mid - 1;
+          }
         }
+        oldestIdx = lo;
+        foundWindowAnchor = true;
       }
     }
 
