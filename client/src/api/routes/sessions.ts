@@ -336,10 +336,21 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing required fields: message and signature' })
     }
 
-    // Validate message format (13 lines after perActionTipRate addition)
+    // Validate message format. 13 lines is the message from before the ledger bound it to a
+    // deployment, 16 lines adds "", "Chain and contract:", "<chain id> <ledger address>". Which
+    // one is valid depends on the ledger this node points at; registerSessionPersonal decides
+    // (a ledger that wants one refuses the other), so both pass here and the call is simulated
+    // before it is sent. Lines 0-12 sit at the same place in both.
     const lines = (message as string).split('\n')
-    if (lines.length !== 13 || lines[0] !== 'Enable Quick Sign') {
+    if ((lines.length !== 13 && lines.length !== 16) || lines[0] !== 'Enable Quick Sign') {
       return res.status(400).json({ error: 'Invalid message format' })
+    }
+    // A 16-line message naming another ledger would only fail in estimateGas; say so plainly.
+    if (lines.length === 16) {
+      const named = (lines[15] || '').trim().split(' ')[1]
+      if (!named || named.toLowerCase() !== String(CAW_NAMES_L2_ADDRESS).toLowerCase()) {
+        return res.status(400).json({ error: 'Message names a different contract' })
+      }
     }
 
     // Parse values:

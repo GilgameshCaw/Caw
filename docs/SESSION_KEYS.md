@@ -20,6 +20,17 @@ Session keys let users delegate signing authority to a device-local ephemeral ke
      CAW Key:
      0x742d...3e
 
+     Chain and contract:
+     84532 0x9f1c...a2
+
+   The last line names the chain id and the CawProfileLedger the key is for. A
+   ledger only accepts a message that names itself, so a signature given for one
+   deployment cannot register the key on another (a personal_sign message signs
+   no domain of its own; the EIP-712 path gets that from `eip712DomainHash`).
+   Ledgers from before `SESSION_MESSAGE_VERSION` existed expect the shorter message
+   without that line; the frontend reads the version and builds the one the ledger
+   expects.
+
 4. Validator submits registerSessionPersonal() on L2
 5. On-chain: sessions[ownerAddress][sessionKeyAddress] = {expiry, scope, spendLimit}
 6. From now on, the frontend signs actions with the local key — no wallet popup

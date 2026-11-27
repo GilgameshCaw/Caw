@@ -44,8 +44,9 @@ contract('CawProfileLedger — registerSessionPersonal replay protection', funct
     cawProfileLedger = await CawProfileLedger.new(l1, l2Endpoint.address, "0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000bEEF", "0x000000000000000000000000000000000000dEAD", "0x000000000000000000000000000000000000cAFE", false, accounts[0]);
   });
 
-  function buildPersonalMessage() {
-    // Format: 13 lines exactly matching the parser in _parseSessionMessage.
+  function buildPersonalMessage(chainId) {
+    // Format: 16 lines exactly matching the parser in _parseSessionMessage; the last
+    // one names this chain and this ledger.
     // Use a far-future expiry so block.timestamp never passes it during the test.
     return [
       'Enable Quick Sign',
@@ -61,6 +62,9 @@ contract('CawProfileLedger — registerSessionPersonal replay protection', funct
       '',
       'CAW Key:',
       sessionKey,
+      '',
+      'Chain and contract:',
+      chainId + ' ' + cawProfileLedger.address.toLowerCase(),
     ].join('\n');
   }
 
@@ -73,7 +77,8 @@ contract('CawProfileLedger — registerSessionPersonal replay protection', funct
   }
 
   it('first submission registers the session, second reverts as already-consumed', async function () {
-    const message = buildPersonalMessage();
+    const chainId = await web3.eth.getChainId();
+    const message = buildPersonalMessage(chainId);
     const messageHex = '0x' + Buffer.from(message, 'utf8').toString('hex');
     const privKey = testKeys[owner.toLowerCase()];
     const sigHex = signPersonal(message, privKey);

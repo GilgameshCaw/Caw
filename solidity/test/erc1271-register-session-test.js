@@ -203,8 +203,10 @@ contract('CawProfileLedger — ERC-1271 register-session', function (accounts) {
     const mockOwner = await MockContractOwner.new(contractKey);
     const sessionKey2 = accounts[5];
 
-    // Build the 13-line personal-sign message exactly as the on-chain parser
-    // expects. Far-future expiry so block.timestamp comparison is trivial.
+    // Build the 16-line personal-sign message exactly as the on-chain parser
+    // expects (the last line names this chain and this ledger). Far-future expiry
+    // so block.timestamp comparison is trivial.
+    const chainId = await web3.eth.getChainId();
     const message = [
       'Enable Quick Sign',
       '------------------',
@@ -219,6 +221,9 @@ contract('CawProfileLedger — ERC-1271 register-session', function (accounts) {
       '',
       'CAW Key:',
       sessionKey2,
+      '',
+      'Chain and contract:',
+      chainId + ' ' + cawProfileLedger.address.toLowerCase(),
     ].join('\n');
     const messageHex = '0x' + Buffer.from(message, 'utf8').toString('hex');
 
