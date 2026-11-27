@@ -52,6 +52,13 @@ contract CawProfileQuoter {
   }
 
   function authenticateQuote(uint32 networkId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // Storage-fee leg: auth.
+    quote.nativeFee = cawProfile.networkManager().getAuthFee(networkId) * 2;
+
+    // bypassLZ (lzDestId == mainnetLzId): CawProfile calls the ledger directly
+    // and sends no LZ message, so there is no LZ leg (and no peer to quote).
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
@@ -59,12 +66,21 @@ contract CawProfileQuoter {
       _lzBundleSelector, networkId, tokenId, uint256(0), "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
-    quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 
   function depositQuote(uint32 networkId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // Storage-fee leg: deposit + auth (auth only if not yet authenticated).
+    quote.nativeFee = cawProfile.networkManager().getDepositFee(networkId) * 2;
+    if (!cawProfile.authenticated(networkId, tokenId))
+      quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
+
+    // bypassLZ: no LZ leg, as in depositZapQuote.
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
     uint32[] memory tokenIds; address[] memory owners; uint64[] memory stamps;
     (tokenIds, owners, stamps) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
@@ -72,12 +88,9 @@ contract CawProfileQuoter {
       _lzBundleSelector, networkId, tokenId, amount, "", address(0), uint64(0), uint256(0), uint64(0), tokenIds, owners, stamps
     );
 
-    quote = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
-    quote.nativeFee += cawProfile.networkManager().getDepositFee(networkId) * 2;
-
-    if (!cawProfile.authenticated(networkId, tokenId))
-      quote.nativeFee += cawProfile.networkManager().getAuthFee(networkId) * 2;
-
+    MessagingFee memory lz = cawProfile.lzQuote(networkId, _lzBundleSelector, tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 
