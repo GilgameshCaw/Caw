@@ -2598,6 +2598,13 @@ export const cawNetworkManagerAbi = [
 
 export const cawProfileAbi = [
   {
+    type: 'function',
+    inputs: [],
+    name: 'ownershipBundleSelector',
+    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'view',
+  },
+  {
     type: 'constructor',
     inputs: [
       { name: '_caw', internalType: 'address', type: 'address' },
@@ -3013,7 +3020,7 @@ export const cawProfileAbi = [
     outputs: [
       { name: '', internalType: 'uint32[]', type: 'uint32[]' },
       { name: '', internalType: 'address[]', type: 'address[]' },
-      { name: '', internalType: 'uint64[]', type: 'uint64[]' },
+      { name: '', internalType: 'uint128[]', type: 'uint128[]' },
     ],
     stateMutability: 'view',
   },
@@ -3522,6 +3529,16 @@ export const cawProfileAbi = [
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 export const cawProfileLedgerAbi = [
+  { type: 'error', inputs: [], name: 'InvalidOwnerGeneration' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32', indexed: true },
+      { name: 'sessionKey', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'StaleSessionGrantSkipped',
+  },
   {
     type: 'constructor',
     inputs: [
@@ -3763,7 +3780,7 @@ export const cawProfileLedgerAbi = [
       { name: 'perActionTipRate', internalType: 'uint64', type: 'uint64' },
       { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
       { name: 'owners', internalType: 'address[]', type: 'address[]' },
-      { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
+      { name: 'stamps', internalType: 'uint128[]', type: 'uint128[]' },
     ],
     name: 'lzDepositMintSession',
     outputs: [],
@@ -4194,6 +4211,17 @@ export const cawProfileLedgerAbi = [
       { name: 'stamps', internalType: 'uint64[]', type: 'uint64[]' },
     ],
     name: 'updateOwners',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' },
+      { name: 'owners', internalType: 'address[]', type: 'address[]' },
+      { name: 'stamps', internalType: 'uint128[]', type: 'uint128[]' },
+    ],
+    name: 'updateRemoteOwners',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -6486,7 +6514,7 @@ export const iCawProfileForQuoterAbi = [
     outputs: [
       { name: '', internalType: 'uint32[]', type: 'uint32[]' },
       { name: '', internalType: 'address[]', type: 'address[]' },
-      { name: '', internalType: 'uint64[]', type: 'uint64[]' },
+      { name: '', internalType: 'uint128[]', type: 'uint128[]' },
     ],
     stateMutability: 'view',
   },

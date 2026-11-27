@@ -338,10 +338,10 @@ contract LzGasBudgetAuditTest is Test {
 
     // -----------------------------------------------------------------------
     // Path 1: depositAndUpdateOwners (CawProfile L1-side gasLimitFor)
-    // Formula: base=150_000 + 65_000 * n
+    // Formula: base=150_000 + 110_000 * n
     // -----------------------------------------------------------------------
     function _budgetDeposit(uint256 n) internal pure returns (uint256) {
-        return 150_000 + 65_000 * n;
+        return 150_000 + 110_000 * n;
     }
 
     function _measureDeposit(uint256 n, uint256 baseTokenId) internal returns (uint256) {
@@ -503,14 +503,14 @@ contract LzGasBudgetAuditTest is Test {
 
     // -----------------------------------------------------------------------
     // updateOwners-only path (no deposit/auth)
-    // Formula: base=250_000 + 65_000 * n. Base bumped 40k -> 250k so it covers
+    // Formula: base=250_000 + 110_000 * n. Base bumped 40k -> 250k so it covers
     // the _setOwnerOf handler PLUS the capOracle.recordSample worst-case push
     // (~165k, see LzReceiveOracleOverhead.t.sol) that rides every L1->L2 message
     // before the dispatch — the transferAndSync OOG (zinsanjp). 250k matches the
     // lzDepositMintSession bundle base which has covered the push in production.
     // -----------------------------------------------------------------------
     function _budgetUpdateOwners(uint256 n) internal pure returns (uint256) {
-        return 250_000 + 65_000 * n;
+        return 250_000 + 110_000 * n;
     }
 
     function test_updateOwners_gasTable() public {
