@@ -69,6 +69,15 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
   // censorship costly given the off-chain fraud monitors, while full fund-loss exposure
   // stays zero, so a defender-prohibitive deposit is unnecessary.
   uint256 public constant MIN_STAKE = 0.05 ether;
+
+  /// @notice Share of a slashed stake, in basis points, that is sent to the dead address
+  ///         instead of being credited to the account that landed the slash. The
+  ///         self-slash guard compares addresses only, so without a burned share a
+  ///         validator could slash itself from a second address and take its whole
+  ///         stake back; with it, doing so costs the validator this share of its stake.
+  uint256 internal constant SLASH_BURN_BPS = 5_000;
+  uint256 internal constant BPS_DENOMINATOR = 10_000;
+  address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
   uint256 public constant CHECKPOINT_INTERVAL = 32;
   uint256 public constant MAX_CHECKPOINTS_PER_SUBMISSION = 256;
   /// @notice Cap pending submissions per validator so the slash loop (which iterates
@@ -592,8 +601,9 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
 
   /// @dev Slash `validator`: zero their stake, invalidate ALL their pending
   ///      submissions (releasing checkpoint claims with a cooldown), clear their
-  ///      history, and credit the slashed stake to `rewardTo` (pull-pattern;
-  ///      claimed via claimReward). Shared by resolveChallenge,
+  ///      history, send SLASH_BURN_BPS of the stake to the dead address, and credit
+  ///      the rest to `rewardTo` (pull-pattern; claimed via claimReward). Shared by
+  ///      resolveChallenge,
   ///      slashIncoherentRoot, and _processNonExistence — every slash path
   ///      routes through here. `rewardTo` is the direct caller (resolveChallenge
   ///      / slashIncoherentRoot) or the relayer named in the LZ message
@@ -630,11 +640,27 @@ contract CawActionsArchive is ReentrancyGuard, OnlyOnce, OApp {
     // non-payable rewardTo must not be able to revert the slash and keep the
     // fraud alive. The slash state transition is now unconditional; rewardTo
     // claims via claimReward.
-    if (reward > 0) {
-      pendingReward[rewardTo] += reward;
+    //
+    // A share of the stake is burned first. The self-slash guard above compares
+    // addresses only: a validator that slashes itself from a second address would
+    // be `rewardTo` and could claim the whole stake back, so the stake would never
+    // be at risk. Burning a share means that costs it SLASH_BURN_BPS of the stake.
+    // The dead address has no code, so the send cannot fail on a normal chain; the
+    // result is ignored on purpose so that nothing here can block a slash, and an
+    // unsent amount simply stays in this contract with no one able to claim it.
+    uint256 burned = (reward * SLASH_BURN_BPS) / BPS_DENOMINATOR;
+    if (burned > 0) {
+      // slither-disable-next-line low-level-calls,unchecked-lowlevel
+      (bool sent, ) = DEAD.call{value: burned}("");
+      sent;
+    }
+    uint256 credited = reward - burned;
+    if (credited > 0) {
+      pendingReward[rewardTo] += credited;
     }
 
-    emit ValidatorSlashed(validator, rewardTo, submissionId, checkpointId, reward);
+    // `reward` in the event is what was credited to `rewardTo`, after the burn.
+    emit ValidatorSlashed(validator, rewardTo, submissionId, checkpointId, credited);
   }
 
   /// @notice Claim accrued slash rewards (pull-pattern). Sent to
