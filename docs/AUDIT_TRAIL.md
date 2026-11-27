@@ -250,11 +250,14 @@ beyond a single-line fix.
 - **Archive HIGH-2 (no srcEid binding):** Relevant only when a second source chain is
   peered to the archive. Not triggered in single-source deployments.
 
-- **L2 M-3 (personal-sign cross-deployment replay):** `registerSessionPersonal` does
-  not bind to chain ID or contract address. The same user-signed message replays on any
-  L2 deployment of CawProfileL2. Requires a coordinated FE + contract change to fix
-  fully. Impact is limited to session setup only; session keys themselves are
-  chain-specific once registered.
+- **L2 M-3 (personal-sign cross-deployment replay) — fixed.** `registerSessionPersonal`
+  used to bind to neither chain ID nor contract address, so the same user-signed message
+  replayed on any L2 deployment of the ledger. The message now ends with a
+  `Chain and contract:` line that the ledger checks against its own `block.chainid` and
+  `address(this)` (`SessionMessageParser.WrongDeployment`), and the ledger exposes
+  `SESSION_MESSAGE_VERSION` (2) so the frontend builds the message its ledger expects.
+  A ledger deployed before this still wants the 13-line message and is not changed;
+  the fix applies to new deployments.
 
 - **L2 M-4 (date parser edge cases):** `_parseExpiryValue` accepts invalid date
   components (e.g., Feb 31). Parses silently rather than rejecting. Not a loss-of-funds

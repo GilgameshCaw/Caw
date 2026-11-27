@@ -205,6 +205,12 @@ contract CawProfileLedger is
   ///         Internal: no external getter needed — no caller reads this constant.
   uint256 internal constant MAX_SESSION_SPEND = 1_000_000_000 ether; // 1B CAW
 
+  /// @notice Version of the registerSessionPersonal message. 2 = the message ends with a
+  ///         "Chain and contract:" line that must name this chain and this ledger.
+  ///         Ledgers from before it have no such getter, which is how the frontend
+  ///         tells which message to build.
+  uint256 public constant SESSION_MESSAGE_VERSION = 2;
+
   /// @dev Max gas forwarded to capOracle.recordSample in _lzReceive. Bounds the
   ///      oracle piggyback so a ratio-push (~165k worst case) can never starve
   ///      the primary payload dispatch. Must be >= the oracle's worst-case push
@@ -761,7 +767,7 @@ contract CawProfileLedger is
   }
 
   /// @notice Register a session key using a human-readable personal_sign message.
-  ///         Message format (13 lines, separated by \n):
+  ///         Message format (16 lines, separated by \n):
   ///           Enable Quick Sign
   ///           ------------------
   ///           Spend limit:
@@ -775,6 +781,11 @@ contract CawProfileLedger is
   ///           (blank)
   ///           CAW Key:
   ///           0x742d...3e
+  ///           (blank)
+  ///           Chain and contract:
+  ///           84532 0x9f1c...a2
+  ///         The last line must name this chain and this ledger, so a signature
+  ///         given for one deployment does not register a key on another.
   /// @dev    Signature handling mirrors `registerSession`: 65-byte sigs route
   ///         through ecrecover (both `r||s||v` and `v||r||s` packings); longer
   ///         sigs hit the ERC-1271 fallback if `signer` has code. ECDSA
@@ -798,7 +809,7 @@ contract CawProfileLedger is
     if (consumedSessionMessage[digest]) revert Replayed();
     consumedSessionMessage[digest] = true;
 
-    (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = SessionMessageParser.parseSessionMessage(message);
+    (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey) = SessionMessageParser.parseSessionMessage(message, block.chainid, address(this));
 
     if (sessionKey == address(0)) revert ZeroKey();
     if (expiry <= block.timestamp) revert Expired();

@@ -27,7 +27,7 @@
     "label": "cawActions",
     "slot": "4",
     "offset": 0,
-    "type": "t_contract(ICawActions)33941"
+    "type": "t_contract(ICawActions)34103"
   },
   {
     "label": "erc1271Sibling",

@@ -110,7 +110,79 @@ function formatTipCeilingForMessage(tipCeiling: bigint, cawPrice: number): strin
   return cawStr
 }
 
-function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number, tipCeiling: bigint = 0n, cawPrice: number = 0): string {
+/** Which deployment a Quick Sign message is for: the chain and the CawProfileLedger. */
+type SessionMessageBinding = { chainId: number; ledger: string }
+
+// The ledger's SESSION_MESSAGE_VERSION that expects the "Chain and contract:" line.
+const SESSION_MESSAGE_BINDING_VERSION = 2n
+
+// Remembered for the page load only when the ledger wants the bound message; a failure, or "old ledger", is read again next time.
+let sessionMessageBindingPromise: Promise<SessionMessageBinding | null> | null = null
+
+/**
+ * Does the ledger this node points at want its Quick Sign message bound to the deployment?
+ * A ledger from before that has no SESSION_MESSAGE_VERSION. Calling a function a contract does
+ * not have comes back as a revert, which viem reports as ContractFunctionRevertedError (or
+ * ContractFunctionZeroDataError when the node answers "0x"). viem reports a node's transient
+ * internal error (-32603) as the same ContractFunctionRevertedError and keeps no code, so that
+ * error alone does not say "this ledger is old". Before taking it as "old", read something every
+ * ledger has (eip712DomainHash): if that answers, the ledger is reachable and the version getter
+ * is really missing. If it does not, the node is in trouble: throw, so the user is never asked
+ * to sign a message in the wrong form and nothing is remembered.
+ */
+async function resolveSessionMessageBinding(): Promise<SessionMessageBinding | null> {
+  try {
+    const version = await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS,
+      abi: cawProfileLedgerAbi,
+      functionName: 'SESSION_MESSAGE_VERSION',
+      chainId: baseSepolia.id,
+    })
+    return version === SESSION_MESSAGE_BINDING_VERSION
+      ? { chainId: baseSepolia.id, ledger: CAW_NAMES_L2_ADDRESS }
+      : null
+  } catch (err: any) {
+    const noAnswer = typeof err?.walk === 'function'
+      && err.walk((e: any) => e?.name === 'ContractFunctionZeroDataError' || e?.name === 'ContractFunctionRevertedError')
+    if (!noAnswer) throw err
+    // Reachable? (Throws if not, and that error is what the caller sees.)
+    await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS,
+      abi: cawProfileLedgerAbi,
+      functionName: 'eip712DomainHash',
+      chainId: baseSepolia.id,
+    })
+    return null
+  }
+}
+
+function getSessionMessageBinding(): Promise<SessionMessageBinding | null> {
+  if (!sessionMessageBindingPromise) {
+    // Only a positive answer (the ledger wants the bound message) is remembered. "Old ledger"
+    // is not: it is read again next time, so a node error that looked like a missing getter
+    // cannot pin the 13-line message until the page is reloaded. The cost is one eth_call.
+    sessionMessageBindingPromise = resolveSessionMessageBinding().then(
+      (binding) => {
+        if (!binding) sessionMessageBindingPromise = null
+        return binding
+      },
+      (err) => {
+        sessionMessageBindingPromise = null
+        throw err
+      },
+    )
+  }
+  return sessionMessageBindingPromise
+}
+
+function buildSessionMessage(
+  sessionKeyAddress: string,
+  spendLimit: bigint,
+  expiryTimestamp: number,
+  tipCeiling: bigint = 0n,
+  cawPrice: number = 0,
+  binding: SessionMessageBinding | null = null,
+): string {
   const d = new Date(expiryTimestamp * 1000)
   const day = d.getUTCDate()
   const month = MONTHS[d.getUTCMonth()]
@@ -134,6 +206,12 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
     'CAW Key:',
     sessionKeyAddress,
   ]
+
+  // The deployment line. Without it the same signature would register this key on every
+  // deployment of the ledger. A ledger that expects it refuses a message without it.
+  if (binding) {
+    lines.push('', 'Chain and contract:', `${binding.chainId} ${binding.ledger.toLowerCase()}`)
+  }
 
   return lines.join('\n')
 }
@@ -295,7 +373,8 @@ export function useCreateSession() {
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
 
-    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling)
+    const binding = await getSessionMessageBinding()
+    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, 0, binding)
 
     console.log('[QuickSign] message:', message)
 
@@ -929,7 +1008,8 @@ export async function registerSponsoredSession(opts: {
   const privateKey = generatePrivateKey()
   const sessionAccount = privateKeyToAccount(privateKey)
 
-  const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling)
+  const binding = await getSessionMessageBinding()
+  const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry, tipCeiling, 0, binding)
   onProgress?.('Sign to authorize key...')
   const signature = await signMessage(message)
 

@@ -3538,6 +3538,13 @@ export const cawProfileLedgerAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'SESSION_MESSAGE_VERSION',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'amount', internalType: 'uint256', type: 'uint256' },

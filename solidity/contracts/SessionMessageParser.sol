@@ -11,7 +11,7 @@ pragma solidity ^0.8.0;
 ///         the consuming contract only carries a small delegatecall stub
 ///         (~50 bytes per linked function).
 ///
-///         Message format (13 newline-separated lines):
+///         Message format (16 newline-separated lines):
 ///           Enable Quick Sign
 ///           ------------------
 ///           Spend limit:
@@ -25,21 +25,33 @@ pragma solidity ^0.8.0;
 ///           (blank)
 ///           CAW Key:
 ///           0x742d...3e
+///           (blank)
+///           Chain and contract:
+///           84532 0x9f1c...a2
+///
+///         The last line names the chain id and the CawProfileLedger the signer
+///         means to enable Quick Sign on. personal_sign signs no domain, so without
+///         it the same signature registers the same key on every deployment of the
+///         ledger (on any chain); the EIP-712 path gets this from eip712DomainHash.
 library SessionMessageParser {
 
   error BadParse();
   error BadDate();
+  /// @dev The message is well formed but names another chain or another ledger.
+  error WrongDeployment();
 
   /// @notice Parse the multi-line session message.
   /// @return spendLimit      Parsed CAW spend limit (whole tokens with M/K/B suffix).
   /// @return perActionTipRate Parsed tip-rate in whole CAW tokens.
   /// @return expiry          Unix timestamp parsed from the human-readable date line.
   /// @return sessionKey      Session key address parsed from the hex line.
-  function parseSessionMessage(bytes memory msg_)
+  /// @param chainId The chain id the message must name (the caller passes block.chainid).
+  /// @param ledger  The ledger address the message must name (the caller passes address(this)).
+  function parseSessionMessage(bytes memory msg_, uint256 chainId, address ledger)
     external pure returns (uint256 spendLimit, uint64 perActionTipRate, uint64 expiry, address sessionKey)
   {
     bytes[] memory lines = _splitLines(msg_);
-    if (lines.length != 13) revert BadParse();
+    if (lines.length != 16) revert BadParse();
 
     // Line 0: "Enable Quick Sign"
     if (keccak256(lines[0]) != keccak256("Enable Quick Sign")) revert BadParse();
@@ -66,6 +78,30 @@ library SessionMessageParser {
 
     // Line 12: "0x..."
     sessionKey = _parseAddressLine(lines[12]);
+
+    // Line 13: "" (blank, skip)
+    // Line 14: "Chain and contract:" (label, skip)
+
+    // Line 15: "84532 0x..." — must be this chain and this ledger.
+    _checkDeployment(lines[15], chainId, ledger);
+  }
+
+  /// @dev Parse "<chainId> 0x<40 hex>" and require both to match. A malformed
+  ///      line is BadParse; a well formed line for another deployment is
+  ///      WrongDeployment.
+  function _checkDeployment(bytes memory line, uint256 chainId, address ledger) internal pure {
+    uint256 i = 0;
+    uint256 claimedChain = 0;
+    while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
+      if (i >= 20) revert BadParse(); // a chain id has at most 20 digits; keeps the sum from overflowing
+      claimedChain = claimedChain * 10 + (uint8(line[i]) - 0x30);
+      i++;
+    }
+    // At least one digit, one space, then "0x" + 40 hex chars (42 bytes), nothing after.
+    if (i == 0 || line.length != i + 1 + 42 || line[i] != 0x20) revert BadParse();
+    if (line[i + 1] != 0x30 || (line[i + 2] != 0x78 && line[i + 2] != 0x58)) revert BadParse();
+    address claimedLedger = _parseAddressLine(_slice(line, i + 1, line.length));
+    if (claimedChain != chainId || claimedLedger != ledger) revert WrongDeployment();
   }
 
   /// @notice Convert a uint256 to its decimal ASCII bytes representation.
