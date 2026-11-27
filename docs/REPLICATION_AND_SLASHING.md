@@ -17,7 +17,8 @@ gets to submit checkpoint roots cheaply — no LayerZero fee per batch. If they
 ever submit something fraudulent, ANY honest observer can challenge them: the
 challenge reads the canonical hash from the source chain (Base Sepolia)
 through `CawChallengeRelay`, sends it to the archive over LayerZero, and the
-archive slashes the validator's entire stake to whoever submitted the
+archive slashes the validator's entire stake: half is sent to the dead
+address (burned) and the other half is credited to whoever submitted the
 resolving transaction. The system tolerates any number of dishonest
 validators as long as at least one honest observer monitors during the 2-day
 challenge window.
@@ -131,10 +132,30 @@ A successful slash:
 - ALL their pending submissions are flipped to `SLASHED`
 - Their checkpoint claims are released (so honest validators can re-submit
   the same range)
-- The reward (= the slashed stake) is sent to `msg.sender` of the
-  resolving tx, not the LZ relayer
+- Half of the slashed stake (`SLASH_BURN_BPS` = 5,000 of 10,000, rounded down)
+  is sent to the dead address `0x000000000000000000000000000000000000dEaD`.
+  "Burned" here means unrecoverable by anyone known to control it; the ETH is
+  still part of the chain's total supply
+- The rest (the other half, plus any odd wei) is credited to `msg.sender` of
+  the resolving tx, not the LZ relayer, and claimed with `claimReward`
 - `validatorSubmissions[validator]` is `delete`d so a re-staked validator
   starts fresh
+
+Why part of the stake is burned: the archive refuses a slash from the
+submitter's own address, but it compares addresses only. A validator could
+slash itself from a second address and claim the whole stake back, so the
+stake would never be at risk. With a burned share, doing that costs the
+validator that share of its stake.
+
+What `ValidatorSlashed` reports: `reward` is the amount credited to the
+account that landed the slash, after the burn, not the whole forfeited stake.
+The event does not carry the burned amount or whether the send to the dead
+address went through. The forfeited stake is what `stakes[validator]` held
+before the slash, and the burned share is that amount times `SLASH_BURN_BPS`
+over 10,000, rounded down. The dead address has no code, so the send does not
+fail on a normal chain; its result is ignored on purpose so that nothing can
+block a slash, and an amount that was not sent would stay in the archive with
+no one able to claim it.
 
 ### Dedup
 
@@ -187,8 +208,9 @@ during normal LZ/monitor latency windows.
 
 Optional. If set, the validator submits from this wallet instead of
 `VALIDATOR_PRIVATE_KEY`. The monitor still uses the main key. This is
-intended for fraud testing — you can watch slashed ETH visibly transfer
-from REPLICATOR to VALIDATOR. Don't set this in production.
+intended for fraud testing — you can watch half of the slashed stake become
+a claimable reward for VALIDATOR (the other half goes to the dead address).
+Don't set this in production.
 
 ### `CORRUPT_REPLICATION` and `CORRUPT_MODE`
 
@@ -292,8 +314,9 @@ These are properties the system maintains; if any of them break, something
 is wrong.
 
 1. **Anyone can challenge anyone.** No allowlist on `relayChallenge` or
-   `resolveChallenge` or `slashIncoherentRoot`. The fraud reward goes to
-   `msg.sender` of the resolving tx.
+   `resolveChallenge` or `slashIncoherentRoot`. The credited share of the
+   slashed stake (the half that is not burned) goes to `msg.sender` of the
+   resolving tx.
 2. **Slashing is irreversible.** No admin can un-slash a submission or
    restore a slashed stake.
 3. **Honest data wins.** A correctly-submitted submission cannot be
