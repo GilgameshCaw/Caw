@@ -24,6 +24,7 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
   const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const { status } = useWalletProfileLookup()
+  const showSignInOptions = !isConnected || status === 'no-address'
   const store = useSignInModalStore()
   const navigate = useNavigate()
 
@@ -44,14 +45,14 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
           <h3 className="text-lg font-bold text-white mb-2">
             {t('signin_modal.title')}
           </h3>
-          {(message || !isConnected || status === 'empty') && (
+          {(message || showSignInOptions || status === 'empty') && (
             <p className="text-sm text-white/60">
               {message || t('signin_modal.default_message')}
             </p>
           )}
         </div>
 
-        {!isConnected ? (
+        {showSignInOptions ? (
           <div className="space-y-3">
             {/* Passkey sign-in: phone-first (Population B) users have no wallet.
                 Route to the dedicated passkey sign-in page (prompts for username

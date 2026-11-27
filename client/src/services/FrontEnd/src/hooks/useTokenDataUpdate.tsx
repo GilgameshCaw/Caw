@@ -530,7 +530,7 @@ export default function useTokenDataUpdate() {
     if (profiles.data?.length) void balances.refetch()
   }
 
-  let status: WalletProfileLookupStatus = 'checking'
+  let status: WalletProfileLookupStatus = viewedAddress ? 'checking' : 'no-address'
   if (viewedAddress && !profiles.isFetching) {
     if (profiles.isError) status = 'unavailable'
     else if (profiles.isSuccess && profiles.data?.length === 0) status = 'empty'

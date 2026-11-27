@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-export type WalletProfileLookupStatus = 'checking' | 'unavailable' | 'empty' | 'found'
+export type WalletProfileLookupStatus = 'no-address' | 'checking' | 'unavailable' | 'empty' | 'found'
 
 export const WalletProfileLookupContext = createContext<{
   status: WalletProfileLookupStatus
