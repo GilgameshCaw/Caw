@@ -91,7 +91,7 @@ export async function scanLogsForward(
   topics: (string | string[] | null)[],
   fromBlock: number,
   toBlock: number,
-  opts: ChunkedScanOptions = {},
+  opts: ChunkedScanOptions & { signal?: AbortSignal } = {},
 ): Promise<Log[]> {
   if (fromBlock > toBlock) return []
 
@@ -102,6 +102,7 @@ export async function scanLogsForward(
   let cursor = fromBlock
   let windowsUsed = 0
   while (cursor <= toBlock) {
+    opts.signal?.throwIfAborted()
     if (windowsUsed >= maxWindows) {
       throw new Error(
         `scanLogsForward: hit maxWindows=${maxWindows} at cursor=${cursor} ` +
@@ -113,6 +114,7 @@ export async function scanLogsForward(
     try {
       windowLogs = await provider.getLogs({ address: addr, topics, fromBlock: cursor, toBlock: chunkEnd })
     } catch (err: any) {
+      opts.signal?.throwIfAborted()
       // Halve the window once. Free RPCs occasionally cap below the
       // requested chunk on a per-request basis (e.g. when the chunk
       // happens to span a high-traffic block).
@@ -120,12 +122,15 @@ export async function scanLogsForward(
       if (halfEnd <= cursor) throw err // can't halve a 1-block window — give up
       try {
         const upper = await provider.getLogs({ address: addr, topics, fromBlock: cursor, toBlock: halfEnd })
+        opts.signal?.throwIfAborted()
         const lower = await provider.getLogs({ address: addr, topics, fromBlock: halfEnd + 1, toBlock: chunkEnd })
         windowLogs = [...upper, ...lower]
       } catch {
+        opts.signal?.throwIfAborted()
         throw err // surface the original error
       }
     }
+    opts.signal?.throwIfAborted()
     logs.push(...windowLogs)
     opts.onProgress?.(cursor, chunkEnd, windowLogs.length)
     cursor = chunkEnd + 1

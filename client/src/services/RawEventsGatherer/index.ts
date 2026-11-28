@@ -65,10 +65,13 @@ export const rawEventsGathererService: Service = {
     }
 
     const redis = new Redis(redisUrl)
-    let stopListener: () => void
+    const startup = new AbortController()
+    let stopListener: (() => void) | undefined
+    let stopPromise: Promise<void> | undefined
 
     const started = (async () => {
       await prisma.$connect()
+      startup.signal.throwIfAborted()
 
       // Build the set of known contract addresses for this chain so the high-water
       // mark query covers both CawActions and CawActionsERC1271 rows. Using the
@@ -256,7 +259,9 @@ export const rawEventsGathererService: Service = {
         }
       }
 
+      startup.signal.throwIfAborted()
       const listener = await listenForRawEvents({
+        startupSignal: startup.signal,
         rpcUrl,
         chainId,
         networkId,
@@ -289,13 +294,20 @@ export const rawEventsGathererService: Service = {
       })
 
       stopListener = listener.stop
-    })()
+    })().catch(error => {
+      if (!startup.signal.aborted || error !== startup.signal.reason) throw error
+    })
 
     return {
       started,
-      async stop() {
-        if (stopListener) stopListener()
-        await prisma.$disconnect()
+      stop() {
+        startup.abort()
+        stopPromise ??= (async () => {
+          await started.catch(() => {})
+          stopListener?.()
+          await prisma.$disconnect()
+        })()
+        return stopPromise
       },
       stats: async () => `Total raw events: ${await prisma.rawEvent.count()}`
     }
