@@ -37,6 +37,13 @@ export const actionProcessorService: Service = {
     const { redisUrl } = Config.parse(_cfg)
     const redis = new Redis(redisUrl)
     let stopRequested = false
+    let stopPromise: Promise<void> | undefined
+    // Redis callbacks are not awaited by ioredis. Serialize event processing
+    // and retries to preserve order and protect StakeLedger's shared state.
+    let processChain: Promise<void> = Promise.resolve()
+    let retryTimer: NodeJS.Timeout | undefined
+    let verifyTimer: NodeJS.Timeout | undefined
+    const activeVerifications = new Set<Promise<void>>()
 
     // ActionProcessor is event-driven (Redis pub/sub). We heartbeat on each
     // message processed AND via a periodic idle ping so the watchdog knows
@@ -48,6 +55,7 @@ export const actionProcessorService: Service = {
 
     const started = (async () => {
       await prisma.$connect()
+      if (stopRequested) return
       ctx.heartbeat('listen') // Mark alive after connect
 
       // Resume from last processed action's rawEventId instead of reprocessing everything on restart
@@ -116,16 +124,9 @@ export const actionProcessorService: Service = {
       }
 
       // now subscribe to the same "raws" channel your Gatherer is publishing
+      if (stopRequested) return
       await redis.subscribe('raws')
-
-      // Serialize live event processing. ioredis fires the 'message' handler
-      // per message without awaiting the previous invocation, so a burst of
-      // messages would run handleRawEvent() concurrently — and they race on
-      // StakeLedger's shared in-memory s.multiplier (read-modify-write), which
-      // can corrupt the running ledger and reorder RewardMultiplierSnapshot
-      // rows. Chaining onto a single promise tail forces strict FIFO, one
-      // event in flight at a time. (zinsanjp Issue 2.)
-      let processChain: Promise<void> = Promise.resolve()
+      if (stopRequested) return
 
       // Debounced block-boundary verify for the live path. Unlike the backlog,
       // we can't peek the next event's block number, so we can't tell mid-block
@@ -135,19 +136,22 @@ export const actionProcessorService: Service = {
       // value we read matches our fully-advanced running state. Same-block
       // bursts arrive far closer together than this window. (zinsanjp Issue 1.)
       const VERIFY_DEBOUNCE_MS = 750
-      let verifyTimer: NodeJS.Timeout | null = null
       const scheduleVerify = () => {
+        if (stopRequested) return
         if (verifyTimer) clearTimeout(verifyTimer)
         verifyTimer = setTimeout(() => {
-          verifyTimer = null
-          if (!stopRequested) runVerifyMultiplier().catch(() => {})
+          verifyTimer = undefined
+          if (stopRequested) return
+          const verification = runVerifyMultiplier().catch(() => {})
+          activeVerifications.add(verification)
+          void verification.then(() => activeVerifications.delete(verification))
         }, VERIFY_DEBOUNCE_MS)
       }
 
       redis.on('message', (_channel, msg) => {
         const rawEventId = Number(msg)
         // ignore duplicates or out‑of‑order
-        if (rawEventId <= lastId) return
+        if (stopRequested || rawEventId <= lastId) return
         processChain = processChain.then(async () => {
           // Re-check inside the serialized section: an earlier queued event
           // (or a duplicate publish) may have already advanced lastId past us.
@@ -189,7 +193,7 @@ export const actionProcessorService: Service = {
         if (stopRequested) return
         processChain = processChain.then(async () => {
           if (stopRequested) return
-          const touched = await retryFailedEvents()
+          const touched = await retryFailedEvents(() => stopRequested)
           if (touched) scheduleVerify()
         }).catch(err => {
           console.error('[ActionProcessor] Retry pass error:', err)
@@ -200,11 +204,20 @@ export const actionProcessorService: Service = {
 
     return {
       started,
-      async stop() {
+      stop() {
+        if (stopPromise) return stopPromise
         stopRequested = true
         clearInterval(idleHeartbeat)
         if (retryTimer) clearInterval(retryTimer)
-        await prisma.$disconnect()
+        if (verifyTimer) clearTimeout(verifyTimer)
+        stopPromise = (async () => {
+          // Startup failures remain visible to callers awaiting started.
+          await started.catch(() => {})
+          await processChain
+          await Promise.all(activeVerifications)
+          await prisma.$disconnect()
+        })()
+        return stopPromise
       },
       stats: async () => {
         const failed = await loadFailedEvents()
@@ -239,7 +252,6 @@ const RETRY_INTERVAL_MS = 60_000
 const RETRY_BASE_MS = 60_000
 const RETRY_MAX_MS = 60 * 60_000
 const RETRY_LOUD_AFTER = 5
-let retryTimer: NodeJS.Timeout | null = null
 
 type FailedEventEntry = { attempts: number; nextRetryAt: number; lastError: string; firstFailedAt: number }
 type FailedEventRegistry = Record<string, FailedEventEntry>
@@ -282,7 +294,7 @@ async function noteFailedEvent(rawEventId: number, err: unknown): Promise<void> 
 }
 
 /** One retry pass. Returns true when at least one event was re-processed. */
-async function retryFailedEvents(): Promise<boolean> {
+async function retryFailedEvents(isStopping: () => boolean): Promise<boolean> {
   const reg = await loadFailedEvents()
   const ids = Object.keys(reg)
   if (ids.length === 0) return false
@@ -290,10 +302,12 @@ async function retryFailedEvents(): Promise<boolean> {
   let touched = false
   let changed = false
   for (const id of ids) {
+    if (isStopping()) break
     const entry = reg[id]
     if (entry.nextRetryAt > now) continue
     const rawEventId = Number(id)
     const raw = await prisma.rawEvent.findUnique({ where: { id: rawEventId } })
+    if (isStopping()) break
     if (!raw) {
       console.warn(`[ActionProcessor] Retry: RawEvent ${rawEventId} no longer exists; dropping from registry`)
       delete reg[id]
