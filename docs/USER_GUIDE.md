@@ -5,6 +5,29 @@ these guides describe *what happens* rather than exact buttons — the wording
 varies by app, but the underlying flow is the same. See [`FAQ.md`](./FAQ.md) for
 basics and [`DESIGN_RATIONALE.md`](./DESIGN_RATIONALE.md) for the "why."
 
+## Try your first post on a testnet
+
+Open a CAW testnet frontend in your browser. An existing frontend lets you
+try CAW without running a node or installing the developer tools.
+
+1. **Check the network.** Confirm that the site is for a testnet. The reference
+   test setup uses Sepolia for profiles and Base Sepolia for social actions.
+   Use the networks and test tokens specified by the frontend operator.
+2. **Sign in.** Choose one of the methods shown by the site. If it offers
+   sponsored passkey signup, follow its prompts. If you choose wallet signup,
+   use a separate test wallet and follow the operator's instructions for
+   obtaining test tokens if the setup requires them.
+3. **Select or create a test profile.** Pick your existing testnet profile or
+   follow the prompts to create a username. Wait for the profile to appear
+   before composing a post.
+4. **Publish and check.** Write a short test post. Review the screen before
+   approving any signature or transaction. After the app confirms submission,
+   open your profile and refresh once to check that the post appears.
+
+The profile and posting sections below explain the protocol using mainnet as
+the example. Check the [testnet configuration](../CLAUDE.md#smart-contracts-solidity)
+for the development networks.
+
 ## Creating a profile (minting your identity)
 
 Your CAW identity is an NFT minted on Ethereum mainnet; your username lives in

@@ -1,5 +1,9 @@
 # Getting Started with CAW Protocol
 
+To try CAW as a user, start with the
+[first-post testnet guide](./USER_GUIDE.md#try-your-first-post-on-a-testnet).
+The setup below is for developers running CAW locally.
+
 ## Prerequisites
 
 - Node.js v22.0.0 or higher
