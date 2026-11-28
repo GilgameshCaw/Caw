@@ -1,3 +1,4 @@
+import { setTimeout as waitForHistoricalRetry } from 'node:timers/promises'
 // src/services/RawEventsGatherer/listenForRawEvents.ts
 import { ContractEventPayload, WebSocketProvider, Contract, Interface, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from 'ethers'
@@ -382,6 +383,23 @@ export default async function listenForRawEvents(
     return keccak256(input)
   }
 
+  // Retry only a failed lookup, before this event changes the hash chain or
+  // writes anything. A later event never needs to replay earlier writes.
+  async function readEventRpc<T extends { kind: string }>(
+    read: () => Promise<T>, retryHistoricalRpc: boolean, signal?: AbortSignal,
+  ): Promise<T> {
+    signal?.throwIfAborted()
+    const result = await read()
+    signal?.throwIfAborted()
+    if (!retryHistoricalRpc || result.kind !== 'fetch_failed') return result
+
+    await waitForHistoricalRetry(5000, undefined, { signal })
+    signal?.throwIfAborted()
+    const retried = await read()
+    signal?.throwIfAborted()
+    return retried
+  }
+
   // Process events from a Log array (used by both historical fetch and polling).
   //
   // ActionsProcessed events now only carry a hash commitment; the actual
@@ -391,9 +409,11 @@ export default async function listenForRawEvents(
   // provider exposes storeBatch, a single INSERT replaces what used to be N
   // sequential UPSERTs per event. Falls back to one-by-one storeEvent if no
   // batch method.
-  async function processEvents(events: Log[], _contract: Contract) {
+  async function processEvents(events: Log[], _contract: Contract, signal?: AbortSignal, retryHistoricalRpc = false) {
     for (const ev of events) {
-      const packedResult = await fetchPackedActionsFromTx(httpProvider, ev.transactionHash)
+      const packedResult = await readEventRpc(
+        () => fetchPackedActionsFromTx(httpProvider, ev.transactionHash), retryHistoricalRpc, signal,
+      )
       if (packedResult.kind === 'not_applicable') {
         // Tx fetched and parsed fine; it just isn't a (safe)processActions/
         // processActionsERC1271 call. Nothing to recover -- correctly skip.
@@ -421,7 +441,9 @@ export default async function listenForRawEvents(
       // ActionRejected logs from the same receipt to know which (senderId,
       // cawonce) pairs never actually applied to chain state, so we don't
       // persist a RawEvent for something the contract discarded.
-      const rejectedResult = await fetchRejectedSetFromTx(httpProvider, ev.transactionHash)
+      const rejectedResult = await readEventRpc(
+        () => fetchRejectedSetFromTx(httpProvider, ev.transactionHash), retryHistoricalRpc, signal,
+      )
       if (rejectedResult.kind === 'fetch_failed') {
         // Same load-bearing reasoning as the packedActions fetch_failed path
         // above: we cannot tell which actions were rejected, so persisting
@@ -608,7 +630,7 @@ export default async function listenForRawEvents(
   if (skipDerive) {
     console.log(`[RawEventsGatherer] Historical rescan: all ${past.length} events already stored, skipping re-derive`)
   } else {
-    await processEvents(past, httpContract)
+    await processEvents(past, httpContract, undefined, true)
   }
 
   // Historical fill down to the configured floor is now complete and durably
