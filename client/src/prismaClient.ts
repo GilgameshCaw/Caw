@@ -15,12 +15,16 @@ import { PrismaClient } from '@prisma/client'
 //      process. Real teardown happens on process exit via `shutdownPrisma()`.
 const basePrisma = new PrismaClient()
 
-let reconnecting = false
+let reconnecting: Promise<void> | undefined
 const RECONNECT_ERRORS = ['Engine is not yet connected', 'Engine is not running']
 
-async function reconnectOnce() {
-  if (reconnecting) return
-  reconnecting = true
+function reconnectOnce(): Promise<void> {
+  return reconnecting ??= reconnectEngine().finally(() => {
+    reconnecting = undefined
+  })
+}
+
+async function reconnectEngine() {
   console.log('[Prisma] Engine disconnected — reconnecting...')
   try { await basePrisma.$disconnect() } catch {}
   try {
@@ -28,8 +32,6 @@ async function reconnectOnce() {
     console.log('[Prisma] Reconnected successfully')
   } catch (connectErr: any) {
     console.error('[Prisma] Reconnection failed:', connectErr.message)
-  } finally {
-    reconnecting = false
   }
 }
 
