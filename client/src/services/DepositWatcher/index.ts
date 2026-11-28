@@ -227,9 +227,10 @@ export const depositWatcherService: Service = {
               // catch-up rate.
               consecutiveFailures++
             } else {
-              consecutiveFailures = 0
+              // Keep the range eligible for retry until Redis has saved it.
+              await redis.set(cpKey, String(toBlock))
               lastBlock = toBlock
-              await redis.set(cpKey, String(lastBlock))
+              consecutiveFailures = 0
             }
           }
           ctx.heartbeat('poll')
