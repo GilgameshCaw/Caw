@@ -285,11 +285,8 @@ async function refreshPeers(
     // Spacing windows out (rather than firing eth_getLogs back-to-back as
     // fast as the RPC responds, measured at ~150ms apart) meaningfully
     // reduces the chance of self-inflicted rate limiting turning into a
-    // scanIncomplete abort. Deliberately kept small: refreshAndLog has no
-    // in-flight guard against the pollIntervalMs setInterval (default 60s),
-    // so a delay long enough to make one cold scan run past the next tick
-    // would let two scans overlap and race on managerDeployBlock/
-    // lastScannedBlock instead of just being slow.
+    // scanIncomplete abort. Keep the delay small so a scan can finish
+    // promptly and the next timer tick can refresh the peer list.
     //
     // The genesis-fallback fix above (skip rather than cache 0/incomplete
     // state as managerDeployBlock) means the ~600-window case this
@@ -303,8 +300,7 @@ async function refreshPeers(
     // from head) rather than as the primary defense it was originally
     // written to be. Not measured against this node's actual rate limit
     // threshold -- if scanIncomplete still fires regularly in that
-    // remaining case, raise this together with pollIntervalMs (or add an
-    // in-flight guard) rather than raising it alone.
+    // remaining case, tune this delay together with pollIntervalMs.
     const allLogs = await scanLogsBackward(provider, clientManagerAddress, [allSigs], {
       fromBlock: managerDeployBlock,
       stopOnEmptyWindow: false,
@@ -444,6 +440,7 @@ export const instanceRegistryService: Service = {
 
     let instanceId: number | null = null
     let pollTimer: NodeJS.Timeout | null = null
+    let pollInFlight = false
     let stopped = false
 
     // provider, signer, canRegister, clientManager are initialised inside the
@@ -596,8 +593,11 @@ export const instanceRegistryService: Service = {
         ? new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, _signer.asEthersSigner())
         : new Contract(NETWORK_MANAGER_ADDRESS, cawNetworkManagerAbi, _provider)
 
+      if (stopped) return
       await refreshAndLog()
+      if (stopped) return
       await selfRegister()
+      if (stopped) return
       // Kick off the periodic refresh. Subsequent ticks log only diffs
       // because the cache has the prior state.
       //
@@ -623,7 +623,8 @@ export const instanceRegistryService: Service = {
       // registration failure, only for the startup call never having had
       // the data to act on in the first place.
       pollTimer = setInterval(() => {
-        if (stopped) return
+        if (stopped || pollInFlight) return
+        pollInFlight = true
         refreshAndLog()
           .then(() => {
             // Retry exactly once selfRegister() has never run against a
@@ -633,9 +634,10 @@ export const instanceRegistryService: Service = {
             // data a single time (registered or not), this stops firing;
             // whatever it decided then stands, same as the pre-existing
             // startup-only behavior for every non-skip case.
-            if (!_selfRegisterRanWithValidCache && !_lastRefreshSkipped && _canRegister) return selfRegister()
+            if (!stopped && !_selfRegisterRanWithValidCache && !_lastRefreshSkipped && _canRegister) return selfRegister()
           })
           .catch(() => { /* logged inside */ })
+          .finally(() => { pollInFlight = false })
       }, pollIntervalMs)
     })()
 
