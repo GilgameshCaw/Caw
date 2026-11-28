@@ -111,18 +111,21 @@ export default function runServices(fullConfig: RunServicesConfig) {
     runInstance(i),
   );
 
-  let sigintCount = 0;
+  let stopping = false;
 
-  process.on('SIGINT', async () => {
-    sigintCount++;
+  process.on('SIGINT', () => stopOnSignal('SIGINT'));
+  process.on('SIGTERM', () => stopOnSignal('SIGTERM'));
 
-    if (sigintCount >= 2) {
+  async function stopOnSignal(signal: 'SIGINT' | 'SIGTERM') {
+    if (stopping) {
       console.error('Force exiting');
       process.exit(1);
+      return;
     }
+    stopping = true;
 
     console.warn(
-      'SIGINT caught. Stopping services... Press Ctrl+C again to force exit.',
+      `${signal} caught. Stopping services... Press Ctrl+C again to force exit.`,
     );
 
     setTimeout(() => {
@@ -132,7 +135,7 @@ export default function runServices(fullConfig: RunServicesConfig) {
 
     await Promise.all(runningInstances.map(async (i) => i.stop()));
     process.exit(0);
-  });
+  }
 }
 
 // Default time a loop can go without a heartbeat before the watchdog
