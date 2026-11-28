@@ -37,6 +37,7 @@ export const actionProcessorService: Service = {
     const { redisUrl } = Config.parse(_cfg)
     const redis = new Redis(redisUrl)
     let stopRequested = false
+    const pendingFailures = new Map<number, PendingFailure>()
 
     // ActionProcessor is event-driven (Redis pub/sub). We heartbeat on each
     // message processed AND via a periodic idle ping so the watchdog knows
@@ -101,7 +102,7 @@ export const actionProcessorService: Service = {
               // past it, and let the retry loop (below) bring it back with
               // backoff. Nothing halts, nothing is silently dropped.
               console.error(`[ActionProcessor] Failed to process backlog event ${raw.id} (queued for retry):`, err)
-              await noteFailedEvent(raw.id, err)
+              await noteFailedEvent(pendingFailures, raw.id, err)
               lastId = raw.id
             }
           }
@@ -168,7 +169,7 @@ export const actionProcessorService: Service = {
               // higher id and the `rawEventId <= lastId` gate means nothing
               // would ever come back for this one otherwise.
               console.error(`[ActionProcessor] Failed to process event ${rawEventId} (queued for retry):`, err)
-              await noteFailedEvent(rawEventId, err)
+              await noteFailedEvent(pendingFailures, rawEventId, err)
             }
           }
         }).catch(err => {
@@ -189,7 +190,7 @@ export const actionProcessorService: Service = {
         if (stopRequested) return
         processChain = processChain.then(async () => {
           if (stopRequested) return
-          const touched = await retryFailedEvents()
+          const touched = await retryFailedEvents(pendingFailures)
           if (touched) scheduleVerify()
         }).catch(err => {
           console.error('[ActionProcessor] Retry pass error:', err)
@@ -243,47 +244,63 @@ let retryTimer: NodeJS.Timeout | null = null
 
 type FailedEventEntry = { attempts: number; nextRetryAt: number; lastError: string; firstFailedAt: number }
 type FailedEventRegistry = Record<string, FailedEventEntry>
+type PendingFailure = { attempts: number; firstFailedAt: number; lastFailedAt: number; lastError: string }
 
 async function loadFailedEvents(): Promise<FailedEventRegistry> {
-  try {
-    const row = await prisma.chainData.findUnique({ where: { key: FAILED_EVENTS_KEY } })
-    const v = row?.value
-    return v && typeof v === 'object' && !Array.isArray(v) ? (v as FailedEventRegistry) : {}
-  } catch (err: any) {
-    console.warn('[ActionProcessor] Could not load failed-event registry:', err?.message ?? err)
-    return {}
-  }
+  const row = await prisma.chainData.findUnique({ where: { key: FAILED_EVENTS_KEY } })
+  const v = row?.value
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as FailedEventRegistry) : {}
 }
 
 async function saveFailedEvents(reg: FailedEventRegistry): Promise<void> {
-  try {
-    await prisma.chainData.upsert({
-      where: { key: FAILED_EVENTS_KEY },
-      update: { value: reg },
-      create: { key: FAILED_EVENTS_KEY, value: reg },
-    })
-  } catch (err: any) {
-    console.warn('[ActionProcessor] Could not save failed-event registry:', err?.message ?? err)
-  }
+  await prisma.chainData.upsert({
+    where: { key: FAILED_EVENTS_KEY },
+    update: { value: reg },
+    create: { key: FAILED_EVENTS_KEY, value: reg },
+  })
 }
 
-async function noteFailedEvent(rawEventId: number, err: unknown): Promise<void> {
+// Backlog writes are sequential, and live events and retry passes share
+// processChain. Keep new failures in memory until the merged write succeeds.
+async function flushPendingFailures(pending: Map<number, PendingFailure>): Promise<FailedEventRegistry> {
   const reg = await loadFailedEvents()
-  const prev = reg[String(rawEventId)]
-  const attempts = (prev?.attempts ?? 0) + 1
-  const delay = Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS)
-  reg[String(rawEventId)] = {
-    attempts,
-    nextRetryAt: Date.now() + delay,
-    lastError: String((err as any)?.message ?? err).slice(0, 300),
-    firstFailedAt: prev?.firstFailedAt ?? Date.now(),
+  if (pending.size === 0) return reg
+
+  for (const [id, failure] of pending) {
+    const prev = reg[String(id)]
+    const attempts = (prev?.attempts ?? 0) + failure.attempts
+    const delay = Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS)
+    reg[String(id)] = {
+      attempts,
+      nextRetryAt: failure.lastFailedAt + delay,
+      lastError: failure.lastError,
+      firstFailedAt: prev?.firstFailedAt ?? failure.firstFailedAt,
+    }
   }
   await saveFailedEvents(reg)
+  pending.clear()
+  return reg
+}
+
+async function noteFailedEvent(pending: Map<number, PendingFailure>, rawEventId: number, err: unknown): Promise<void> {
+  const now = Date.now()
+  const prev = pending.get(rawEventId)
+  pending.set(rawEventId, {
+    attempts: (prev?.attempts ?? 0) + 1,
+    firstFailedAt: prev?.firstFailedAt ?? now,
+    lastFailedAt: now,
+    lastError: String((err as any)?.message ?? err).slice(0, 300),
+  })
+  try {
+    await flushPendingFailures(pending)
+  } catch (error) {
+    console.warn('[ActionProcessor] Could not persist failed events; will retry:', error)
+  }
 }
 
 /** One retry pass. Returns true when at least one event was re-processed. */
-async function retryFailedEvents(): Promise<boolean> {
-  const reg = await loadFailedEvents()
+async function retryFailedEvents(pending: Map<number, PendingFailure>): Promise<boolean> {
+  const reg = await flushPendingFailures(pending)
   const ids = Object.keys(reg)
   if (ids.length === 0) return false
   const now = Date.now()
