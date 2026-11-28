@@ -429,14 +429,21 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     // spurious "Cawonce already used" to the user.
     let action
     let shouldProcessDomain
-    try {
-      const result = await prisma.$transaction(async (tx) => {
-        return await createOrFindAction(tx, rawId, chainId, rawAction, {
+    const persistAction = () => prisma.$transaction(
+      tx => createOrFindAction(tx, rawId, chainId, rawAction, {
           txHash: raw.transactionHash,
           blockNumber: Number(raw.blockNumber),
           validatorId,
-        })
-      }, { timeout: 30_000 })
+      }),
+      { timeout: 30_000 },
+    )
+    try {
+      const result = await persistAction().catch((err: { code?: string } | null) => {
+        // Retry only the Action-row transaction. Earlier actions in this raw
+        // event and this action's domain effects are outside the retry.
+        if (err?.code !== 'P2034' && err?.code !== 'P2024') throw err
+        return persistAction()
+      })
       action = result.action
       shouldProcessDomain = result.shouldProcessDomain
     } catch (err: any) {
