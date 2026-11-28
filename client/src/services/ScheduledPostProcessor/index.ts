@@ -403,19 +403,29 @@ function startScheduledPostWorker(heartbeat?: () => void) {
   console.log(`[ScheduledPostProcessor] Starting background worker... Logs will be written to logs/scheduled-posts-${date}.log`)
   logger.log('Starting background worker...')
 
-  const runAndBeat = async () => {
-    try {
-      await processDueScheduledPosts()
-    } finally {
-      heartbeat?.()
-    }
+  let stopped = false
+  const activeRuns = new Set<Promise<void>>()
+  const runAndBeat = () => {
+    if (stopped) return
+    const run = processDueScheduledPosts().finally(() => {
+      activeRuns.delete(run)
+      if (!stopped) heartbeat?.()
+    })
+    activeRuns.add(run)
+    void run.catch(err => logger.error('Scheduled post worker tick failed', err))
   }
 
   // Run immediately on startup
   runAndBeat()
 
   // Then run every minute
-  setInterval(runAndBeat, 60 * 1000) // 1 minute
+  const timer = setInterval(runAndBeat, 60 * 1000) // 1 minute
+
+  return async () => {
+    stopped = true
+    clearInterval(timer)
+    await Promise.allSettled(activeRuns)
+  }
 }
 
 // Export for use as a service
@@ -429,14 +439,18 @@ export const scheduledPostProcessorService = {
 
   start(_cfg: unknown, ctx: import('../../Service').HeartbeatContext) {
     ctx.declareLoop('scheduled-posts', 5 * 60_000) // 5× 1-minute interval
-    startScheduledPostWorker(() => ctx.heartbeat('scheduled-posts'))
+    const stopWorker = startScheduledPostWorker(() => ctx.heartbeat('scheduled-posts'))
+    let stopPromise: Promise<void> | undefined
 
     return {
       started: Promise.resolve(),
-      async stop() {
-        logger.log('Stopping ScheduledPostProcessor service...')
-        logger.close()
-        await prisma.$disconnect()
+      stop() {
+        return stopPromise ??= (async () => {
+          logger.log('Stopping ScheduledPostProcessor service...')
+          await stopWorker()
+          logger.close()
+          await prisma.$disconnect()
+        })()
       },
       stats: async () => {
         const pendingCount = await prisma.scheduledCaw.count({ where: { status: 'pending' } })
