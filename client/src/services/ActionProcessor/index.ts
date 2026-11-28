@@ -5,7 +5,7 @@ import { Service } from '../../Service'
 import Redis from 'ioredis'
 import { z } from 'zod'
 import { createOrFindAction, ensureActionExists } from './actionCreation'
-import { processDomainEffects, resolveActionUsers } from './domainProcessor'
+import { processDomainEffects, resolveActionUsers, type ResolvedUsers } from './domainProcessor'
 import type { RawAction } from './types'
 import { StaleTokenError } from '../UserService'
 import { CawNotFoundError } from './actionHandlers'
@@ -351,14 +351,22 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any, blo
   if (topics[2]) {
     try { validatorId = Number(BigInt(String(topics[2]))) } catch {}
   }
-  let actionIndex = 0
-  for (const rawAction of list) {
-    if (!filterAction(rawAction)) {
-      actionIndex++
-      continue
+  // Resolve the whole event before writing any action. A transient lookup
+  // failure can then reach the event retry queue without replaying partial writes.
+  const resolvedActions: { rawAction: RawAction; actionIndex: number; users: ResolvedUsers }[] = []
+  for (const [actionIndex, rawAction] of list.entries()) {
+    if (!filterAction(rawAction)) continue
+    try {
+      const users = await resolveActionUsers(rawAction)
+      resolvedActions.push({ rawAction, actionIndex, users })
+    } catch (err) {
+      if (!(err instanceof StaleTokenError)) throw err
+      console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
     }
-    await handleRawAction(raw, rawAction, validatorId, actionIndex);
-    actionIndex++
+  }
+
+  for (const { rawAction, actionIndex, users } of resolvedActions) {
+    await handleRawAction(raw, rawAction, validatorId, actionIndex, users)
   }
 
   // After all actions in this ActionsProcessed event are applied, ask
@@ -394,7 +402,7 @@ async function runVerifyMultiplier(): Promise<void> {
 }
 
 
-async function handleRawAction(raw: { id: number, chainId: number, blockNumber: bigint, logIndex: number, transactionHash: string, createdAt: Date }, rawAction: RawAction, validatorId: number, actionIndex: number): Promise<void> {
+async function handleRawAction(raw: { id: number, chainId: number, blockNumber: bigint, logIndex: number, transactionHash: string, createdAt: Date }, rawAction: RawAction, validatorId: number, actionIndex: number, resolved: ResolvedUsers): Promise<void> {
   const rawId = raw.id
   const chainId = raw.chainId
   await span('actionprocessor.handle', {
@@ -402,23 +410,6 @@ async function handleRawAction(raw: { id: number, chainId: number, blockNumber: 
     'action.sender': Number(rawAction.senderId),
     'raw_event.id': rawId,
   }, async () => {
-    // Resolve users BEFORE opening any transaction. Prisma's default 5s tx
-    // timeout was tripping when a batch of N actions opened N parallel
-    // transactions and each called findOrCreateUser inside — Postgres
-    // row-locks on the same user serialized them past 5s. User creation is
-    // idempotent, so it doesn't need tx semantics anyway.
-    let resolved
-    try {
-      resolved = await resolveActionUsers(rawAction)
-    } catch (err: any) {
-      if (err instanceof StaleTokenError) {
-        console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
-        return
-      }
-      console.error('[ActionProcessor] Failed to resolve action users:', err)
-      return
-    }
-
     // Tx1: persist the Action row. This MUST land independently of domain
     // processing — the Action row is the local mirror of an on-chain fact
     // and is the evidence ValidatorService.resolveCawonceUsed uses to tell
