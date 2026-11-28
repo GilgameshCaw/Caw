@@ -27,21 +27,23 @@ export const stakeLedgerReconcilerService: Service = {
     const { intervalMs, skipFirstRun } = Config.parse(cfg)
     let stopped = false
     let timer: NodeJS.Timeout | null = null
+    let inFlight: Promise<unknown> | undefined
 
     // The cron only fires once a day; the watchdog timeout has to be
     // longer than the interval. 25h gives a 1h grace.
     ctx.declareLoop('reconcile', intervalMs + 60 * 60 * 1000)
 
-    async function tick() {
+    function tick() {
+      timer = null
       if (stopped) return
-      try {
-        await runDailyReconciliation()
-      } catch (err) {
+      inFlight = runDailyReconciliation().catch(err => {
         console.error('[StakeLedgerReconciler] run failed:', err)
-      } finally {
+      }).finally(() => {
+        inFlight = undefined
+        if (stopped) return
         ctx.heartbeat('reconcile')
-        if (!stopped) timer = setTimeout(tick, intervalMs)
-      }
+        timer = setTimeout(tick, intervalMs)
+      })
     }
 
     const started = (async () => {
@@ -61,6 +63,7 @@ export const stakeLedgerReconcilerService: Service = {
       async stop() {
         stopped = true
         if (timer) clearTimeout(timer)
+        await inFlight
       },
       stats: async () => 'idle',
     }
