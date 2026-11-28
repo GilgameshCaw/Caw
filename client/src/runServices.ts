@@ -18,6 +18,7 @@ import { lzRelayService } from './services/LzRelayService';
 import { sponsorRepayIndexerService } from './services/SponsorRepayIndexer';
 
 import delay from './tools/delay';
+import { shutdownPrisma } from './prismaClient';
 
 
 type InstanceReady = {
@@ -133,8 +134,13 @@ export default function runServices(fullConfig: RunServicesConfig) {
       process.exit(1);
     }, 10_000).unref();
 
-    await Promise.all(runningInstances.map(async (i) => i.stop()));
-    process.exit(0);
+    const results = await Promise.allSettled(runningInstances.map(async (i) => i.stop()));
+    const failures = results.filter((result) => result.status === 'rejected');
+    for (const failure of failures) {
+      console.error('Failed to stop a service:', failure.reason);
+    }
+    await shutdownPrisma();
+    process.exit(failures.length > 0 ? 1 : 0);
   }
 }
 
