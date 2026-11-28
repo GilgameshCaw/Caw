@@ -5,7 +5,7 @@ import type { Log } from 'ethers'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_ERC1271_ADDRESS } from '../../abi/addresses'
 import { makeFallbackJsonRpcProvider, makeVerifiedFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
 import { scanLogsForward } from '../../utils/chunkedLogs'
-import delay from '../../tools/delay'
+import { setTimeout as delay } from 'node:timers/promises'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
@@ -246,6 +246,7 @@ export default async function listenForRawEvents(
     chainId: number
     /** Scope this indexer to one client; actions for other clients are dropped. */
     networkId: number
+    startupSignal?: AbortSignal
     startBlock?: number // Minimum block to start scanning from (avoids old contract events)
     rawEventsProvider: {
       getLastProcessedEvent(): Promise<{
@@ -299,6 +300,8 @@ export default async function listenForRawEvents(
   let wsContract: Contract | null = null
   let isReconnecting = false
   let isStopped = false
+  const startupSignal = config.startupSignal
+  startupSignal?.throwIfAborted()
 
   // HTTP provider for reliable polling (WebSocket can die silently).
   // Uses makeFallbackJsonRpcProvider so L2_RPC_URL_HTTP_FALLBACK is honoured:
@@ -314,6 +317,7 @@ export default async function listenForRawEvents(
   const l2HttpRpcUrls = getL2HttpRpcUrls(config.rpcUrl)
   const expectedL2ChainId = process.env.L2_CHAIN_ID ? Number(process.env.L2_CHAIN_ID) : config.chainId
   const httpProvider = await makeVerifiedFallbackJsonRpcProvider(l2HttpRpcUrls, expectedL2ChainId)
+  startupSignal?.throwIfAborted()
   if (l2HttpRpcUrls.length > 1) {
     console.log(`[RawEventsGatherer] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${redactRpcUrl(l2HttpRpcUrls[0])}`)
   }
@@ -324,7 +328,9 @@ export default async function listenForRawEvents(
     : null
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
+  startupSignal?.throwIfAborted()
   const floorAlreadyFilled = await config.rawEventsProvider.isFloorFilled()
+  startupSignal?.throwIfAborted()
   // Resolve the historical-scan start block.
   //
   // A configured startBlock (config.json override or Network.creationBlock) is a
@@ -393,7 +399,12 @@ export default async function listenForRawEvents(
     signal?.throwIfAborted()
     if (!retryHistoricalRpc || result.kind !== 'fetch_failed') return result
 
-    await waitForHistoricalRetry(5000, undefined, { signal })
+    try {
+      await waitForHistoricalRetry(5000, undefined, { signal })
+    } catch (error) {
+      signal?.throwIfAborted()
+      throw error
+    }
     signal?.throwIfAborted()
     const retried = await read()
     signal?.throwIfAborted()
@@ -543,8 +554,10 @@ export default async function listenForRawEvents(
   let past: Log[]
   const eventSig = httpContract.interface.getEvent('ActionsProcessed')!.topicHash
   while (true) {
+    startupSignal?.throwIfAborted()
     try {
       const latest = await httpProvider.getBlockNumber()
+      startupSignal?.throwIfAborted()
       if (startBlock > latest) {
         past = []
         break
@@ -564,12 +577,14 @@ export default async function listenForRawEvents(
           // and operators with multi-month gaps need an unbounded walk.
           // 10K * 100K = 1B blocks of headroom; nothing realistic hits that.
           maxWindows: 100_000,
+          signal: startupSignal,
           onProgress: (from, to, n) => {
             if (n > 0) console.log(`[RawEventsGatherer] Historical chunk ${from}..${to}: ${n} events`)
           },
         },
       )
 
+      startupSignal?.throwIfAborted()
       // Scan CawActionsERC1271 logs (ERC-1271 path) if the sibling is deployed.
       let erc1271Logs: typeof rawLogs = []
       if (CAW_ACTIONS_ERC1271_ADDRESS) {
@@ -582,6 +597,7 @@ export default async function listenForRawEvents(
           {
             chunkBlocks: L2_LOG_CHUNK_BLOCKS,
             maxWindows: 100_000,
+            signal: startupSignal,
             onProgress: (from, to, n) => {
               if (n > 0) console.log(`[RawEventsGatherer] Historical ERC-1271 chunk ${from}..${to}: ${n} events`)
             },
@@ -598,8 +614,14 @@ export default async function listenForRawEvents(
       past = allLogs as unknown as Log[]
       break
     } catch (err) {
+      startupSignal?.throwIfAborted()
       console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
-      await delay(5000)
+      try {
+        await delay(5000, undefined, { signal: startupSignal })
+      } catch (error) {
+        startupSignal?.throwIfAborted()
+        throw error
+      }
     }
   }
 
@@ -622,15 +644,17 @@ export default async function listenForRawEvents(
   // range on every restart where the skip fires. Keeping `past` intact
   // preserves the real high-water mark for that read while still avoiding
   // the processEvents() call itself.
+  startupSignal?.throwIfAborted()
   const skipDerive =
     past.length > 0 &&
     !!config.rawEventsProvider.countExisting &&
     (await config.rawEventsProvider.countExisting(past)) === past.length
 
+  startupSignal?.throwIfAborted()
   if (skipDerive) {
     console.log(`[RawEventsGatherer] Historical rescan: all ${past.length} events already stored, skipping re-derive`)
   } else {
-    await processEvents(past, httpContract, undefined, true)
+    await processEvents(past, httpContract, startupSignal, true)
   }
 
   // Historical fill down to the configured floor is now complete and durably
@@ -639,6 +663,7 @@ export default async function listenForRawEvents(
   // config.startBlock..latest range each time. Setting this without a real
   // fill is harmless: the resume branch also requires `last`, so the flag
   // only changes behaviour once there is a last-processed block to resume from.
+  startupSignal?.throwIfAborted()
   if (config.startBlock !== undefined && !floorAlreadyFilled) {
     await config.rawEventsProvider.markFloorFilled()
     console.log(`[RawEventsGatherer] Marked floor-fill complete — future restarts resume from last processed block`)
@@ -928,6 +953,7 @@ export default async function listenForRawEvents(
   // of rate-limit pressure in this stack. HTTP polling is deterministic,
   // bounded, and uses a quota we already have plenty of. Flip ENABLE_RAW_EVENTS_WS=1
   // to re-enable if you ever need sub-5s event latency.
+  startupSignal?.throwIfAborted()
   if (process.env.ENABLE_RAW_EVENTS_WS === '1') {
     await setupWebSocket()
   } else {
@@ -1044,19 +1070,22 @@ export default async function listenForRawEvents(
       scheduleNextPoll()
     }
   }
-  poll() // kick off the first iteration immediately
-
-  return {
-    stop() {
-      isStopped = true
-      if (pollTimer) clearTimeout(pollTimer)
-      if (wsContract) {
-        try { wsContract.removeAllListeners() } catch {}
-      }
-      if (wsProvider) {
-        try { (wsProvider as any).destroy?.() } catch {}
-      }
+  function stop() {
+    isStopped = true
+    if (pollTimer) clearTimeout(pollTimer)
+    if (wsContract) {
+      try { wsContract.removeAllListeners() } catch {}
+    }
+    if (wsProvider) {
+      try { (wsProvider as any).destroy?.() } catch {}
     }
   }
+
+  if (startupSignal?.aborted) {
+    stop()
+    startupSignal.throwIfAborted()
+  }
+  poll() // kick off the first iteration immediately
+  return { stop }
 }
 
