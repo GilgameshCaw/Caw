@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { countManager } from '../services/CountManager'
 import { decompressActionText } from './decompressActionText'
 import { createNotificationWithGroup } from '../services/NotificationService'
@@ -8,8 +8,8 @@ import { sanitizeFailureReason } from './sanitizeFailureReason'
  * THE single choke point for marking a TxQueue row as failed.
  *
  * ALL code that transitions a TxQueue row to 'failed' MUST go through this
- * helper — it atomically updates the row AND creates the ACTION_FAILED
- * notification so the two can never drift out of sync.
+ * helper. It commits the queue status and optimistic cleanup together before
+ * attempting to create the ACTION_FAILED notification.
  *
  * Do NOT call `prisma.txQueue.update` (or `updateMany`) directly with
  * `status: 'failed'` anywhere. If grep finds `status: 'failed'` writes on
@@ -38,22 +38,17 @@ export async function markTxQueueFailed(
   const rawForChecks = rawReason ?? ''
   const reason = sanitizeFailureReason(rawReason)
 
-  // Read the batchId BEFORE the update so we know whether this row is part
-  // of a batched-sig group. When N rows share a batchId they all fail
-  // together (one batch sig → one on-chain revert → N rows marked failed),
-  // and emitting N notifications floods the user. Coalesce them via a
-  // shared groupKey + a "first-row wins" check below.
-  const row = await prisma.txQueue.findUnique({
-    where: { id: txQueueId },
-    select: { batchId: true },
+  // Grouped failures share a notification. Keep the queue status and its
+  // UI state together so a cleanup error leaves both eligible for retry.
+  const batchId = await prisma.$transaction(async tx => {
+    const row = await tx.txQueue.update({
+      where: { id: txQueueId },
+      data: { status: 'failed', reason },
+      select: { batchId: true },
+    })
+    await cleanupOptimisticRows(tx, senderId, actionData, reason)
+    return row.batchId
   })
-  const batchId = row?.batchId ?? null
-
-  await prisma.txQueue.update({
-    where: { id: txQueueId },
-    data: { status: 'failed', reason }
-  })
-  await cleanupOptimisticRows(prisma, senderId, actionData, reason)
 
   // Don't notify for "Cawonce already used" — the action already succeeded
   // on-chain. This happens when the validator detects a revert but the tx
@@ -87,7 +82,7 @@ export async function markTxQueueFailed(
  * that previously forgot to do it (DataCleaner timeout, safety-net sweep).
  */
 async function cleanupOptimisticRows(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   senderId: number,
   actionData: any,
   reason: string
@@ -283,6 +278,7 @@ async function cleanupOptimisticRows(
     }
   } catch (err: any) {
     console.warn(`[markTxQueueFailed] Optimistic cleanup failed for sender ${senderId}:`, err.message)
+    throw err
   }
 }
 
@@ -292,8 +288,8 @@ async function cleanupOptimisticRows(
  * waiting_for_deposit cases. The notification carries enough of the original
  * action payload to reconstruct it for a one-click retry from the UI.
  *
- * Normally you call `markTxQueueFailed` instead of this directly; it bundles
- * the update + notify so the two can never drift apart.
+ * Call `markTxQueueFailed` to commit queue status and optimistic cleanup
+ * before attempting this notification.
  */
 export async function createActionFailedNotification(
   prisma: PrismaClient,
