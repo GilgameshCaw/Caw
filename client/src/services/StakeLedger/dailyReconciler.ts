@@ -69,7 +69,15 @@ export async function runDailyReconciliation(): Promise<ReconcileResult> {
       continue
     }
 
-    const currentRow = await prisma.cawOwnershipCurrent.findUnique({ where: { tokenId } })
+    const readCurrent = () => prisma.cawOwnershipCurrent.findUnique({ where: { tokenId } })
+    let currentRow
+    try {
+      currentRow = await readCurrent().catch(() => readCurrent())
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[StakeLedger] Reconciler: tokenId=${tokenId} DB read failed after retry: ${message}`)
+      continue
+    }
     const cached = currentRow ? BigInt(currentRow.ownership) : 0n
 
     if (onChain === cached) {
