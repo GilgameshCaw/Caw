@@ -84,6 +84,8 @@ export const depositWatcherService: Service = {
 
     let alive = true
     let pollTimer: ReturnType<typeof setTimeout> | null = null
+    let activePoll: Promise<void> | undefined
+    let stopPromise: Promise<void> | undefined
 
     const started = (async () => {
       if (!rpcUrl) throw new Error('[DepositWatcher] No L1 RPC URL configured')
@@ -132,13 +134,12 @@ export const depositWatcherService: Service = {
       // per 15 min: 60s, 2m, 4m, 8m, 15m, 15m… — visible lag, not a hot loop.
       const DEPOSIT_FAILURE_BACKOFF_CAP_MS = 15 * 60_000
 
-      const poll = async () => {
-        if (!alive) return
+      const pollOnce = async () => {
         behindAfterPoll = false
         // Re-derive from the resilient handle each tick (auto-heal on RPC death).
-        provider = rpc.get()
-        contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
         try {
+          provider = rpc.get()
+          contract = new ethers.Contract(contractAddress, DEPOSITED_ABI, provider)
           const currentBlock = await provider.getBlockNumber()
           if (currentBlock > lastBlock) {
             const fromBlock = lastBlock + 1
@@ -232,7 +233,7 @@ export const depositWatcherService: Service = {
               await redis.set(cpKey, String(lastBlock))
             }
           }
-          ctx.heartbeat('poll')
+          if (alive) ctx.heartbeat('poll')
         } catch (err: any) {
           console.error('[DepositWatcher] Poll error:', err?.message || err)
           rpc.reportError(err) // auto-heal on dead-connection errors
@@ -260,15 +261,33 @@ export const depositWatcherService: Service = {
         }
       }
 
+      const poll = () => {
+        pollTimer = null
+        if (!alive) return
+        activePoll = pollOnce()
+        return activePoll
+      }
+
       poll()
     })()
 
     return {
       started,
-      async stop() {
+      stop() {
+        if (stopPromise) return stopPromise
         alive = false
         if (pollTimer) clearTimeout(pollTimer)
-        await redis.quit()
+        stopPromise = (async () => {
+          // Startup can still be reading the checkpoint. An active poll can
+          // still be committing deposits and writing the next checkpoint.
+          await started.catch(() => {})
+          try {
+            await activePoll
+          } finally {
+            await redis.quit()
+          }
+        })()
+        return stopPromise
       },
       async stats() {
         const cpKey = checkpointKey(cfg.chainId, contractAddress)
